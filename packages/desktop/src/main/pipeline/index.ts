@@ -1,35 +1,38 @@
-import type { ProcessedBookmark } from '@shuhai/shared';
+import type { ProcessedBookmark, AIConfig } from '@shuhai/shared';
 import { ChromeFileReader } from '../readers/chrome-file-reader.js';
 import { normalizeUrl, urlHash } from './normalize-url.js';
-import { RuleClassifier } from './classifier.js';
+import { AIClassifier } from '../ai/ai-classifier.js';
 import { MarkdownExporter } from '../exporters/markdown-exporter.js';
 
 export interface PipelineOptions {
   vaultPath: string;
   chromeProfile?: string;
+  ai?: AIConfig;
 }
 
 /**
- * Minimal data pipeline:
- * Chrome read → normalize → classify → export
+ * Data pipeline:
+ * Chrome read → normalize → classify (AI or rules) → export
  */
 export class BookmarkPipeline {
   private reader: ChromeFileReader;
-  private classifier: RuleClassifier;
+  private aiClassifier: AIClassifier;
   private exporter: MarkdownExporter;
 
   constructor(options: PipelineOptions) {
     this.reader = new ChromeFileReader(options.chromeProfile);
-    this.classifier = new RuleClassifier();
+    this.aiClassifier = new AIClassifier(options.ai || { provider: 'none', batchSize: 50, autoClassify: false });
     this.exporter = new MarkdownExporter(options.vaultPath);
   }
 
   /** Run the full pipeline */
-  async run(): Promise<{ exported: number; skipped: number }> {
+  async run(): Promise<{ exported: number; skipped: number; aiClassified: number }> {
     const raw = await this.reader.read();
     const seen = new Set<string>();
+    const existingCategories: string[] = [];
     let exported = 0;
     let skipped = 0;
+    let aiClassified = 0;
 
     for (const bookmark of raw) {
       const normalized = normalizeUrl(bookmark.url);
@@ -41,14 +44,22 @@ export class BookmarkPipeline {
       }
       seen.add(normalized);
 
-      const { category, tags } = this.classifier.classify(bookmark);
+      // Classify (AI with rule fallback)
+      const classification = await this.aiClassifier.classify(bookmark, existingCategories);
+      if (classification.aiClassified) aiClassified++;
+
+      // Track categories for AI context
+      if (!existingCategories.includes(classification.category)) {
+        existingCategories.push(classification.category);
+      }
 
       const processed: ProcessedBookmark = {
         ...bookmark,
         id: urlHash(bookmark.url),
         normalizedUrl: normalized,
-        category,
-        aiTags: tags,
+        category: classification.category,
+        aiTags: classification.tags,
+        confidence: classification.confidence,
         status: 'unchecked',
       };
 
@@ -56,6 +67,6 @@ export class BookmarkPipeline {
       exported++;
     }
 
-    return { exported, skipped };
+    return { exported, skipped, aiClassified };
   }
 }

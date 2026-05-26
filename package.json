@@ -27,5 +27,8 @@
     "tsx": "4.19.4",
     "typescript-eslint": "8.32.1",
     "vitest": "3.1.4"
+  },
+  "dependencies": {
+    "openai": "6.38.0"
   }
 }
