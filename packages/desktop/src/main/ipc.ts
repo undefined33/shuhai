@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from 'electron';
+import { dialog, ipcMain, type BrowserWindow } from 'electron';
 import type { ProcessedBookmark } from '@shuhai/shared';
 import { loadConfig, updateConfig, type AppConfig } from './app-config.js';
 import {
@@ -9,11 +9,20 @@ import {
   getBookmarkSnapshot,
   runUrlHealthCheck,
 } from './bookmark-service.js';
+import type { SyncResult } from './sync/index.js';
 
-export function registerIpcHandlers(): void {
+interface IpcHandlerOptions {
+  onConfigChanged?: (config: AppConfig) => Promise<void> | void;
+}
+
+export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
   ipcMain.handle('config:get', () => loadConfig());
 
-  ipcMain.handle('config:set', (_event, partial: Partial<AppConfig>) => updateConfig(partial));
+  ipcMain.handle('config:set', async (_event, partial: Partial<AppConfig>) => {
+    const config = await updateConfig(partial);
+    await options.onConfigChanged?.(config);
+    return config;
+  });
 
   ipcMain.handle('system:select-directory', async () => {
     const result = await dialog.showOpenDialog({
@@ -47,4 +56,11 @@ export function registerIpcHandlers(): void {
     abortUrlHealthCheck();
     return true;
   });
+}
+
+export function sendBookmarksChanged(
+  window: BrowserWindow | null,
+  result: SyncResult,
+): void {
+  window?.webContents.send('bookmarks:changed', result);
 }

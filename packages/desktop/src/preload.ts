@@ -1,7 +1,8 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { RawBookmark, ProcessedBookmark, ExportResult } from '@shuhai/shared';
 import type { AppConfig } from './main/app-config.js';
 import type { BookmarkClassification } from './main/bookmark-service.js';
+import type { SyncResult } from './main/sync/index.js';
 
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
@@ -11,6 +12,7 @@ export interface ShuHaiAPI {
   setConfig(config: Partial<AppConfig>): Promise<AppConfig>;
   selectDirectory(): Promise<string | null>;
   getChromeProfiles(): Promise<string[]>;
+  onBookmarksChanged(callback: (result: SyncResult) => void): () => void;
 }
 
 const api: ShuHaiAPI = {
@@ -29,6 +31,15 @@ const api: ShuHaiAPI = {
   },
   selectDirectory: () => ipcRenderer.invoke('system:select-directory') as Promise<string | null>,
   getChromeProfiles: () => ipcRenderer.invoke('system:get-chrome-profiles') as Promise<string[]>,
+  onBookmarksChanged: (callback: (result: SyncResult) => void) => {
+    const listener = (_event: IpcRendererEvent, result: SyncResult) => {
+      callback(result);
+    };
+    ipcRenderer.on('bookmarks:changed', listener);
+    return () => {
+      ipcRenderer.removeListener('bookmarks:changed', listener);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('shuhai', api);

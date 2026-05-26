@@ -1,12 +1,13 @@
 import { app, BrowserWindow } from 'electron';
-import { registerIpcHandlers } from './ipc.js';
+import { registerIpcHandlers, sendBookmarksChanged } from './ipc.js';
 import { createMainWindow } from './window.js';
 import { createAppTray } from './tray.js';
-import { syncAllBookmarks } from './bookmark-service.js';
-import { loadConfig } from './app-config.js';
+import { loadConfig, type AppConfig } from './app-config.js';
 import { closeDatabase, initializeDatabase } from './db/index.js';
+import { ChromeBookmarkWatcher } from './sync/index.js';
 
 let mainWindow: BrowserWindow | null = null;
+let bookmarkWatcher: ChromeBookmarkWatcher | null = null;
 let isQuitting = false;
 
 function showMainWindow(): void {
@@ -18,11 +19,30 @@ function showMainWindow(): void {
   mainWindow.focus();
 }
 
+async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
+  bookmarkWatcher?.stop();
+
+  bookmarkWatcher = new ChromeBookmarkWatcher({
+    profile: config.chromeProfile,
+    onSync: (result) => {
+      sendBookmarksChanged(mainWindow, result);
+    },
+    onError: (error) => {
+      console.error('[ShuHai] Bookmark sync failed:', error);
+    },
+  });
+
+  await bookmarkWatcher.syncNow();
+  bookmarkWatcher.start();
+}
+
 async function bootstrap(): Promise<void> {
   initializeDatabase();
   const config = await loadConfig();
 
-  registerIpcHandlers();
+  registerIpcHandlers({
+    onConfigChanged: restartBookmarkWatcher,
+  });
 
   mainWindow = await createMainWindow({
     initialBounds: config.windowBounds,
@@ -32,8 +52,7 @@ async function bootstrap(): Promise<void> {
   createAppTray({
     showMainWindow,
     syncNow: async () => {
-      const currentConfig = await loadConfig();
-      await syncAllBookmarks(currentConfig);
+      await bookmarkWatcher?.syncNow();
     },
     quit: () => {
       isQuitting = true;
@@ -41,6 +60,8 @@ async function bootstrap(): Promise<void> {
       app.quit();
     },
   });
+
+  await restartBookmarkWatcher(config);
 }
 
 const hasLock = app.requestSingleInstanceLock();
@@ -61,6 +82,8 @@ app.on('activate', showMainWindow);
 
 app.on('before-quit', () => {
   isQuitting = true;
+  bookmarkWatcher?.stop();
+  bookmarkWatcher = null;
   closeDatabase();
 });
 
