@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import { getChromeBookmarksPath, type ExportResult, type ProcessedBookmark } from '@shuhai/shared';
@@ -9,6 +10,7 @@ import { normalizeUrl, urlHash } from './pipeline/normalize-url.js';
 import { AIClassifier } from './ai/ai-classifier.js';
 import { MarkdownExporter } from './exporters/markdown-exporter.js';
 import type { AppConfig } from './app-config.js';
+import { getDatabase } from './db/index.js';
 
 export type BookmarkClassification = ClassificationResult & {
   confidence?: number;
@@ -44,24 +46,57 @@ export async function readBookmarks(config: AppConfig): Promise<RawBookmark[]> {
 }
 
 export async function getBookmarkSnapshot(config: AppConfig): Promise<ProcessedBookmark[]> {
-  const raw = await readBookmarks(config);
+  const database = getDatabase();
+  const source = getChromeSource(config);
+  const reader = new ChromeFileReader(config.chromeProfile);
+
+  if (!reader.exists()) {
+    return getActiveBookmarks(database.getAllBookmarks({ source }));
+  }
+
+  const raw = await reader.read();
   const classifier = new RuleClassifier();
   const seen = new Set<string>();
+  const activeIds = new Set<string>();
 
-  return raw.reduce<ProcessedBookmark[]>((bookmarks, bookmark) => {
+  const bookmarks = raw.reduce<ProcessedBookmark[]>((items, bookmark) => {
     const normalizedUrl = normalizeUrl(bookmark.url);
     if (seen.has(normalizedUrl)) {
-      return bookmarks;
+      return items;
     }
     seen.add(normalizedUrl);
 
+    const existing = database.getBookmarkByNormalizedUrl(normalizedUrl);
     const classification = classifier.classify(bookmark);
-    bookmarks.push(toProcessedBookmark(bookmark, normalizedUrl, {
-      ...classification,
-      aiClassified: false,
-    }));
-    return bookmarks;
+    const processed = mergeBookmarkState(
+      toProcessedBookmark(
+        {
+          ...bookmark,
+          source,
+        },
+        normalizedUrl,
+        {
+          ...classification,
+          aiClassified: false,
+        },
+      ),
+      existing,
+    );
+
+    activeIds.add(processed.id);
+    items.push(processed);
+    return items;
   }, []);
+
+  database.upsertBookmarks(bookmarks);
+  database.markMissingBookmarksRemoved(source, activeIds);
+  database.updateSyncState(source, {
+    lastSyncAt: new Date().toISOString(),
+    bookmarkCount: bookmarks.length,
+    checksum: checksumBookmarks(raw),
+  });
+
+  return getActiveBookmarks(database.getAllBookmarks({ source }));
 }
 
 export async function classifyBookmarks(
@@ -69,9 +104,26 @@ export async function classifyBookmarks(
   config: AppConfig,
 ): Promise<Map<string, BookmarkClassification>> {
   const requestedUrls = new Set(urls);
-  const bookmarks = (await readBookmarks(config)).filter((bookmark) => requestedUrls.has(bookmark.url));
+  let bookmarks = getDatabase()
+    .getAllBookmarks({ source: getChromeSource(config) })
+    .filter((bookmark) => requestedUrls.has(bookmark.url));
+
+  if (bookmarks.length === 0 && requestedUrls.size > 0) {
+    bookmarks = (await getBookmarkSnapshot(config)).filter((bookmark) => requestedUrls.has(bookmark.url));
+  }
+
   const classifier = new AIClassifier(config.ai);
-  return classifier.batchClassify(bookmarks);
+  const classifications = await classifier.batchClassify(bookmarks);
+  const database = getDatabase();
+
+  database.upsertBookmarks(
+    bookmarks.map((bookmark) => {
+      const classification = classifications.get(bookmark.url);
+      return classification ? applyClassification(bookmark, classification) : bookmark;
+    }),
+  );
+
+  return classifications;
 }
 
 export async function exportProcessedBookmarks(
@@ -93,6 +145,10 @@ export async function exportProcessedBookmarks(
   for (const bookmark of bookmarks) {
     try {
       await exporter.exportOne(bookmark);
+      getDatabase().upsertBookmark({
+        ...bookmark,
+        exportedAt: new Date(),
+      });
       exported++;
     } catch (error) {
       errors.push({
@@ -110,7 +166,7 @@ export async function exportProcessedBookmarks(
 }
 
 export async function syncAllBookmarks(config: AppConfig): Promise<ExportResult> {
-  const bookmarks = await getBookmarkSnapshot(config);
+  const bookmarks = (await getBookmarkSnapshot(config)).filter(isActiveBookmark);
 
   if (config.ai.provider !== 'none' && config.ai.apiKey && config.ai.autoClassify) {
     const classifications = await classifyBookmarks(bookmarks.map((bookmark) => bookmark.url), config);
@@ -152,4 +208,43 @@ function toProcessedBookmark(
     confidence: classification.confidence,
     status: 'unchecked',
   };
+}
+
+function mergeBookmarkState(
+  bookmark: ProcessedBookmark,
+  existing: ProcessedBookmark | null,
+): ProcessedBookmark {
+  if (!existing) {
+    return bookmark;
+  }
+
+  return {
+    ...bookmark,
+    id: existing.id,
+    category: existing.category,
+    tags: existing.tags,
+    aiTags: existing.aiTags,
+    confidence: existing.confidence,
+    status: (existing.status as string) === 'removed' ? 'unchecked' : existing.status,
+    exportedAt: existing.exportedAt,
+    metadata: existing.metadata,
+  };
+}
+
+function getChromeSource(config: AppConfig): string {
+  return `chrome:${config.chromeProfile || 'Default'}`;
+}
+
+function checksumBookmarks(bookmarks: RawBookmark[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify(bookmarks.map((bookmark) => [bookmark.url, bookmark.title, bookmark.createdAt])))
+    .digest('hex');
+}
+
+function getActiveBookmarks(bookmarks: ProcessedBookmark[]): ProcessedBookmark[] {
+  return bookmarks.filter(isActiveBookmark);
+}
+
+function isActiveBookmark(bookmark: ProcessedBookmark): boolean {
+  return (bookmark.status as string) !== 'removed';
 }

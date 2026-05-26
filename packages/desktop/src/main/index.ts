@@ -4,6 +4,7 @@ import { createMainWindow } from './window.js';
 import { createAppTray } from './tray.js';
 import { syncAllBookmarks } from './bookmark-service.js';
 import { loadConfig } from './app-config.js';
+import { closeDatabase, initializeDatabase } from './db/index.js';
 
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
@@ -18,6 +19,7 @@ function showMainWindow(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  initializeDatabase();
   const config = await loadConfig();
 
   registerIpcHandlers();
@@ -59,6 +61,7 @@ app.on('activate', showMainWindow);
 
 app.on('before-quit', () => {
   isQuitting = true;
+  closeDatabase();
 });
 
 app.on('window-all-closed', () => {
