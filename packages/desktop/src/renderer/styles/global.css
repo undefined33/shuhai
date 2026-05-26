@@ -207,7 +207,7 @@ a {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 180px auto auto auto;
+  grid-template-columns: minmax(180px, 1fr) 180px auto auto auto auto;
   gap: 10px;
   align-items: center;
 }

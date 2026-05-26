@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ProcessedBookmark } from '@shuhai/shared';
 import type { AppConfig } from '../../main/app-config.js';
 import type { BookmarkClassification } from '../../main/bookmark-service.js';
+import type { UrlCheckProgress } from '../../main/health/index.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
+import { formatSyncMessage, formatUrlCheckProgress } from './bookmark-list-view-model.js';
 
 interface BookmarkListProps {
   config: AppConfig;
@@ -20,12 +22,28 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [category, setCategory] = useState('全部');
   const [isLoading, setIsLoading] = useState(true);
   const [isClassifying, setIsClassifying] = useState(false);
+  const [isCheckingLinks, setIsCheckingLinks] = useState(false);
   const [exportState, setExportState] = useState<ExportState>('idle');
+  const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     refreshBookmarks();
   }, [config.chromeProfile]);
+
+  useEffect(() => {
+    return window.shuhai.onBookmarksChanged((result) => {
+      setMessage(formatSyncMessage(result));
+      void refreshBookmarks({ keepMessage: true });
+    });
+  }, [config.chromeProfile]);
+
+  useEffect(() => {
+    return window.shuhai.onUrlCheckProgress((progress) => {
+      setUrlCheckProgress(progress);
+      setMessage(formatUrlCheckProgress(progress));
+    });
+  }, []);
 
   const visibleBookmarks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -49,9 +67,11 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     return ['全部', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
   }, [bookmarks, classifications]);
 
-  async function refreshBookmarks(): Promise<void> {
+  async function refreshBookmarks(options: { keepMessage?: boolean } = {}): Promise<void> {
     setIsLoading(true);
-    setMessage(null);
+    if (!options.keepMessage) {
+      setMessage(null);
+    }
     try {
       const nextBookmarks = await window.shuhai.getBookmarks();
       setBookmarks(nextBookmarks);
@@ -59,6 +79,22 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
       setMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function checkLinks(): Promise<void> {
+    setIsCheckingLinks(true);
+    setUrlCheckProgress(null);
+    setMessage(null);
+    try {
+      const progress = await window.shuhai.startUrlCheck();
+      setUrlCheckProgress(progress);
+      setMessage(`检测完成：${progress.completed}/${progress.total}，发现 ${progress.dead} 个死链`);
+      await refreshBookmarks({ keepMessage: true });
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setIsCheckingLinks(false);
     }
   }
 
@@ -122,7 +158,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
             </option>
           ))}
         </select>
-        <button type="button" onClick={refreshBookmarks} disabled={isLoading}>
+        <button type="button" onClick={() => refreshBookmarks()} disabled={isLoading}>
           刷新
         </button>
         <button
@@ -131,6 +167,13 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
           disabled={isClassifying || visibleBookmarks.length === 0}
         >
           {isClassifying ? '分类中...' : 'AI 分类'}
+        </button>
+        <button
+          type="button"
+          onClick={checkLinks}
+          disabled={isCheckingLinks || bookmarks.length === 0}
+        >
+          {isCheckingLinks ? '检测中...' : '检测链接'}
         </button>
         <button
           type="button"
@@ -145,7 +188,11 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
 
       <div className="list-meta">
         <span>{isLoading ? '读取中...' : `${visibleBookmarks.length} / ${bookmarks.length} 条`}</span>
-        <span>{config.vaultPath || '未配置 Vault'}</span>
+        <span>
+          {urlCheckProgress
+            ? formatUrlCheckProgress(urlCheckProgress)
+            : config.vaultPath || '未配置 Vault'}
+        </span>
       </div>
 
       <div className="bookmark-list">
