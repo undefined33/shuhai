@@ -1,0 +1,45 @@
+# Claude Code local config
+.claude/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+
+# Electron
+out/
+release/
+
+# Database (user data, not committed)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

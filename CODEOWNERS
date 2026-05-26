@@ -1,0 +1,22 @@
+# CODEOWNERS — defines review responsibility per path
+
+# Architecture & orchestration
+/docs/                    @architect
+/scripts/                 @architect
+/.github/                 @architect
+/CLAUDE.md                @architect
+/AGENTS.md                @architect
+/tsconfig.base.json       @architect
+/eslint.config.mjs        @architect
+/package.json             @architect
+/pnpm-workspace.yaml      @architect
+
+# Core implementation
+/packages/desktop/src/main/   @core-dev
+/packages/shared/             @core-dev
+
+# UI / Renderer
+/packages/desktop/src/renderer/  @peripheral-dev
+
+# Tests (QA can comment but not approve)
+/packages/*/tests/        @architect @core-dev

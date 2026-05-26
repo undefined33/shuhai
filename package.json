@@ -1,0 +1,31 @@
+{
+  "name": "shuhai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-driven bookmark knowledge management tool",
+  "author": "ShuHai Contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.27.0",
+    "@types/node": "22.15.21",
+    "eslint": "9.27.0",
+    "eslint-config-prettier": "10.1.5",
+    "globals": "16.1.0",
+    "prettier": "3.5.3",
+    "tsx": "4.19.4",
+    "typescript-eslint": "8.32.1",
+    "vitest": "3.1.4"
+  }
+}
