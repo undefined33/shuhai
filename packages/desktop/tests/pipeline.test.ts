@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFile, mkdir, rm, readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ChromeFileReader } from '../src/main/readers/chrome-file-reader.js';
 import { BookmarkPipeline } from '../src/main/pipeline/index.js';
@@ -125,10 +125,46 @@ describe('Full Pipeline (integration)', () => {
     expect(content).toContain('---');
     expect(content).toContain('title: "GitHub"');
     expect(content).toContain('url: "https://github.com"');
-    expect(content).toContain('category: 开发/代码');
-    expect(content).toContain('tags: [GitHub]');
+    expect(content).toContain('category: "开发/代码"');
+    expect(content).toContain('tags: ["GitHub"]');
     expect(content).toContain('shuhai_format: 1');
     expect(content).toContain('# GitHub');
+  });
+
+  it('sanitizes exporter attack payloads in generated markdown', async () => {
+    const vaultPath = join(testDir, 'security-vault');
+    await mkdir(vaultPath, { recursive: true });
+
+    const { MarkdownExporter } = await import('../src/main/exporters/markdown-exporter.js');
+    const exporter = new MarkdownExporter(vaultPath);
+
+    const filePath = await exporter.exportOne({
+      url: 'javascript:alert(1)',
+      title: '.\n---\ninjected: true\n<%* app.vault.delete() %> {{ title }}',
+      source: 'chrome',
+      contentType: 'article',
+      createdAt: new Date('2024-01-15'),
+      id: 'attack',
+      normalizedUrl: 'javascript:alert(1)',
+      category: '../../outside/<%* code %>',
+      tags: ['tag\nadmin: true', '{{ tag }}'],
+      aiTags: ['<%* tag %>'],
+      summary: 'Summary <%* app.vault.delete() %> {{ template }}',
+      status: 'unchecked',
+    });
+
+    const content = await readFile(filePath, 'utf-8');
+    const frontmatterMarkers = content.match(/^---$/gm) ?? [];
+
+    expect(resolve(filePath).startsWith(resolve(join(vaultPath, 'Bookmarks')))).toBe(true);
+    expect(frontmatterMarkers).toHaveLength(2);
+    expect(content).not.toContain('\ninjected: true');
+    expect(content).not.toContain('<%');
+    expect(content).not.toContain('%>');
+    expect(content).not.toContain('{{');
+    expect(content).not.toContain('}}');
+    expect(content).toContain('url: ""');
+    expect(content).toContain('不安全链接已过滤');
   });
 
   it('does not overwrite existing body content', async () => {
@@ -166,4 +202,3 @@ describe('Full Pipeline (integration)', () => {
     expect(updated).toContain('status: dead');
   });
 });
-

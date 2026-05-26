@@ -3,40 +3,42 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { ProcessedBookmark } from '@shuhai/shared';
 import { urlHash } from '../pipeline/normalize-url.js';
-
-/**
- * Sanitize a string for use as a filename.
- * Replaces illegal characters, preserves CJK.
- */
-function sanitizeFilename(name: string): string {
-  return name
-    .replace(/[/\\:*?"<>|]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80);
-}
+import {
+  safeCategoryPath,
+  safeMarkdownUrl,
+  sanitizeCategory,
+  sanitizeFilename,
+  sanitizeMarkdownBlock,
+  sanitizeMarkdownText,
+  sanitizeYamlString,
+} from './sanitize.js';
 
 /**
  * Generate YAML frontmatter from a processed bookmark.
  */
 function generateFrontmatter(bookmark: ProcessedBookmark): string {
   const lines = ['---'];
-  lines.push(`title: "${bookmark.title.replace(/"/g, '\\"')}"`);
-  lines.push(`url: "${bookmark.url}"`);
-  lines.push(`sources: [${bookmark.source}]`);
+  lines.push(`title: "${sanitizeYamlString(bookmark.title)}"`);
+  lines.push(`url: "${sanitizeYamlString(safeMarkdownUrl(bookmark.url))}"`);
+  lines.push(`sources: ["${sanitizeYamlString(bookmark.source)}"]`);
 
-  const allTags = [...(bookmark.aiTags || []), ...(bookmark.tags || [])];
+  const allTags = [...(bookmark.aiTags || []), ...(bookmark.tags || [])]
+    .map(sanitizeYamlString)
+    .filter((tag) => tag.length > 0);
   if (allTags.length > 0) {
-    lines.push(`tags: [${allTags.join(', ')}]`);
+    lines.push(`tags: [${allTags.map((tag) => `"${tag}"`).join(', ')}]`);
   }
 
-  lines.push(`category: ${bookmark.category}`);
+  lines.push(`category: "${sanitizeYamlString(sanitizeCategory(bookmark.category))}"`);
   lines.push(`created: ${bookmark.createdAt.toISOString().split('T')[0]}`);
   lines.push(`archived: ${new Date().toISOString().split('T')[0]}`);
   lines.push(`status: ${bookmark.status}`);
 
   if (bookmark.resolvedUrl && bookmark.resolvedUrl !== bookmark.url) {
-    lines.push(`resolved_url: "${bookmark.resolvedUrl}"`);
+    const resolvedUrl = safeMarkdownUrl(bookmark.resolvedUrl);
+    if (resolvedUrl) {
+      lines.push(`resolved_url: "${sanitizeYamlString(resolvedUrl)}"`);
+    }
   }
   if (bookmark.confidence !== undefined) {
     lines.push(`ai_classified: true`);
@@ -54,16 +56,27 @@ function generateFrontmatter(bookmark: ProcessedBookmark): string {
  */
 function generateBody(bookmark: ProcessedBookmark): string {
   const lines: string[] = [];
+  const title = sanitizeMarkdownText(bookmark.title) || 'Untitled';
+  const source = sanitizeMarkdownText(bookmark.source);
+  const categories = bookmark.categories
+    ?.map(sanitizeMarkdownText)
+    .filter((category) => category.length > 0);
+  const bookmarkUrl = safeMarkdownUrl(bookmark.url);
+
   lines.push('');
-  lines.push(`# ${bookmark.title}`);
+  lines.push(`# ${title}`);
   lines.push('');
 
-  if (bookmark.categories && bookmark.categories.length > 0) {
-    lines.push(`- **来源**: Chrome 书签 > ${bookmark.categories.join(' > ')}`);
+  if (categories && categories.length > 0) {
+    lines.push(`- **来源**: Chrome 书签 > ${categories.join(' > ')}`);
   } else {
-    lines.push(`- **来源**: ${bookmark.source}`);
+    lines.push(`- **来源**: ${source}`);
   }
-  lines.push(`- **原始链接**: [点击访问](${bookmark.url})`);
+  if (bookmarkUrl) {
+    lines.push(`- **原始链接**: [点击访问](${bookmarkUrl})`);
+  } else {
+    lines.push('- **原始链接**: 不安全链接已过滤');
+  }
 
   const statusIcon = bookmark.status === 'alive' ? '✅ 有效' :
     bookmark.status === 'dead' ? '❌ 失效' :
@@ -74,7 +87,7 @@ function generateBody(bookmark: ProcessedBookmark): string {
   if (bookmark.summary) {
     lines.push('## AI 摘要');
     lines.push('');
-    lines.push(bookmark.summary);
+    lines.push(sanitizeMarkdownBlock(bookmark.summary));
     lines.push('');
   }
 
@@ -98,8 +111,7 @@ export class MarkdownExporter {
    */
   async exportOne(bookmark: ProcessedBookmark): Promise<string> {
     const filename = `${sanitizeFilename(bookmark.title)}-${urlHash(bookmark.url)}.md`;
-    const categoryDir = bookmark.category.replace(/\//g, '/');
-    const dir = join(this.vaultPath, 'Bookmarks', categoryDir);
+    const dir = safeCategoryPath(this.vaultPath, bookmark.category);
     const filePath = join(dir, filename);
 
     await mkdir(dir, { recursive: true });
