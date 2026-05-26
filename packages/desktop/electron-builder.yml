@@ -1,0 +1,14 @@
+appId: com.shuhai.desktop
+productName: ShuHai
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+asar: true
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

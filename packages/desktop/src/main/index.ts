@@ -1,13 +1,69 @@
-import { getChromeBookmarksPath } from '@shuhai/shared';
+import { app, BrowserWindow } from 'electron';
+import { registerIpcHandlers } from './ipc.js';
+import { createMainWindow } from './window.js';
+import { createAppTray } from './tray.js';
+import { syncAllBookmarks } from './bookmark-service.js';
+import { loadConfig } from './app-config.js';
 
-/**
- * ShuHai Desktop - Main Process Entry
- * Minimal bootstrap for engineering closure verification.
- */
-async function main() {
-  const bookmarksPath = getChromeBookmarksPath();
-  console.log(`[ShuHai] Chrome bookmarks path: ${bookmarksPath}`);
-  console.log('[ShuHai] Desktop app initialized (dev mode)');
+let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
+
+function showMainWindow(): void {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
 }
 
-main().catch(console.error);
+async function bootstrap(): Promise<void> {
+  const config = await loadConfig();
+
+  registerIpcHandlers();
+
+  mainWindow = await createMainWindow({
+    initialBounds: config.windowBounds,
+    isQuitting: () => isQuitting,
+  });
+
+  createAppTray({
+    showMainWindow,
+    syncNow: async () => {
+      const currentConfig = await loadConfig();
+      await syncAllBookmarks(currentConfig);
+    },
+    quit: () => {
+      isQuitting = true;
+      mainWindow?.destroy();
+      app.quit();
+    },
+  });
+}
+
+const hasLock = app.requestSingleInstanceLock();
+if (!hasLock) {
+  app.quit();
+} else {
+  app.on('second-instance', showMainWindow);
+
+  app.whenReady()
+    .then(bootstrap)
+    .catch((error: unknown) => {
+      console.error('[ShuHai] Failed to start:', error);
+      app.quit();
+    });
+}
+
+app.on('activate', showMainWindow);
+
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform === 'darwin') {
+    return;
+  }
+  // Keep the app alive so the tray menu can reopen the main window.
+});
