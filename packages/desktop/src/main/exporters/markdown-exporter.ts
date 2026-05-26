@@ -13,6 +13,8 @@ import {
   sanitizeYamlString,
 } from './sanitize.js';
 
+const DASHBOARD_FILENAME = 'Dashboard.md';
+
 /**
  * Generate YAML frontmatter from a processed bookmark.
  */
@@ -114,6 +116,7 @@ export class MarkdownExporter {
     const dir = safeCategoryPath(this.vaultPath, bookmark.category);
     const filePath = join(dir, filename);
 
+    await this.ensureDashboard();
     await mkdir(dir, { recursive: true });
 
     // If file exists, only update frontmatter (preserve body)
@@ -141,4 +144,58 @@ export class MarkdownExporter {
     await writeFile(tmpPath, content, 'utf-8');
     await rename(tmpPath, filePath);
   }
+
+  private async ensureDashboard(): Promise<void> {
+    const dashboardDir = join(this.vaultPath, 'Bookmarks');
+    const dashboardPath = join(dashboardDir, DASHBOARD_FILENAME);
+
+    if (existsSync(dashboardPath)) {
+      return;
+    }
+
+    await mkdir(dashboardDir, { recursive: true });
+    try {
+      await writeFile(dashboardPath, generateDashboard(), { encoding: 'utf-8', flag: 'wx' });
+    } catch (error) {
+      if (!isFileAlreadyExistsError(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
+function generateDashboard(): string {
+  return [
+    '# Bookmarks Dashboard',
+    '',
+    '## 死链列表',
+    '```dataview',
+    'TABLE url, category, file.mtime AS "Updated"',
+    'FROM "Bookmarks"',
+    'WHERE shuhai_format = 1 AND status = "dead"',
+    'SORT file.mtime DESC',
+    '```',
+    '',
+    '## 本周新增',
+    '```dataview',
+    'TABLE url, category, created',
+    'FROM "Bookmarks"',
+    'WHERE shuhai_format = 1 AND created >= date(today) - dur(7 days)',
+    'SORT created DESC',
+    '```',
+    '',
+    '## 按来源统计',
+    '```dataview',
+    'TABLE length(rows) AS "Count"',
+    'FROM "Bookmarks"',
+    'WHERE shuhai_format = 1',
+    'GROUP BY sources',
+    'SORT length(rows) DESC',
+    '```',
+    '',
+  ].join('\n');
+}
+
+function isFileAlreadyExistsError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 }

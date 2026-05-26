@@ -201,4 +201,36 @@ describe('Full Pipeline (integration)', () => {
     expect(updated).toContain('我的笔记：这篇文章很有用');
     expect(updated).toContain('status: dead');
   });
+
+  it('creates a Dataview dashboard on first export without overwriting it', async () => {
+    const vaultPath = join(testDir, 'dashboard-vault');
+    await mkdir(vaultPath, { recursive: true });
+
+    const { MarkdownExporter } = await import('../src/main/exporters/markdown-exporter.js');
+    const exporter = new MarkdownExporter(vaultPath);
+    const bookmark = {
+      url: 'https://example.com/dashboard',
+      title: 'Dashboard Bookmark',
+      source: 'chrome' as const,
+      contentType: 'article' as const,
+      createdAt: new Date('2024-06-01'),
+      id: 'dashboard',
+      normalizedUrl: 'https://example.com/dashboard',
+      category: '文章',
+      status: 'unchecked' as const,
+    };
+
+    await exporter.exportOne(bookmark);
+    const dashboardPath = join(vaultPath, 'Bookmarks', 'Dashboard.md');
+    const dashboard = await readFile(dashboardPath, 'utf-8');
+
+    expect(dashboard).toContain('## 死链列表');
+    expect(dashboard).toContain('## 本周新增');
+    expect(dashboard).toContain('## 按来源统计');
+    expect(dashboard).toContain('```dataview');
+
+    await writeFile(dashboardPath, '用户自定义 Dashboard', 'utf-8');
+    await exporter.exportOne({ ...bookmark, id: 'dashboard-2', url: 'https://example.com/next' });
+    await expect(readFile(dashboardPath, 'utf-8')).resolves.toBe('用户自定义 Dashboard');
+  });
 });
