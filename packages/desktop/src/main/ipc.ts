@@ -2,10 +2,12 @@ import { dialog, ipcMain } from 'electron';
 import type { ProcessedBookmark } from '@shuhai/shared';
 import { loadConfig, updateConfig, type AppConfig } from './app-config.js';
 import {
+  abortUrlHealthCheck,
   classifyBookmarks,
   detectChromeProfiles,
   exportProcessedBookmarks,
   getBookmarkSnapshot,
+  runUrlHealthCheck,
 } from './bookmark-service.js';
 
 export function registerIpcHandlers(): void {
@@ -31,5 +33,18 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('bookmarks:export', async (_event, bookmarks: ProcessedBookmark[]) => {
     return exportProcessedBookmarks(bookmarks, await loadConfig());
+  });
+
+  ipcMain.handle('url-check:start', async (event) => {
+    return runUrlHealthCheck({
+      onProgress: (progress) => {
+        event.sender.send('url-check:progress', progress);
+      },
+    });
+  });
+
+  ipcMain.handle('url-check:abort', () => {
+    abortUrlHealthCheck();
+    return true;
   });
 }

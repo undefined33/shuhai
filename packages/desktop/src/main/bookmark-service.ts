@@ -11,11 +11,14 @@ import { AIClassifier } from './ai/ai-classifier.js';
 import { MarkdownExporter } from './exporters/markdown-exporter.js';
 import type { AppConfig } from './app-config.js';
 import { getDatabase } from './db/index.js';
+import { UrlHealthChecker, type UrlCheckOptions, type UrlCheckProgress } from './health/index.js';
 
 export type BookmarkClassification = ClassificationResult & {
   confidence?: number;
   aiClassified: boolean;
 };
+
+let activeUrlHealthChecker: UrlHealthChecker | null = null;
 
 export async function detectChromeProfiles(): Promise<string[]> {
   try {
@@ -180,6 +183,29 @@ export async function syncAllBookmarks(config: AppConfig): Promise<ExportResult>
   }
 
   return exportProcessedBookmarks(bookmarks, config);
+}
+
+export async function runUrlHealthCheck(
+  options: UrlCheckOptions = {},
+): Promise<UrlCheckProgress> {
+  if (activeUrlHealthChecker) {
+    throw new Error('URL health check is already running');
+  }
+
+  const checker = new UrlHealthChecker(getDatabase(), options);
+  activeUrlHealthChecker = checker;
+  try {
+    return await checker.runAll();
+  } finally {
+    if (activeUrlHealthChecker === checker) {
+      activeUrlHealthChecker = null;
+    }
+  }
+}
+
+export function abortUrlHealthCheck(): void {
+  activeUrlHealthChecker?.abort();
+  activeUrlHealthChecker = null;
 }
 
 export function applyClassification(
