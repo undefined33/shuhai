@@ -41,6 +41,10 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
     await shell.openExternal(url);
   });
 
+  ipcMain.handle('system:show-item-in-folder', (_event, itemPath: string) => {
+    shell.showItemInFolder(itemPath);
+  });
+
   ipcMain.handle('bookmarks:get', async () => getBookmarkSnapshot(await loadConfig()));
 
   ipcMain.handle('bookmarks:classify', async (_event, urls: string[]) => {

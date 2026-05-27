@@ -35,6 +35,11 @@ export interface WorkflowGuide {
   steps: WorkflowStep[];
 }
 
+export interface EmptyBookmarkState {
+  title: string;
+  detail: string;
+}
+
 export function formatSyncMessage(result: SyncResult): string {
   return `书签已同步：新增 ${result.added}，更新 ${result.updated}，移除 ${result.removed}`;
 }
@@ -55,6 +60,27 @@ export function classificationRecordToMap(
   record: BookmarkClassificationRecord,
 ): Map<string, BookmarkClassificationRecord[string]> {
   return new Map(Object.entries(record));
+}
+
+export function getEmptyBookmarkState(
+  totalBookmarks: number,
+  visibleBookmarks: number,
+): EmptyBookmarkState | null {
+  if (visibleBookmarks > 0) {
+    return null;
+  }
+
+  if (totalBookmarks === 0) {
+    return {
+      title: '尚未同步到书签',
+      detail: '请确认 Chrome 配置文件正确，或点击刷新重新读取。',
+    };
+  }
+
+  return {
+    title: '当前筛选条件无匹配结果',
+    detail: '试试清除搜索关键词，或切回“全部”分类。',
+  };
 }
 
 export function getWorkflowGuide(state: WorkflowGuideState): WorkflowGuide {

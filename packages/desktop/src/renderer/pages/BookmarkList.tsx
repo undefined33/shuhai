@@ -15,6 +15,7 @@ import {
   classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
+  getEmptyBookmarkState,
   getSlowClassificationMessage,
   getWorkflowGuide,
 } from './bookmark-list-view-model.js';
@@ -39,6 +40,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
   const [classificationElapsedMs, setClassificationElapsedMs] = useState(0);
+  const [lastExportPath, setLastExportPath] = useState<string | null>(null);
   const [message, setMessage] = useState<UserMessage | null>(null);
 
   useEffect(() => {
@@ -143,6 +145,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     classificationElapsedMs,
     hasAiProvider,
   );
+  const emptyState = getEmptyBookmarkState(bookmarks.length, visibleBookmarks.length);
 
   async function refreshBookmarks(options: { keepMessage?: boolean } = {}): Promise<void> {
     setIsLoading(true);
@@ -209,13 +212,29 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         visibleBookmarks.map((bookmark) => applyClassification(bookmark, classifications)),
       );
       setExportState(result.errors.length > 0 ? 'error' : 'done');
+      setLastExportPath(config.vaultPath);
       setMessage(userMessage(
         result.errors.length > 0 ? 'error' : 'success',
-        `导出 ${result.exported} 条，跳过 ${result.skipped} 条`,
+        result.errors.length > 0
+          ? `导出 ${result.exported} 条，跳过 ${result.skipped} 条。请检查错误后重试。`
+          : `导出 ${result.exported} 条，跳过 ${result.skipped} 条。文件已写入 ${config.vaultPath}`,
       ));
     } catch (reason) {
       setExportState('error');
+      setLastExportPath(null);
       setMessage(errorMessage(reason, '导出失败，请确认 Vault 路径和文件权限后重试'));
+    }
+  }
+
+  async function openExportLocation(): Promise<void> {
+    if (!lastExportPath) {
+      return;
+    }
+
+    try {
+      await window.shuhai.showItemInFolder(lastExportPath);
+    } catch (reason) {
+      setMessage(errorMessage(reason, '无法打开导出目录，请手动检查 Vault 路径'));
     }
   }
 
@@ -312,6 +331,14 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
           {message.text}
         </p>
       )}
+      {lastExportPath && exportState === 'done' && (
+        <div className="inline-feedback">
+          <span>导出位置：{lastExportPath}</span>
+          <button type="button" className="ghost" onClick={openExportLocation}>
+            在文件管理器中打开
+          </button>
+        </div>
+      )}
       {slowClassificationMessage && (
         <p className="notice warning" aria-live="polite">{slowClassificationMessage}</p>
       )}
@@ -333,8 +360,16 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
             onOpenError={(text) => setMessage(userMessage('error', text))}
           />
         ))}
-        {!isLoading && visibleBookmarks.length === 0 && (
-          <div className="empty-state">没有匹配的书签</div>
+        {!isLoading && emptyState && (
+          <div className="empty-state">
+            <strong>{emptyState.title}</strong>
+            <span>{emptyState.detail}</span>
+            {bookmarks.length === 0 && (
+              <button type="button" onClick={() => refreshBookmarks()}>
+                刷新
+              </button>
+            )}
+          </div>
         )}
       </div>
     </section>

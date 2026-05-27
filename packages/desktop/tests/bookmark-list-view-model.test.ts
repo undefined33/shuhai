@@ -3,6 +3,7 @@ import {
   classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
+  getEmptyBookmarkState,
   getSlowClassificationMessage,
   getWorkflowGuide,
 } from '../src/renderer/pages/bookmark-list-view-model.js';
@@ -46,6 +47,18 @@ describe('BookmarkList view model', () => {
       confidence: 0.82,
       aiClassified: true,
     });
+  });
+
+  it('separates empty bookmarks from empty filters', () => {
+    expect(getEmptyBookmarkState(0, 0)).toEqual({
+      title: '尚未同步到书签',
+      detail: '请确认 Chrome 配置文件正确，或点击刷新重新读取。',
+    });
+    expect(getEmptyBookmarkState(5, 0)).toEqual({
+      title: '当前筛选条件无匹配结果',
+      detail: '试试清除搜索关键词，或切回“全部”分类。',
+    });
+    expect(getEmptyBookmarkState(5, 2)).toBeNull();
   });
 
   it('guides users through classification before link checks and export', () => {

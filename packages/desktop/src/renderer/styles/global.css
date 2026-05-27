@@ -368,6 +368,20 @@ a {
   font-size: 13px;
 }
 
+.inline-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .bookmark-list {
   display: grid;
   min-height: 0;
@@ -463,9 +477,17 @@ a {
   display: grid;
   min-height: 220px;
   place-items: center;
+  align-content: center;
+  gap: 10px;
   border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-state strong {
+  color: var(--text);
 }
 
 .setup-shell {
