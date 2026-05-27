@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { AppConfig } from '../../main/app-config.js';
+import {
+  MESSAGE_AUTO_DISMISS_MS,
+  errorMessage,
+  messageClassName,
+  userMessage,
+  type UserMessage,
+} from '../message.js';
 
 interface SettingsProps {
   config: AppConfig;
@@ -9,7 +16,8 @@ interface SettingsProps {
 export function Settings({ config, onConfigChange }: SettingsProps) {
   const [draft, setDraft] = useState<AppConfig>(config);
   const [profiles, setProfiles] = useState<string[]>([config.chromeProfile]);
-  const [status, setStatus] = useState<string | null>(null);
+  const [message, setMessage] = useState<UserMessage | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setDraft(config);
@@ -19,6 +27,20 @@ export function Settings({ config, onConfigChange }: SettingsProps) {
     window.shuhai.getChromeProfiles().then(setProfiles).catch(() => setProfiles(['Default']));
   }, []);
 
+  useEffect(() => {
+    if (!message) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setMessage(null);
+    }, MESSAGE_AUTO_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [message]);
+
   async function selectVaultPath(): Promise<void> {
     const selectedPath = await window.shuhai.selectDirectory();
     if (selectedPath) {
@@ -27,10 +49,17 @@ export function Settings({ config, onConfigChange }: SettingsProps) {
   }
 
   async function save(): Promise<void> {
-    setStatus(null);
-    const nextConfig = await window.shuhai.setConfig(draft);
-    onConfigChange(nextConfig);
-    setStatus('设置已保存');
+    setMessage(null);
+    setIsSaving(true);
+    try {
+      const nextConfig = await window.shuhai.setConfig(draft);
+      onConfigChange(nextConfig);
+      setMessage(userMessage('success', '设置已保存'));
+    } catch (reason) {
+      setMessage(errorMessage(reason, '保存设置失败，请检查 Vault 路径或稍后重试'));
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -40,12 +69,16 @@ export function Settings({ config, onConfigChange }: SettingsProps) {
           <p className="eyebrow">应用配置</p>
           <h1>设置</h1>
         </div>
-        <button type="button" onClick={save}>
-          保存
+        <button type="button" onClick={save} disabled={isSaving}>
+          {isSaving ? '保存中...' : '保存'}
         </button>
       </div>
 
-      {status && <p className="notice">{status}</p>}
+      {message && (
+        <p className={messageClassName(message)} aria-live="polite">
+          {message.text}
+        </p>
+      )}
 
       <div className="settings-grid">
         <label className="field span-2">

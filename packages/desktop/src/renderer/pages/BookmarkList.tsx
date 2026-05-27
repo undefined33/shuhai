@@ -5,6 +5,13 @@ import type { BookmarkClassification } from '../../main/bookmark-service.js';
 import type { UrlCheckProgress } from '../../main/health/index.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
 import {
+  MESSAGE_AUTO_DISMISS_MS,
+  errorMessage,
+  messageClassName,
+  userMessage,
+  type UserMessage,
+} from '../message.js';
+import {
   classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
@@ -32,7 +39,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
   const [classificationElapsedMs, setClassificationElapsedMs] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<UserMessage | null>(null);
 
   useEffect(() => {
     refreshBookmarks();
@@ -40,7 +47,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
 
   useEffect(() => {
     return window.shuhai.onBookmarksChanged((result) => {
-      setMessage(formatSyncMessage(result));
+      setMessage(userMessage('info', formatSyncMessage(result)));
       void refreshBookmarks({ keepMessage: true });
     });
   }, [config.chromeProfile]);
@@ -48,9 +55,23 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   useEffect(() => {
     return window.shuhai.onUrlCheckProgress((progress) => {
       setUrlCheckProgress(progress);
-      setMessage(formatUrlCheckProgress(progress));
+      setMessage(userMessage('info', formatUrlCheckProgress(progress)));
     });
   }, []);
+
+  useEffect(() => {
+    if (!message) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setMessage(null);
+    }, MESSAGE_AUTO_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [message]);
 
   useEffect(() => {
     if (!isClassifying) {
@@ -132,7 +153,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
       const nextBookmarks = await window.shuhai.getBookmarks();
       setBookmarks(nextBookmarks);
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : String(reason));
+      setMessage(errorMessage(reason, '读取书签失败，请确认 Chrome Profile 正确或稍后重试'));
     } finally {
       setIsLoading(false);
     }
@@ -146,10 +167,13 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     try {
       const progress = await window.shuhai.startUrlCheck();
       setUrlCheckProgress(progress);
-      setMessage(`检测完成：${progress.completed}/${progress.total}，发现 ${progress.dead} 个死链`);
+      setMessage(userMessage(
+        'success',
+        `检测完成：${progress.completed}/${progress.total}，发现 ${progress.dead} 个死链`,
+      ));
       await refreshBookmarks({ keepMessage: true });
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : String(reason));
+      setMessage(errorMessage(reason, '检测链接失败，请检查网络后重试'));
     } finally {
       setIsCheckingLinks(false);
     }
@@ -158,14 +182,20 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   async function classifyVisibleBookmarks(): Promise<void> {
     setIsClassifying(true);
     setExportState('idle');
-    setMessage(`正在分类 ${visibleBookmarks.length} 条书签，结果会保存到 ShuHai 本地库。`);
+    setMessage(userMessage(
+      'info',
+      `正在分类 ${visibleBookmarks.length} 条书签，结果会保存到 ShuHai 本地库。`,
+    ));
     try {
       const result = await window.shuhai.classifyBookmarks(visibleBookmarks.map((item) => item.url));
       const nextClassifications = classificationRecordToMap(result);
       setClassifications(nextClassifications);
-      setMessage(`已分类 ${nextClassifications.size} 条书签，下一步可检测链接或导出到 Obsidian`);
+      setMessage(userMessage(
+        'success',
+        `已分类 ${nextClassifications.size} 条书签，下一步可检测链接或导出到 Obsidian`,
+      ));
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : String(reason));
+      setMessage(errorMessage(reason, '分类失败，请检查 AI 设置或稍后重试'));
     } finally {
       setIsClassifying(false);
     }
@@ -179,10 +209,13 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         visibleBookmarks.map((bookmark) => applyClassification(bookmark, classifications)),
       );
       setExportState(result.errors.length > 0 ? 'error' : 'done');
-      setMessage(`导出 ${result.exported} 条，跳过 ${result.skipped} 条`);
+      setMessage(userMessage(
+        result.errors.length > 0 ? 'error' : 'success',
+        `导出 ${result.exported} 条，跳过 ${result.skipped} 条`,
+      ));
     } catch (reason) {
       setExportState('error');
-      setMessage(reason instanceof Error ? reason.message : String(reason));
+      setMessage(errorMessage(reason, '导出失败，请确认 Vault 路径和文件权限后重试'));
     }
   }
 
@@ -274,8 +307,14 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         </button>
       </div>
 
-      {message && <p className={exportState === 'error' ? 'alert' : 'notice'}>{message}</p>}
-      {slowClassificationMessage && <p className="notice warning">{slowClassificationMessage}</p>}
+      {message && (
+        <p className={messageClassName(message)} aria-live="polite">
+          {message.text}
+        </p>
+      )}
+      {slowClassificationMessage && (
+        <p className="notice warning" aria-live="polite">{slowClassificationMessage}</p>
+      )}
 
       <div className="list-meta">
         <span>{isLoading ? '读取中...' : `${visibleBookmarks.length} / ${bookmarks.length} 条`}</span>
@@ -291,7 +330,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
           <BookmarkCard
             key={bookmark.id}
             bookmark={applyClassification(bookmark, classifications)}
-            onOpenError={setMessage}
+            onOpenError={(text) => setMessage(userMessage('error', text))}
           />
         ))}
         {!isLoading && visibleBookmarks.length === 0 && (

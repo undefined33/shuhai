@@ -335,10 +335,17 @@ a {
   font-size: 14px;
 }
 
-.notice {
+.notice,
+.notice.success {
   border: 1px solid rgba(15, 118, 110, 0.28);
   background: rgba(15, 118, 110, 0.08);
   color: var(--success);
+}
+
+.notice.info {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--primary-strong);
 }
 
 .notice.warning {
@@ -347,7 +354,8 @@ a {
   color: var(--warning);
 }
 
-.alert {
+.alert,
+.notice.error {
   border: 1px solid rgba(180, 35, 24, 0.28);
   background: rgba(180, 35, 24, 0.08);
   color: var(--danger);
