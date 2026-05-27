@@ -47,6 +47,7 @@ export interface ShuHaiAPI {
   setConfig(config: Partial<AppConfig>): Promise<AppConfig>;
   selectDirectory(): Promise<string | null>;
   getChromeProfiles(): Promise<string[]>;
+  openExternal(url: string): Promise<void>;
   onBookmarksChanged(callback: (result: SyncResult) => void): () => void;
   startUrlCheck(): Promise<UrlCheckProgress>;
   abortUrlCheck(): Promise<boolean>;
@@ -69,6 +70,7 @@ const api: ShuHaiAPI = {
   },
   selectDirectory: () => ipcRenderer.invoke('system:select-directory') as Promise<string | null>,
   getChromeProfiles: () => ipcRenderer.invoke('system:get-chrome-profiles') as Promise<string[]>,
+  openExternal: (url: string) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   startUrlCheck: () => ipcRenderer.invoke('url-check:start') as Promise<UrlCheckProgress>,
   abortUrlCheck: () => ipcRenderer.invoke('url-check:abort') as Promise<boolean>,
   onBookmarksChanged: (callback: (result: SyncResult) => void) => {

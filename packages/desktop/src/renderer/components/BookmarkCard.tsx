@@ -1,22 +1,34 @@
 import type { ProcessedBookmark } from '@shuhai/shared';
+import type { MouseEvent } from 'react';
 import { StatusBadge } from './StatusBadge.js';
 
 interface BookmarkCardProps {
   bookmark: ProcessedBookmark;
+  onOpenError?: (message: string) => void;
 }
 
-export function BookmarkCard({ bookmark }: BookmarkCardProps) {
+export function BookmarkCard({ bookmark, onOpenError }: BookmarkCardProps) {
   const createdAt = new Date(bookmark.createdAt).toLocaleDateString('zh-CN');
   const tags = [...(bookmark.aiTags ?? []), ...(bookmark.tags ?? [])];
+
+  async function openBookmark(event: MouseEvent<HTMLAnchorElement>): Promise<void> {
+    event.preventDefault();
+    try {
+      await window.shuhai.openExternal(bookmark.url);
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      onOpenError?.(`无法打开链接：${detail}。请检查 URL 是否为 http/https 地址。`);
+    }
+  }
 
   return (
     <article className="bookmark-card">
       <div className="bookmark-main">
         <div className="bookmark-title-row">
-          <h2>{bookmark.title || bookmark.url}</h2>
+          <h2 title={bookmark.title || bookmark.url}>{bookmark.title || bookmark.url}</h2>
           <StatusBadge status={bookmark.status} />
         </div>
-        <a href={bookmark.url} title={bookmark.url}>
+        <a href={bookmark.url} title={bookmark.url} onClick={openBookmark}>
           {bookmark.url}
         </a>
         <div className="bookmark-meta">

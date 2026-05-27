@@ -289,6 +289,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
           <BookmarkCard
             key={bookmark.id}
             bookmark={applyClassification(bookmark, classifications)}
+            onOpenError={setMessage}
           />
         ))}
         {!isLoading && visibleBookmarks.length === 0 && (

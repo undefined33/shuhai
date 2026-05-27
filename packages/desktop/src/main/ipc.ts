@@ -1,4 +1,4 @@
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import type { ProcessedBookmark } from '@shuhai/shared';
 import { loadConfig, updateConfig, type AppConfig } from './app-config.js';
 import {
@@ -10,6 +10,7 @@ import {
   runUrlHealthCheck,
 } from './bookmark-service.js';
 import type { SyncResult } from './sync/index.js';
+import { assertAllowedExternalUrl } from './external-url.js';
 
 interface IpcHandlerOptions {
   onConfigChanged?: (config: AppConfig) => Promise<void> | void;
@@ -33,6 +34,11 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
   });
 
   ipcMain.handle('system:get-chrome-profiles', () => detectChromeProfiles());
+
+  ipcMain.handle('system:open-external', async (_event, url: string) => {
+    assertAllowedExternalUrl(url);
+    await shell.openExternal(url);
+  });
 
   ipcMain.handle('bookmarks:get', async () => getBookmarkSnapshot(await loadConfig()));
 

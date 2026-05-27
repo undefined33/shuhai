@@ -1,7 +1,8 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { updateConfig, type AppConfig } from './app-config.js';
+import { assertAllowedExternalUrl } from './external-url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -49,9 +50,36 @@ export async function createMainWindow(options: CreateMainWindowOptions): Promis
     await window.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
+  attachExternalNavigationGuards(window);
+
   return window;
 }
 
 function persistWindowBounds(window: BrowserWindow): void {
   void updateConfig({ windowBounds: window.getBounds() });
+}
+
+function attachExternalNavigationGuards(window: BrowserWindow): void {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrl(url);
+    return { action: 'deny' };
+  });
+
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url === window.webContents.getURL()) {
+      return;
+    }
+
+    event.preventDefault();
+    void openExternalUrl(url);
+  });
+}
+
+async function openExternalUrl(url: string): Promise<void> {
+  try {
+    assertAllowedExternalUrl(url);
+    await shell.openExternal(url);
+  } catch {
+    // Ignore blocked navigation attempts; the renderer shows errors for explicit user clicks.
+  }
 }
