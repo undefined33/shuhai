@@ -5,14 +5,41 @@ directories:
 files:
   - package.json
   - dist/main/**
-  - dist/preload/**
+  - dist/preload.js
+  - dist/preload.js.map
   - dist/renderer/**
+  - from: ../../node_modules/.pnpm/better-sqlite3@12.10.0/node_modules/better-sqlite3
+    to: node_modules/better-sqlite3
+    filter:
+      - package.json
+      - lib/**
+      - build/Release/better_sqlite3.node
+  - from: ../../node_modules/.pnpm/bindings@1.5.0/node_modules/bindings
+    to: node_modules/bindings
+    filter:
+      - package.json
+      - bindings.js
+  - from: ../../node_modules/.pnpm/file-uri-to-path@1.0.0/node_modules/file-uri-to-path
+    to: node_modules/file-uri-to-path
+    filter:
+      - package.json
+      - index.js
+  - from: ../../node_modules/.pnpm/p-limit@6.2.0/node_modules/p-limit
+    to: node_modules/p-limit
+    filter:
+      - package.json
+      - index.js
+  - from: ../../node_modules/.pnpm/yocto-queue@1.2.2/node_modules/yocto-queue
+    to: node_modules/yocto-queue
+    filter:
+      - package.json
+      - index.js
 npmRebuild: true
 asar: true
 asarUnpack:
-  - node_modules/better-sqlite3/build/Release/*.node
-  - node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/*.node
+  - '**/*.node'
 win:
+  signAndEditExecutable: false
   target:
     - nsis
 nsis:

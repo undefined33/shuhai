@@ -7,8 +7,16 @@ const require = createRequire(import.meta.url);
 
 const REQUIRED_ASAR_ENTRIES = [
   'dist/main/index.js',
-  'dist/preload/preload.cjs',
+  'dist/preload.js',
   'dist/renderer/index.html',
+];
+
+const REQUIRED_RUNTIME_DEPENDENCY_ENTRIES = [
+  'node_modules/better-sqlite3/lib/index.js',
+  'node_modules/bindings/bindings.js',
+  'node_modules/file-uri-to-path/index.js',
+  'node_modules/p-limit/index.js',
+  'node_modules/yocto-queue/index.js',
 ];
 
 export function verifyPackageArtifacts({
@@ -27,8 +35,8 @@ export function verifyPackageArtifacts({
   const nativeModulePath = findFile(unpackedDir, (file) => file.endsWith('better_sqlite3.node'));
   assertSizedFile(nativeModulePath, 50_000, 'better-sqlite3 native module');
 
-  const entries = asarEntries ?? listAsarEntries(appAsarPath);
-  for (const entry of REQUIRED_ASAR_ENTRIES) {
+  const entries = (asarEntries ?? listAsarEntries(appAsarPath)).map(normalizeAsarEntry);
+  for (const entry of [...REQUIRED_ASAR_ENTRIES, ...REQUIRED_RUNTIME_DEPENDENCY_ENTRIES]) {
     if (!entries.includes(entry)) {
       throw new Error(`Package app.asar is missing ${entry}`);
     }
@@ -43,6 +51,7 @@ export function verifyPackageArtifacts({
     appAsar: appAsarPath,
     nativeModule: nativeModulePath,
     entries: REQUIRED_ASAR_ENTRIES,
+    runtimeDependencies: REQUIRED_RUNTIME_DEPENDENCY_ENTRIES,
   };
 }
 
@@ -89,7 +98,11 @@ function listAsarEntries(appAsarPath) {
     throw new Error('Cannot locate @electron/asar to inspect app.asar');
   }
 
-  return asar.listPackage(appAsarPath).map((entry) => entry.replace(/^\/+/, ''));
+  return asar.listPackage(appAsarPath).map(normalizeAsarEntry);
+}
+
+function normalizeAsarEntry(entry) {
+  return entry.replace(/^[\\/]+/, '').replaceAll('\\', '/');
 }
 
 function loadAsarModule() {
