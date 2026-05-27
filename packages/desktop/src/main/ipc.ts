@@ -1,6 +1,11 @@
 import { dialog, ipcMain, shell, type BrowserWindow } from 'electron';
 import type { ProcessedBookmark } from '@shuhai/shared';
-import { loadConfig, updateConfig, type AppConfig } from './app-config.js';
+import {
+  loadConfig,
+  loadPublicConfig,
+  updatePublicConfig,
+  type AppConfig,
+} from './app-config.js';
 import {
   abortUrlHealthCheck,
   classifyBookmarks,
@@ -24,10 +29,10 @@ interface IpcHandlerOptions {
 }
 
 export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
-  ipcMain.handle('config:get', () => loadConfig());
+  ipcMain.handle('config:get', () => loadPublicConfig());
 
   ipcMain.handle('config:set', async (_event, partial: Partial<AppConfig>) => {
-    const config = await updateConfig(partial);
+    const config = await updatePublicConfig(partial);
     await options.onConfigChanged?.(config);
     return config;
   });
