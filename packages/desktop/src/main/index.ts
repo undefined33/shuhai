@@ -1,10 +1,11 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import { registerIpcHandlers, sendBookmarksChanged } from './ipc.js';
 import { createMainWindow } from './window.js';
 import { createAppTray } from './tray.js';
 import { loadConfig, type AppConfig } from './app-config.js';
-import { closeDatabase, initializeDatabase } from './db/index.js';
+import { closeDatabase, initializeDatabase, resetDatabaseFiles } from './db/index.js';
 import { ChromeBookmarkWatcher } from './sync/index.js';
+import { handleStartupError } from './startup-error.js';
 
 let mainWindow: BrowserWindow | null = null;
 let bookmarkWatcher: ChromeBookmarkWatcher | null = null;
@@ -73,8 +74,14 @@ if (!hasLock) {
   app.whenReady()
     .then(bootstrap)
     .catch((error: unknown) => {
-      console.error('[ShuHai] Failed to start:', error);
-      app.quit();
+      void handleStartupError(error, {
+        logError: (reason) => console.error('[ShuHai] Failed to start:', reason),
+        showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+        showMessageBox: (options) => dialog.showMessageBox(options),
+        resetDatabase: resetDatabaseFiles,
+        relaunch: () => app.relaunch(),
+        quit: () => app.exit(0),
+      });
     });
 }
 

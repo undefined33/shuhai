@@ -110,6 +110,25 @@ a {
   color: var(--muted);
 }
 
+.error-panel {
+  display: grid;
+  width: min(460px, calc(100% - 32px));
+  gap: 14px;
+  justify-items: start;
+  border: 1px solid rgba(180, 35, 24, 0.28);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 18px;
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.error-panel p {
+  margin: 0;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 184px minmax(0, 1fr);

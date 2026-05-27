@@ -1,3 +1,6 @@
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { getDataDir } from '@shuhai/shared';
 import { ShuHaiDatabase } from './database.js';
 
 let database: ShuHaiDatabase | null = null;
@@ -16,6 +19,19 @@ export function getDatabase(): ShuHaiDatabase {
 export function closeDatabase(): void {
   database?.close();
   database = null;
+}
+
+export function getDefaultDatabasePath(): string {
+  return join(getDataDir(), 'data.db');
+}
+
+export async function resetDatabaseFiles(dbPath = getDefaultDatabasePath()): Promise<void> {
+  closeDatabase();
+  await Promise.all([
+    rm(dbPath, { force: true }),
+    rm(`${dbPath}-wal`, { force: true }),
+    rm(`${dbPath}-shm`, { force: true }),
+  ]);
 }
 
 export {
