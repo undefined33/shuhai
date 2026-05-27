@@ -23,10 +23,11 @@ import type { SyncResult, SyncStatus } from './sync/index.js';
 import type { SyncNextRun } from './sync/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
 import { classificationMapToRecord } from './classification-serialization.js';
-import { initializeLogging } from './logger.js';
+import { createLogger, initializeLogging } from './logger.js';
 
 let latestSyncStatus: SyncStatus | null = null;
 let latestSyncNextRun: SyncNextRun | null = null;
+const logger = createLogger('ipc');
 
 interface IpcHandlerOptions {
   onConfigChanged?: (config: AppConfig) => Promise<void> | void;
@@ -37,6 +38,12 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
 
   ipcMain.handle('config:set', async (_event, partial: Partial<AppConfig>) => {
     const config = await updatePublicConfig(partial);
+    logger.info('Configuration changed', {
+      chromeProfile: config.chromeProfile,
+      syncIntervalMinutes: config.syncIntervalMinutes,
+      aiProvider: config.ai.provider,
+      hasAiKey: Boolean(config.ai.apiKey),
+    });
     await options.onConfigChanged?.(config);
     return config;
   });

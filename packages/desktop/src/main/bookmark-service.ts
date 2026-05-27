@@ -205,6 +205,11 @@ export async function classifyBookmarks(
     onUsage: (usage) => database.recordAiUsage(usage),
   });
   const classifications = await classifier.batchClassify(bookmarks);
+  logger.info('AI classification completed', {
+    requested: urls.length,
+    classified: classifications.size,
+    tokenUsage: classifier.getTokenUsage(),
+  });
   warnIfAiBudgetExceeded(database.getAiUsageSummary(), config);
 
   database.upsertBookmarks(
@@ -221,6 +226,7 @@ export async function exportProcessedBookmarks(
   bookmarks: ProcessedBookmark[],
   config: AppConfig,
 ): Promise<ExportResult> {
+  logger.info('Bookmark export started', { count: bookmarks.length });
   if (!config.vaultPath) {
     return {
       exported: 0,
@@ -249,11 +255,17 @@ export async function exportProcessedBookmarks(
     }
   }
 
-  return {
+  const result = {
     exported,
     skipped: bookmarks.length - exported,
     errors,
   };
+  logger.info('Bookmark export completed', {
+    exported: result.exported,
+    skipped: result.skipped,
+    errors: result.errors.length,
+  });
+  return result;
 }
 
 export function getDeadLinkReviewItems(): DeadLinkReviewItem[] {
@@ -323,7 +335,10 @@ export async function runUrlHealthCheck(
   const checker = new UrlHealthChecker(getDatabase(), options);
   activeUrlHealthChecker = checker;
   try {
-    return await checker.runAll();
+    logger.info('URL health check started');
+    const progress = await checker.runAll();
+    logger.info('URL health check completed', { progress });
+    return progress;
   } finally {
     if (activeUrlHealthChecker === checker) {
       activeUrlHealthChecker = null;

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { updateConfig, type AppConfig } from './app-config.js';
 import { assertAllowedExternalUrl } from './external-url.js';
+import { withContentSecurityPolicy } from './content-security-policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,6 +30,8 @@ export async function createMainWindow(options: CreateMainWindowOptions): Promis
     },
   });
 
+  attachContentSecurityPolicy(window);
+
   window.once('ready-to-show', () => {
     window.show();
   });
@@ -53,6 +56,14 @@ export async function createMainWindow(options: CreateMainWindowOptions): Promis
   attachExternalNavigationGuards(window);
 
   return window;
+}
+
+function attachContentSecurityPolicy(window: BrowserWindow): void {
+  window.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: withContentSecurityPolicy(details.responseHeaders),
+    });
+  });
 }
 
 function persistWindowBounds(window: BrowserWindow): void {
