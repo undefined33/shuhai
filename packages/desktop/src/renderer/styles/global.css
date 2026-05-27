@@ -509,6 +509,13 @@ a {
   font-size: 18px;
 }
 
+.helper-text {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .choice-list {
   display: grid;
   gap: 8px;

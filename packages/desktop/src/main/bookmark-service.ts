@@ -55,9 +55,9 @@ export async function detectChromeProfiles(): Promise<string[]> {
         return a.localeCompare(b);
       });
 
-    return profiles.length > 0 ? profiles : ['Default'];
+    return profiles;
   } catch {
-    return ['Default'];
+    return [];
   }
 }
 

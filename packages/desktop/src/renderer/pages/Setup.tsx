@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AppConfig } from '../../main/app-config.js';
+import {
+  CHROME_NOT_DETECTED_MESSAGE,
+  SETUP_STEP_COPY,
+  normalizeChromeProfileDetection,
+} from './setup-view-model.js';
 
 interface SetupProps {
   onComplete: (config: AppConfig) => void;
@@ -12,17 +17,21 @@ export function Setup({ onComplete }: SetupProps) {
   const [vaultPath, setVaultPath] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [chromeWarning, setChromeWarning] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     window.shuhai.getChromeProfiles()
       .then((detectedProfiles) => {
-        const nextProfiles = detectedProfiles.length > 0 ? detectedProfiles : ['Default'];
-        setProfiles(nextProfiles);
-        setChromeProfile(nextProfiles[0] ?? 'Default');
+        const detection = normalizeChromeProfileDetection(detectedProfiles);
+        setProfiles(detection.profiles);
+        setChromeProfile(detection.selectedProfile);
+        setChromeWarning(detection.warning);
       })
       .catch(() => {
         setProfiles(['Default']);
+        setChromeProfile('Default');
+        setChromeWarning(CHROME_NOT_DETECTED_MESSAGE);
       });
   }, []);
 
@@ -85,6 +94,8 @@ export function Setup({ onComplete }: SetupProps) {
         {step === 0 && (
           <div className="setup-step">
             <h2>选择 Chrome Profile</h2>
+            <p className="helper-text">{SETUP_STEP_COPY.chrome}</p>
+            {chromeWarning && <p className="notice warning">{chromeWarning}</p>}
             <div className="choice-list">
               {profiles.map((profile) => (
                 <label key={profile} className="choice-row">
@@ -109,6 +120,7 @@ export function Setup({ onComplete }: SetupProps) {
         {step === 1 && (
           <div className="setup-step">
             <h2>选择 Obsidian Vault</h2>
+            <p className="helper-text">{SETUP_STEP_COPY.vault}</p>
             <div className="inline-field">
               <input value={vaultPath} readOnly placeholder="尚未选择目录" />
               <button type="button" onClick={selectVaultPath}>
@@ -129,6 +141,7 @@ export function Setup({ onComplete }: SetupProps) {
         {step === 2 && (
           <div className="setup-step">
             <h2>配置 AI 分类</h2>
+            <p className="helper-text">{SETUP_STEP_COPY.ai}</p>
             <label className="field">
               <span>DeepSeek API Key</span>
               <input
