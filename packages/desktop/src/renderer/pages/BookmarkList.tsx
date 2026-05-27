@@ -3,7 +3,7 @@ import type { ProcessedBookmark } from '@shuhai/shared';
 import type { AppConfig } from '../../main/app-config.js';
 import type { BookmarkClassification } from '../../main/bookmark-service.js';
 import type { UrlCheckProgress } from '../../main/health/index.js';
-import type { SyncStatus } from '../../preload.js';
+import type { DeadLinkReviewItem, SyncStatus } from '../../preload.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
 import {
   MESSAGE_AUTO_DISMISS_MS,
@@ -14,8 +14,11 @@ import {
 } from '../message.js';
 import {
   classificationRecordToMap,
+  formatDeadLinkCheckedAt,
+  formatDeadLinkFailure,
   formatSyncMessage,
   formatUrlCheckProgress,
+  getDeadLinkReviewSummary,
   getEmptyBookmarkState,
   getSlowClassificationMessage,
   getSyncStatusView,
@@ -42,6 +45,9 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [deadLinkReviewItems, setDeadLinkReviewItems] = useState<DeadLinkReviewItem[]>([]);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
+  const [showDeadLinkReview, setShowDeadLinkReview] = useState(true);
   const [classificationElapsedMs, setClassificationElapsedMs] = useState(0);
   const [lastExportPath, setLastExportPath] = useState<string | null>(null);
   const [message, setMessage] = useState<UserMessage | null>(null);
@@ -155,6 +161,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   );
   const emptyState = getEmptyBookmarkState(bookmarks.length, visibleBookmarks.length);
   const syncStatusView = getSyncStatusView(syncStatus);
+  const deadLinkSummary = getDeadLinkReviewSummary(deadLinkReviewItems);
 
   async function refreshBookmarks(options: { keepMessage?: boolean } = {}): Promise<void> {
     setIsLoading(true);
@@ -164,6 +171,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     try {
       const nextBookmarks = await window.shuhai.getBookmarks();
       setBookmarks(nextBookmarks);
+      await refreshDeadLinkReviewItems();
     } catch (reason) {
       setMessage(errorMessage(reason, '读取书签失败，请确认 Chrome Profile 正确或稍后重试'));
     } finally {
@@ -183,6 +191,9 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         'success',
         `检测完成：${progress.completed}/${progress.total}，发现 ${progress.dead} 个死链`,
       ));
+      if (progress.dead > 0 || progress.errors > 0) {
+        setShowDeadLinkReview(true);
+      }
       await refreshBookmarks({ keepMessage: true });
     } catch (reason) {
       setMessage(errorMessage(reason, '检测链接失败，请检查网络后重试'));
@@ -244,6 +255,99 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
       await window.shuhai.showItemInFolder(lastExportPath);
     } catch (reason) {
       setMessage(errorMessage(reason, '无法打开导出目录，请手动检查 Vault 路径'));
+    }
+  }
+
+  async function refreshDeadLinkReviewItems(): Promise<void> {
+    const items = await window.shuhai.getDeadLinkReviewItems();
+    setDeadLinkReviewItems(items);
+    setSelectedReviewIds((current) => {
+      const nextIds = new Set(items.map((item) => item.bookmark.id));
+      return new Set([...current].filter((id) => nextIds.has(id)));
+    });
+  }
+
+  function toggleReviewSelection(id: string): void {
+    setSelectedReviewIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function selectAllDeadLinks(): void {
+    setSelectedReviewIds(new Set(deadLinkReviewItems.map((item) => item.bookmark.id)));
+  }
+
+  async function copyReviewTitle(item: DeadLinkReviewItem): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(item.bookmark.title || item.bookmark.url);
+      setMessage(userMessage('success', '标题已复制，可以去搜索新链接。'));
+    } catch (reason) {
+      setMessage(errorMessage(reason, '复制失败，请手动选择标题后复制'));
+    }
+  }
+
+  async function openReviewUrl(item: DeadLinkReviewItem): Promise<void> {
+    try {
+      await window.shuhai.openExternal(item.bookmark.url);
+    } catch (reason) {
+      setMessage(errorMessage(reason, '无法打开原链接，请检查 URL'));
+    }
+  }
+
+  async function markReviewItemsReviewed(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+
+    try {
+      await window.shuhai.markBookmarksReviewed(ids);
+      setMessage(userMessage('success', `已保留 ${ids.length} 条死链，后续检测会重新验证。`));
+      await refreshDeadLinkReviewItems();
+    } catch (reason) {
+      setMessage(errorMessage(reason, '标记保留失败，请稍后重试'));
+    }
+  }
+
+  async function removeReviewItems(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确认从 ShuHai 移除 ${ids.length} 条书签？这不会删除 Chrome 原始书签。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await window.shuhai.removeBookmarks(ids);
+      setMessage(userMessage('success', `已从 ShuHai 移除 ${ids.length} 条书签，Chrome 原始书签未改变。`));
+      await refreshBookmarks({ keepMessage: true });
+    } catch (reason) {
+      setMessage(errorMessage(reason, '移除失败，请稍后重试'));
+    }
+  }
+
+  async function replaceReviewUrl(item: DeadLinkReviewItem): Promise<void> {
+    const nextUrl = window.prompt('粘贴新的 http/https 链接', item.bookmark.url);
+    if (!nextUrl?.trim()) {
+      return;
+    }
+
+    try {
+      setMessage(userMessage('info', '正在替换链接并重新检测...'));
+      await window.shuhai.updateBookmarkUrl(item.bookmark.id, nextUrl.trim());
+      setMessage(userMessage('success', '链接已替换并重新检测，Chrome 原始书签未改变。'));
+      await refreshBookmarks({ keepMessage: true });
+    } catch (reason) {
+      setMessage(errorMessage(reason, '替换链接失败，请确认新链接为 http/https 后重试'));
     }
   }
 
@@ -365,6 +469,106 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
             : config.vaultPath || '未配置 Vault'}
         </span>
       </div>
+
+      {deadLinkReviewItems.length > 0 && !showDeadLinkReview && (
+        <div className="inline-feedback">
+          <span>有 {deadLinkReviewItems.length} 条死链待审查</span>
+          <button type="button" className="ghost" onClick={() => setShowDeadLinkReview(true)}>
+            打开死链审查
+          </button>
+        </div>
+      )}
+
+      {deadLinkReviewItems.length > 0 && showDeadLinkReview && (
+        <section className="dead-link-panel" aria-label="死链审查">
+          <div className="dead-link-header">
+            <div>
+              <h2>死链审查</h2>
+              <p>共 {deadLinkSummary.total} 个死链，已处理 {deadLinkSummary.handled} 个</p>
+            </div>
+            <div className="dead-link-actions">
+              <button type="button" className="ghost" onClick={selectAllDeadLinks}>
+                全选
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={selectedReviewIds.size === 0}
+                onClick={() => markReviewItemsReviewed([...selectedReviewIds])}
+              >
+                批量保留
+              </button>
+              <button
+                type="button"
+                className="ghost danger"
+                disabled={selectedReviewIds.size === 0}
+                onClick={() => removeReviewItems([...selectedReviewIds])}
+              >
+                批量移除
+              </button>
+              <button type="button" className="ghost" onClick={() => setShowDeadLinkReview(false)}>
+                稍后处理
+              </button>
+            </div>
+          </div>
+          <div className="dead-link-list">
+            {deadLinkReviewItems.map((item) => (
+              <article key={item.bookmark.id} className="dead-link-item">
+                <label className="dead-link-select">
+                  <input
+                    type="checkbox"
+                    checked={selectedReviewIds.has(item.bookmark.id)}
+                    onChange={() => toggleReviewSelection(item.bookmark.id)}
+                  />
+                  <span>选择</span>
+                </label>
+                <div className="dead-link-main">
+                  <button
+                    type="button"
+                    className="text-button"
+                    title="复制标题"
+                    onClick={() => copyReviewTitle(item)}
+                  >
+                    {item.bookmark.title || item.bookmark.url}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button"
+                    title={item.bookmark.url}
+                    onClick={() => openReviewUrl(item)}
+                  >
+                    {item.bookmark.url}
+                  </button>
+                  <div className="dead-link-meta">
+                    <span>{formatDeadLinkFailure(item)}</span>
+                    <span>{formatDeadLinkCheckedAt(item)}</span>
+                    {item.bookmark.reviewedAt && <span>已审查</span>}
+                  </div>
+                </div>
+                <div className="dead-link-row-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => markReviewItemsReviewed([item.bookmark.id])}
+                  >
+                    保留
+                  </button>
+                  <button type="button" className="ghost" onClick={() => replaceReviewUrl(item)}>
+                    替换链接
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost danger"
+                    onClick={() => removeReviewItems([item.bookmark.id])}
+                  >
+                    从 ShuHai 移除
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="bookmark-list">
         {visibleBookmarks.map((bookmark) => (

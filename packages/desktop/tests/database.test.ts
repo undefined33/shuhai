@@ -124,6 +124,71 @@ describe('ShuHaiDatabase', () => {
     expect(needingCheck).not.toContain('recent-check');
   });
 
+  it('returns and resolves dead link review items without deleting Chrome data', () => {
+    database.upsertBookmarks([
+      makeBookmark({ id: 'dead', status: 'dead', title: 'Dead Link' }),
+      makeBookmark({ id: 'error', status: 'error', title: 'Broken Link' }),
+      makeBookmark({ id: 'alive', status: 'alive', title: 'Alive Link' }),
+    ]);
+    database.recordUrlCheck({
+      bookmarkId: 'dead',
+      checkedAt: '2024-02-01T00:00:00.000Z',
+      statusCode: 404,
+      errorMessage: 'HTTP 404',
+      durationMs: 50,
+    });
+
+    const reviewItems = database.getDeadLinkReviewItems();
+    expect(reviewItems.map((item) => item.bookmark.id)).toEqual(['dead', 'error']);
+    expect(reviewItems[0]?.lastCheck).toMatchObject({
+      bookmarkId: 'dead',
+      statusCode: 404,
+      errorMessage: 'HTTP 404',
+    });
+
+    database.markBookmarksReviewed(['dead']);
+    expect(database.getBookmark('dead')?.reviewedAt).toBeInstanceOf(Date);
+
+    database.markBookmarksRemoved(['error']);
+    expect(database.getBookmark('error')?.status as string).toBe('removed');
+    expect(database.getBookmark('error')?.reviewedAt).toBeInstanceOf(Date);
+  });
+
+  it('replaces a dead link URL locally and resets the link status', () => {
+    database.upsertBookmark(makeBookmark({
+      id: 'dead',
+      status: 'dead',
+      url: 'https://old.example',
+      normalizedUrl: 'https://old.example',
+      metadata: { note: 'keep' },
+    }));
+    database.recordUrlCheck({
+      bookmarkId: 'dead',
+      checkedAt: '2024-02-01T00:00:00.000Z',
+      statusCode: 404,
+    });
+
+    const updated = database.updateBookmarkUrl('dead', {
+      id: 'new-id',
+      url: 'https://new.example',
+      normalizedUrl: 'https://new.example',
+    });
+
+    expect(updated).toMatchObject({
+      id: 'new-id',
+      url: 'https://new.example',
+      normalizedUrl: 'https://new.example',
+      status: 'unchecked',
+      metadata: {
+        note: 'keep',
+        originalUrl: 'https://old.example',
+        reviewAction: 'replaced',
+      },
+    });
+    expect(updated?.reviewedAt).toBeInstanceOf(Date);
+    expect(database.getLastCheck('dead')).toBeNull();
+  });
+
   it('upserts and merges sync state', () => {
     database.updateSyncState('chrome:Default', {
       lastSyncAt: '2024-02-01T00:00:00.000Z',
@@ -160,6 +225,7 @@ function makeBookmark(overrides: Partial<ProcessedBookmark> = {}): ProcessedBook
     categories: overrides.categories,
     metadata: overrides.metadata,
     exportedAt: overrides.exportedAt,
+    reviewedAt: overrides.reviewedAt,
   };
 }
 

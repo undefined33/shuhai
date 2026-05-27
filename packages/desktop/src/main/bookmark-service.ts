@@ -12,7 +12,8 @@ import { MarkdownExporter } from './exporters/markdown-exporter.js';
 import type { AppConfig } from './app-config.js';
 import { getDatabase } from './db/index.js';
 import { UrlHealthChecker, type UrlCheckOptions, type UrlCheckProgress } from './health/index.js';
-import type { ShuHaiDatabase } from './db/index.js';
+import type { DeadLinkReviewItem, ShuHaiDatabase } from './db/index.js';
+import { assertAllowedExternalUrl } from './external-url.js';
 
 export type BookmarkClassification = ClassificationResult & {
   confidence?: number;
@@ -250,6 +251,39 @@ export async function exportProcessedBookmarks(
   };
 }
 
+export function getDeadLinkReviewItems(): DeadLinkReviewItem[] {
+  return getDatabase().getDeadLinkReviewItems();
+}
+
+export function markBookmarksReviewed(ids: string[]): void {
+  getDatabase().markBookmarksReviewed(ids);
+}
+
+export function removeBookmarksFromShuHai(ids: string[]): void {
+  getDatabase().markBookmarksRemoved(ids);
+}
+
+export async function updateBookmarkUrl(
+  id: string,
+  nextUrl: string,
+): Promise<ProcessedBookmark | null> {
+  assertAllowedExternalUrl(nextUrl);
+  const database = getDatabase();
+  const updated = database.updateBookmarkUrl(id, {
+    id: urlHash(nextUrl),
+    url: nextUrl,
+    normalizedUrl: normalizeUrl(nextUrl),
+  });
+
+  if (!updated) {
+    return null;
+  }
+
+  const checker = new UrlHealthChecker(database, { olderThanDays: 0 });
+  await checker.checkOne(updated.id);
+  return database.getBookmark(updated.id);
+}
+
 export async function syncAllBookmarks(config: AppConfig): Promise<ExportResult> {
   const bookmarks = (await getBookmarkSnapshot(config)).filter(isActiveBookmark);
 
@@ -335,6 +369,7 @@ function mergeBookmarkState(
     confidence: existing.confidence,
     status: (existing.status as string) === 'removed' ? 'unchecked' : existing.status,
     exportedAt: existing.exportedAt,
+    reviewedAt: existing.reviewedAt,
     metadata: existing.metadata,
   };
 }

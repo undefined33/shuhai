@@ -43,6 +43,7 @@ interface BookmarkRow {
   created_at: string;
   updated_at: string;
   exported_at: string | null;
+  reviewed_at: string | null;
   metadata: string | null;
 }
 
@@ -60,6 +61,14 @@ interface SyncStateRow {
   last_sync_at: string;
   bookmark_count: number;
   checksum: string | null;
+}
+
+interface DeadLinkReviewRow extends BookmarkRow {
+  check_checked_at: string | null;
+  check_status_code: number | null;
+  check_final_url: string | null;
+  check_error_message: string | null;
+  check_duration_ms: number | null;
 }
 
 export interface BookmarkFilter {
@@ -94,6 +103,11 @@ export interface BookmarkStats {
   unchecked: number;
 }
 
+export interface DeadLinkReviewItem {
+  bookmark: ProcessedBookmark;
+  lastCheck: UrlCheckRecord | null;
+}
+
 const require = createRequire(import.meta.url);
 const BetterSqlite3 = require('better-sqlite3') as BetterSqlite3Constructor;
 
@@ -114,6 +128,7 @@ const UPSERT_BOOKMARK_SQL = `
     created_at,
     updated_at,
     exported_at,
+    reviewed_at,
     metadata
   ) VALUES (
     @id,
@@ -131,6 +146,7 @@ const UPSERT_BOOKMARK_SQL = `
     @createdAt,
     @updatedAt,
     @exportedAt,
+    @reviewedAt,
     @metadata
   )
   ON CONFLICT(id) DO UPDATE SET
@@ -147,6 +163,7 @@ const UPSERT_BOOKMARK_SQL = `
     chrome_folder = excluded.chrome_folder,
     updated_at = excluded.updated_at,
     exported_at = excluded.exported_at,
+    reviewed_at = COALESCE(excluded.reviewed_at, bookmarks.reviewed_at),
     metadata = excluded.metadata
 `;
 
@@ -286,6 +303,79 @@ export class ShuHaiDatabase {
     this.db.prepare('DELETE FROM bookmarks WHERE id = @id').run({ id });
   }
 
+  markBookmarksReviewed(ids: string[]): void {
+    const now = new Date().toISOString();
+    const statement = this.db.prepare(`
+      UPDATE bookmarks
+      SET reviewed_at = @reviewedAt, updated_at = @updatedAt
+      WHERE id = @id
+    `);
+    const markReviewed = this.db.transaction((bookmarkIds: string[]) => {
+      for (const id of bookmarkIds) {
+        statement.run({ id, reviewedAt: now, updatedAt: now });
+      }
+    });
+    markReviewed(ids);
+  }
+
+  markBookmarksRemoved(ids: string[]): void {
+    const now = new Date().toISOString();
+    const statement = this.db.prepare(`
+      UPDATE bookmarks
+      SET status = 'removed', reviewed_at = @reviewedAt, updated_at = @updatedAt
+      WHERE id = @id
+    `);
+    const markRemoved = this.db.transaction((bookmarkIds: string[]) => {
+      for (const id of bookmarkIds) {
+        statement.run({ id, reviewedAt: now, updatedAt: now });
+      }
+    });
+    markRemoved(ids);
+  }
+
+  updateBookmarkUrl(
+    id: string,
+    next: { id: string; url: string; normalizedUrl: string },
+  ): ProcessedBookmark | null {
+    const current = this.getBookmark(id);
+    if (!current) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const metadata = {
+      ...current.metadata,
+      originalUrl: current.metadata?.originalUrl ?? current.url,
+      reviewAction: 'replaced',
+    };
+
+    const updateUrl = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM url_checks WHERE bookmark_id = @id').run({ id });
+      this.db.prepare(`
+        UPDATE bookmarks
+        SET id = @nextId,
+            url = @url,
+            normalized_url = @normalizedUrl,
+            status = 'unchecked',
+            reviewed_at = @reviewedAt,
+            updated_at = @updatedAt,
+            metadata = @metadata
+        WHERE id = @id
+      `).run({
+        id,
+        nextId: next.id,
+        url: next.url,
+        normalizedUrl: next.normalizedUrl,
+        reviewedAt: now,
+        updatedAt: now,
+        metadata: JSON.stringify(metadata),
+      });
+    });
+
+    updateUrl();
+    return this.getBookmark(next.id);
+  }
+
   recordUrlCheck(check: UrlCheckRecord): void {
     this.db.prepare(`
       INSERT INTO url_checks (
@@ -322,6 +412,29 @@ export class ShuHaiDatabase {
       LIMIT 1
     `).get({ bookmarkId });
     return row ? rowToUrlCheck(row) : null;
+  }
+
+  getDeadLinkReviewItems(): DeadLinkReviewItem[] {
+    return this.db.prepare<DeadLinkReviewRow>(`
+      SELECT
+        b.*,
+        c.checked_at AS check_checked_at,
+        c.status_code AS check_status_code,
+        c.final_url AS check_final_url,
+        c.error_message AS check_error_message,
+        c.duration_ms AS check_duration_ms
+      FROM bookmarks b
+      LEFT JOIN url_checks c
+        ON c.id = (
+          SELECT id
+          FROM url_checks
+          WHERE bookmark_id = b.id
+          ORDER BY checked_at DESC, id DESC
+          LIMIT 1
+        )
+      WHERE b.status IN ('dead', 'error')
+      ORDER BY b.reviewed_at IS NOT NULL, c.checked_at DESC, b.updated_at DESC
+    `).all().map(rowToDeadLinkReviewItem);
   }
 
   getBookmarksNeedingCheck(olderThanDays: number): ProcessedBookmark[] {
@@ -420,6 +533,7 @@ function bookmarkToParameters(bookmark: ProcessedBookmark): SqliteBindParameters
     createdAt: bookmark.createdAt.toISOString(),
     updatedAt: now,
     exportedAt: bookmark.exportedAt?.toISOString() ?? null,
+    reviewedAt: bookmark.reviewedAt?.toISOString() ?? null,
     metadata: JSON.stringify(bookmark.metadata ?? {}),
   };
 }
@@ -440,6 +554,7 @@ function rowToBookmark(row: BookmarkRow): ProcessedBookmark {
     categories: row.chrome_folder ? row.chrome_folder.split('/') : undefined,
     createdAt: new Date(row.created_at),
     exportedAt: row.exported_at ? new Date(row.exported_at) : undefined,
+    reviewedAt: row.reviewed_at ? new Date(row.reviewed_at) : undefined,
     metadata: parseJsonObject(row.metadata),
   };
 }
@@ -452,6 +567,24 @@ function rowToUrlCheck(row: UrlCheckRow): UrlCheckRecord {
     finalUrl: row.final_url ?? undefined,
     errorMessage: row.error_message ?? undefined,
     durationMs: row.duration_ms ?? undefined,
+  };
+}
+
+function rowToDeadLinkReviewItem(row: DeadLinkReviewRow): DeadLinkReviewItem {
+  const lastCheck = row.check_checked_at
+    ? {
+        bookmarkId: row.id,
+        checkedAt: row.check_checked_at,
+        statusCode: row.check_status_code ?? undefined,
+        finalUrl: row.check_final_url ?? undefined,
+        errorMessage: row.check_error_message ?? undefined,
+        durationMs: row.check_duration_ms ?? undefined,
+      }
+    : null;
+
+  return {
+    bookmark: rowToBookmark(row),
+    lastCheck,
   };
 }
 

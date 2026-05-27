@@ -86,6 +86,10 @@ button.ghost:hover:not(:disabled) {
   background: var(--surface-muted);
 }
 
+button.ghost.danger {
+  color: var(--danger);
+}
+
 input,
 select {
   min-height: 36px;
@@ -415,6 +419,111 @@ a {
   font-size: 13px;
 }
 
+.dead-link-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(180, 83, 9, 0.28);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.dead-link-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dead-link-header h2,
+.dead-link-header p {
+  margin: 0;
+}
+
+.dead-link-header h2 {
+  font-size: 16px;
+}
+
+.dead-link-header p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dead-link-actions,
+.dead-link-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dead-link-list {
+  display: grid;
+  max-height: 300px;
+  gap: 8px;
+  overflow: auto;
+}
+
+.dead-link-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  padding: 10px;
+}
+
+.dead-link-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dead-link-main {
+  min-width: 0;
+}
+
+.text-button,
+.link-button {
+  display: block;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dead-link-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.dead-link-meta span {
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .bookmark-list {
   display: grid;
   min-height: 0;
@@ -654,6 +763,7 @@ a {
   .toolbar,
   .workflow-panel,
   .workflow-steps,
+  .dead-link-item,
   .settings-grid,
   .bookmark-card {
     grid-template-columns: 1fr;

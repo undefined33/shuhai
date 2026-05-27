@@ -38,6 +38,7 @@ export {
   ShuHaiDatabase,
   type BookmarkFilter,
   type BookmarkStats,
+  type DeadLinkReviewItem,
   type SyncState,
   type UrlCheckRecord,
 } from './database.js';

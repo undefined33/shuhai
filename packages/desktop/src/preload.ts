@@ -41,6 +41,20 @@ export interface UrlCheckProgress {
   currentUrl?: string;
 }
 
+export interface UrlCheckRecord {
+  bookmarkId: string;
+  checkedAt: string;
+  statusCode?: number;
+  finalUrl?: string;
+  errorMessage?: string;
+  durationMs?: number;
+}
+
+export interface DeadLinkReviewItem {
+  bookmark: ProcessedBookmark;
+  lastCheck: UrlCheckRecord | null;
+}
+
 export type SyncStatusState = 'syncing' | 'watching' | 'not-started' | 'error';
 
 export interface SyncStatus {
@@ -55,6 +69,10 @@ export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
   classifyBookmarks(urls: string[]): Promise<BookmarkClassificationRecord>;
   exportBookmarks(bookmarks: ProcessedBookmark[]): Promise<ExportResult>;
+  getDeadLinkReviewItems(): Promise<DeadLinkReviewItem[]>;
+  markBookmarksReviewed(ids: string[]): Promise<void>;
+  removeBookmarks(ids: string[]): Promise<void>;
+  updateBookmarkUrl(id: string, nextUrl: string): Promise<ProcessedBookmark | null>;
   getConfig(): Promise<AppConfig>;
   setConfig(config: Partial<AppConfig>): Promise<AppConfig>;
   selectDirectory(): Promise<string | null>;
@@ -76,6 +94,18 @@ const api: ShuHaiAPI = {
   },
   exportBookmarks: (bookmarks: ProcessedBookmark[]) => {
     return ipcRenderer.invoke('bookmarks:export', bookmarks) as Promise<ExportResult>;
+  },
+  getDeadLinkReviewItems: () => {
+    return ipcRenderer.invoke('bookmarks:dead-link-review:get') as Promise<DeadLinkReviewItem[]>;
+  },
+  markBookmarksReviewed: (ids: string[]) => {
+    return ipcRenderer.invoke('bookmarks:mark-reviewed', ids) as Promise<void>;
+  },
+  removeBookmarks: (ids: string[]) => {
+    return ipcRenderer.invoke('bookmarks:remove', ids) as Promise<void>;
+  },
+  updateBookmarkUrl: (id: string, nextUrl: string) => {
+    return ipcRenderer.invoke('bookmarks:update-url', id, nextUrl) as Promise<ProcessedBookmark | null>;
   },
   getConfig: () => ipcRenderer.invoke('config:get') as Promise<AppConfig>,
   setConfig: (config: Partial<AppConfig>) => {

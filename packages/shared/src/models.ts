@@ -43,6 +43,7 @@ export interface ProcessedBookmark extends RawBookmark {
   resolvedUrl?: string;
   confidence?: number;
   exportedAt?: Date;
+  reviewedAt?: Date;
 }
 
 export type UrlStatus = 'alive' | 'dead' | 'redirect' | 'unchecked' | 'error';

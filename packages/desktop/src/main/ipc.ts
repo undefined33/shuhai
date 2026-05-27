@@ -7,7 +7,11 @@ import {
   detectChromeProfiles,
   exportProcessedBookmarks,
   getBookmarkSnapshot,
+  getDeadLinkReviewItems,
+  markBookmarksReviewed,
+  removeBookmarksFromShuHai,
   runUrlHealthCheck,
+  updateBookmarkUrl,
 } from './bookmark-service.js';
 import type { SyncResult, SyncStatus } from './sync/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
@@ -58,6 +62,22 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
 
   ipcMain.handle('bookmarks:export', async (_event, bookmarks: ProcessedBookmark[]) => {
     return exportProcessedBookmarks(bookmarks, await loadConfig());
+  });
+
+  ipcMain.handle('bookmarks:dead-link-review:get', () => {
+    return getDeadLinkReviewItems();
+  });
+
+  ipcMain.handle('bookmarks:mark-reviewed', (_event, ids: string[]) => {
+    markBookmarksReviewed(ids);
+  });
+
+  ipcMain.handle('bookmarks:remove', (_event, ids: string[]) => {
+    removeBookmarksFromShuHai(ids);
+  });
+
+  ipcMain.handle('bookmarks:update-url', (_event, id: string, nextUrl: string) => {
+    return updateBookmarkUrl(id, nextUrl);
   });
 
   ipcMain.handle('url-check:start', async (event) => {

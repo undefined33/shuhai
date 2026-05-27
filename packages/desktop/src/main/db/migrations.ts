@@ -58,6 +58,13 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_url_checks_bookmark ON url_checks(bookmark_id);
     `,
   },
+  {
+    version: 2,
+    description: 'dead link review metadata',
+    up: `
+      ALTER TABLE bookmarks ADD COLUMN reviewed_at TEXT;
+    `,
+  },
 ];
 
 export function migrateDatabase(db: SQLiteDatabase): void {

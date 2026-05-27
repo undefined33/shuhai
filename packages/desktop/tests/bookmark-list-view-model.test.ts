@@ -3,6 +3,9 @@ import {
   classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
+  formatDeadLinkCheckedAt,
+  formatDeadLinkFailure,
+  getDeadLinkReviewSummary,
   getEmptyBookmarkState,
   getSlowClassificationMessage,
   getSyncStatusView,
@@ -81,6 +84,54 @@ describe('BookmarkList view model', () => {
       reason: '未检测到 Chrome 书签文件',
       updatedAt: '2026-05-27T00:00:00.000Z',
     }).detail).toContain('未检测到 Chrome 书签文件');
+  });
+
+  it('summarizes and formats dead link review items', () => {
+    const reviewedAt = new Date('2024-02-02T00:00:00.000Z');
+    const items = [
+      {
+        bookmark: {
+          id: 'dead',
+          url: 'https://example.com/dead',
+          normalizedUrl: 'https://example.com/dead',
+          title: 'Dead',
+          source: 'chrome:Default',
+          contentType: 'article',
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          category: '未分类',
+          status: 'dead',
+          reviewedAt,
+        },
+        lastCheck: {
+          bookmarkId: 'dead',
+          checkedAt: '2024-02-01T00:00:00.000Z',
+          statusCode: 404,
+        },
+      },
+      {
+        bookmark: {
+          id: 'error',
+          url: 'https://example.com/error',
+          normalizedUrl: 'https://example.com/error',
+          title: 'Error',
+          source: 'chrome:Default',
+          contentType: 'article',
+          createdAt: new Date('2024-01-01T00:00:00.000Z'),
+          category: '未分类',
+          status: 'error',
+        },
+        lastCheck: {
+          bookmarkId: 'error',
+          checkedAt: '2024-02-01T00:00:00.000Z',
+          errorMessage: 'DNS failed',
+        },
+      },
+    ] as const;
+
+    expect(getDeadLinkReviewSummary([...items])).toEqual({ total: 2, handled: 1 });
+    expect(formatDeadLinkFailure(items[0])).toBe('HTTP 404');
+    expect(formatDeadLinkFailure(items[1])).toBe('DNS failed');
+    expect(formatDeadLinkCheckedAt(items[0])).toContain('2024');
   });
 
   it('guides users through classification before link checks and export', () => {

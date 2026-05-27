@@ -1,5 +1,5 @@
 import type { UrlCheckProgress } from '../../main/health/index.js';
-import type { BookmarkClassificationRecord, SyncStatus } from '../../preload.js';
+import type { BookmarkClassificationRecord, DeadLinkReviewItem, SyncStatus } from '../../preload.js';
 import type { SyncResult } from '../../main/sync/index.js';
 
 export const SLOW_CLASSIFICATION_THRESHOLD_MS = 15_000;
@@ -44,6 +44,11 @@ export interface SyncStatusView {
   className: string;
   label: string;
   detail: string;
+}
+
+export interface DeadLinkReviewSummary {
+  total: number;
+  handled: number;
 }
 
 export function formatSyncMessage(result: SyncResult): string {
@@ -127,6 +132,31 @@ export function getSyncStatusView(status: SyncStatus | null): SyncStatusView {
     label: '同步异常',
     detail: status.reason ? `${status.message} ${status.reason}` : status.message,
   };
+}
+
+export function getDeadLinkReviewSummary(
+  items: DeadLinkReviewItem[],
+): DeadLinkReviewSummary {
+  return {
+    total: items.length,
+    handled: items.filter((item) => Boolean(item.bookmark.reviewedAt)).length,
+  };
+}
+
+export function formatDeadLinkFailure(item: DeadLinkReviewItem): string {
+  if (item.lastCheck?.statusCode) {
+    return `HTTP ${item.lastCheck.statusCode}`;
+  }
+
+  return item.lastCheck?.errorMessage ?? '未知失败原因';
+}
+
+export function formatDeadLinkCheckedAt(item: DeadLinkReviewItem): string {
+  if (!item.lastCheck?.checkedAt) {
+    return '尚无检测时间';
+  }
+
+  return new Date(item.lastCheck.checkedAt).toLocaleString('zh-CN');
 }
 
 export function getWorkflowGuide(state: WorkflowGuideState): WorkflowGuide {
