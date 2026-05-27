@@ -39,6 +39,7 @@ interface SyncChromeBookmarksOptions {
 }
 
 let activeUrlHealthChecker: UrlHealthChecker | null = null;
+let syncMutex: Promise<void> = Promise.resolve();
 
 export async function detectChromeProfiles(): Promise<string[]> {
   try {
@@ -76,6 +77,14 @@ export async function getBookmarkSnapshot(config: AppConfig): Promise<ProcessedB
 }
 
 export async function syncChromeBookmarks({
+  profile,
+  database = getDatabase(),
+  reader = new ChromeFileReader(profile),
+}: SyncChromeBookmarksOptions): Promise<SyncResult> {
+  return withSyncMutex(() => performChromeBookmarkSync({ profile, database, reader }));
+}
+
+async function performChromeBookmarkSync({
   profile,
   database = getDatabase(),
   reader = new ChromeFileReader(profile),
@@ -157,6 +166,22 @@ export async function syncChromeBookmarks({
     removed,
     total: bookmarks.length,
   };
+}
+
+async function withSyncMutex<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = syncMutex;
+  let releaseCurrent: () => void = () => {};
+  syncMutex = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+
+  await previous;
+
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+  }
 }
 
 export async function classifyBookmarks(
