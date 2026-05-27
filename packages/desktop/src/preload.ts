@@ -41,6 +41,16 @@ export interface UrlCheckProgress {
   currentUrl?: string;
 }
 
+export type SyncStatusState = 'syncing' | 'watching' | 'not-started' | 'error';
+
+export interface SyncStatus {
+  state: SyncStatusState;
+  profile: string;
+  message: string;
+  reason?: string;
+  updatedAt: string;
+}
+
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
   classifyBookmarks(urls: string[]): Promise<BookmarkClassificationRecord>;
@@ -51,6 +61,8 @@ export interface ShuHaiAPI {
   getChromeProfiles(): Promise<string[]>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(itemPath: string): Promise<void>;
+  getSyncStatus(): Promise<SyncStatus | null>;
+  onSyncStatus(callback: (status: SyncStatus) => void): () => void;
   onBookmarksChanged(callback: (result: SyncResult) => void): () => void;
   startUrlCheck(): Promise<UrlCheckProgress>;
   abortUrlCheck(): Promise<boolean>;
@@ -75,6 +87,7 @@ const api: ShuHaiAPI = {
   showItemInFolder: (itemPath: string) => {
     return ipcRenderer.invoke('system:show-item-in-folder', itemPath) as Promise<void>;
   },
+  getSyncStatus: () => ipcRenderer.invoke('sync:status:get') as Promise<SyncStatus | null>,
   startUrlCheck: () => ipcRenderer.invoke('url-check:start') as Promise<UrlCheckProgress>,
   abortUrlCheck: () => ipcRenderer.invoke('url-check:abort') as Promise<boolean>,
   onBookmarksChanged: (callback: (result: SyncResult) => void) => {
@@ -84,6 +97,15 @@ const api: ShuHaiAPI = {
     ipcRenderer.on('bookmarks:changed', listener);
     return () => {
       ipcRenderer.removeListener('bookmarks:changed', listener);
+    };
+  },
+  onSyncStatus: (callback: (status: SyncStatus) => void) => {
+    const listener = (_event: IpcRendererEvent, status: SyncStatus) => {
+      callback(status);
+    };
+    ipcRenderer.on('sync:status', listener);
+    return () => {
+      ipcRenderer.removeListener('sync:status', listener);
     };
   },
   onUrlCheckProgress: (callback: (progress: UrlCheckProgress) => void) => {

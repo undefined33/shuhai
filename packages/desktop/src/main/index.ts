@@ -1,10 +1,10 @@
 import { app, BrowserWindow, dialog } from 'electron';
-import { registerIpcHandlers, sendBookmarksChanged } from './ipc.js';
+import { registerIpcHandlers, sendBookmarksChanged, sendSyncStatus } from './ipc.js';
 import { createMainWindow } from './window.js';
 import { createAppTray } from './tray.js';
 import { loadConfig, type AppConfig } from './app-config.js';
 import { closeDatabase, initializeDatabase, resetDatabaseFiles } from './db/index.js';
-import { ChromeBookmarkWatcher } from './sync/index.js';
+import { ChromeBookmarkWatcher, type SyncStatus, type SyncStatusState } from './sync/index.js';
 import { handleStartupError } from './startup-error.js';
 
 let mainWindow: BrowserWindow | null = null;
@@ -22,6 +22,11 @@ function showMainWindow(): void {
 
 async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
   bookmarkWatcher?.stop();
+  sendSyncStatus(mainWindow, createSyncStatus(
+    'syncing',
+    config.chromeProfile,
+    '正在同步 Chrome 书签...',
+  ));
 
   bookmarkWatcher = new ChromeBookmarkWatcher({
     profile: config.chromeProfile,
@@ -30,11 +35,31 @@ async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
     },
     onError: (error) => {
       console.error('[ShuHai] Bookmark sync failed:', error);
+      sendSyncStatus(mainWindow, createSyncStatus(
+        'error',
+        config.chromeProfile,
+        '书签同步失败，请检查 Chrome Profile 后重试。',
+        error.message,
+      ));
     },
   });
 
   await bookmarkWatcher.syncNow();
-  bookmarkWatcher.start();
+  const startResult = bookmarkWatcher.start();
+  if (startResult.success) {
+    sendSyncStatus(mainWindow, createSyncStatus(
+      'watching',
+      config.chromeProfile,
+      '书签同步正常，正在监听 Chrome 变化。',
+    ));
+  } else {
+    sendSyncStatus(mainWindow, createSyncStatus(
+      'not-started',
+      config.chromeProfile,
+      '未启动实时同步，请确认 Chrome 已安装并选择正确的 Profile。',
+      startResult.reason,
+    ));
+  }
 }
 
 async function bootstrap(): Promise<void> {
@@ -100,3 +125,18 @@ app.on('window-all-closed', () => {
   }
   // Keep the app alive so the tray menu can reopen the main window.
 });
+
+function createSyncStatus(
+  state: SyncStatusState,
+  profile: string,
+  message: string,
+  reason?: string,
+): SyncStatus {
+  return {
+    state,
+    profile,
+    message,
+    reason,
+    updatedAt: new Date().toISOString(),
+  };
+}

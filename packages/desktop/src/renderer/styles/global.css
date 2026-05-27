@@ -235,6 +235,39 @@ a {
   width: 100%;
 }
 
+.sync-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sync-status strong {
+  color: var(--text);
+}
+
+.sync-status.watching strong {
+  color: var(--success);
+}
+
+.sync-status.syncing strong {
+  color: var(--primary-strong);
+}
+
+.sync-status.warning strong {
+  color: var(--warning);
+}
+
+.sync-status.error strong {
+  color: var(--danger);
+}
+
 .workflow-panel {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.2fr);

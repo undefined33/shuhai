@@ -18,6 +18,22 @@ export interface ChromeWatcherOptions {
   readerFactory?: (profile: string) => ChromeBookmarkReader;
 }
 
+export interface ChromeWatcherStartResult {
+  success: boolean;
+  reason?: string;
+  path?: string;
+}
+
+export type SyncStatusState = 'syncing' | 'watching' | 'not-started' | 'error';
+
+export interface SyncStatus {
+  state: SyncStatusState;
+  profile: string;
+  message: string;
+  reason?: string;
+  updatedAt: string;
+}
+
 const DEFAULT_DEBOUNCE_MS = 2_000;
 const EMPTY_SYNC_RESULT: SyncResult = {
   added: 0,
@@ -37,22 +53,32 @@ export class ChromeBookmarkWatcher {
     this.debounceMs = Math.max(options.debounceMs ?? DEFAULT_DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS);
   }
 
-  start(): void {
+  start(): ChromeWatcherStartResult {
     if (this.watcher) {
-      return;
+      return { success: true };
     }
 
     const reader = this.createReader();
     if (!reader.exists()) {
-      return;
+      return {
+        success: false,
+        path: reader.getPath(),
+        reason: '未检测到 Chrome 书签文件，请确认 Chrome 已安装并选择正确的 Profile。',
+      };
     }
 
     try {
       this.watcher = watch(reader.getPath(), () => {
         this.scheduleSync();
       });
+      return { success: true, path: reader.getPath() };
     } catch (error) {
       this.reportError(error);
+      return {
+        success: false,
+        path: reader.getPath(),
+        reason: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 

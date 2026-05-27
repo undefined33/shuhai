@@ -1,5 +1,5 @@
 import type { UrlCheckProgress } from '../../main/health/index.js';
-import type { BookmarkClassificationRecord } from '../../preload.js';
+import type { BookmarkClassificationRecord, SyncStatus } from '../../preload.js';
 import type { SyncResult } from '../../main/sync/index.js';
 
 export const SLOW_CLASSIFICATION_THRESHOLD_MS = 15_000;
@@ -37,6 +37,12 @@ export interface WorkflowGuide {
 
 export interface EmptyBookmarkState {
   title: string;
+  detail: string;
+}
+
+export interface SyncStatusView {
+  className: string;
+  label: string;
   detail: string;
 }
 
@@ -80,6 +86,46 @@ export function getEmptyBookmarkState(
   return {
     title: '当前筛选条件无匹配结果',
     detail: '试试清除搜索关键词，或切回“全部”分类。',
+  };
+}
+
+export function getSyncStatusView(status: SyncStatus | null): SyncStatusView {
+  if (!status) {
+    return {
+      className: 'sync-status unknown',
+      label: '同步状态未知',
+      detail: '正在等待同步状态...',
+    };
+  }
+
+  if (status.state === 'watching') {
+    return {
+      className: 'sync-status watching',
+      label: '同步正常',
+      detail: status.message,
+    };
+  }
+
+  if (status.state === 'syncing') {
+    return {
+      className: 'sync-status syncing',
+      label: '同步中',
+      detail: status.message,
+    };
+  }
+
+  if (status.state === 'not-started') {
+    return {
+      className: 'sync-status warning',
+      label: '实时同步未启动',
+      detail: status.reason ? `${status.message} ${status.reason}` : status.message,
+    };
+  }
+
+  return {
+    className: 'sync-status error',
+    label: '同步异常',
+    detail: status.reason ? `${status.message} ${status.reason}` : status.message,
   };
 }
 

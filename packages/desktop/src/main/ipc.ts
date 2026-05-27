@@ -9,9 +9,11 @@ import {
   getBookmarkSnapshot,
   runUrlHealthCheck,
 } from './bookmark-service.js';
-import type { SyncResult } from './sync/index.js';
+import type { SyncResult, SyncStatus } from './sync/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
 import { classificationMapToRecord } from './classification-serialization.js';
+
+let latestSyncStatus: SyncStatus | null = null;
 
 interface IpcHandlerOptions {
   onConfigChanged?: (config: AppConfig) => Promise<void> | void;
@@ -45,6 +47,8 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
     shell.showItemInFolder(itemPath);
   });
 
+  ipcMain.handle('sync:status:get', () => latestSyncStatus);
+
   ipcMain.handle('bookmarks:get', async () => getBookmarkSnapshot(await loadConfig()));
 
   ipcMain.handle('bookmarks:classify', async (_event, urls: string[]) => {
@@ -75,4 +79,12 @@ export function sendBookmarksChanged(
   result: SyncResult,
 ): void {
   window?.webContents.send('bookmarks:changed', result);
+}
+
+export function sendSyncStatus(
+  window: BrowserWindow | null,
+  status: SyncStatus,
+): void {
+  latestSyncStatus = status;
+  window?.webContents.send('sync:status', status);
 }

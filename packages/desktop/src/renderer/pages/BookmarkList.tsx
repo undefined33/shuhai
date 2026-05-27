@@ -3,6 +3,7 @@ import type { ProcessedBookmark } from '@shuhai/shared';
 import type { AppConfig } from '../../main/app-config.js';
 import type { BookmarkClassification } from '../../main/bookmark-service.js';
 import type { UrlCheckProgress } from '../../main/health/index.js';
+import type { SyncStatus } from '../../preload.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
 import {
   MESSAGE_AUTO_DISMISS_MS,
@@ -17,6 +18,7 @@ import {
   formatUrlCheckProgress,
   getEmptyBookmarkState,
   getSlowClassificationMessage,
+  getSyncStatusView,
   getWorkflowGuide,
 } from './bookmark-list-view-model.js';
 
@@ -39,6 +41,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [isCheckingLinks, setIsCheckingLinks] = useState(false);
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [classificationElapsedMs, setClassificationElapsedMs] = useState(0);
   const [lastExportPath, setLastExportPath] = useState<string | null>(null);
   const [message, setMessage] = useState<UserMessage | null>(null);
@@ -59,6 +62,11 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
       setUrlCheckProgress(progress);
       setMessage(userMessage('info', formatUrlCheckProgress(progress)));
     });
+  }, []);
+
+  useEffect(() => {
+    void window.shuhai.getSyncStatus().then(setSyncStatus);
+    return window.shuhai.onSyncStatus(setSyncStatus);
   }, []);
 
   useEffect(() => {
@@ -146,6 +154,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     hasAiProvider,
   );
   const emptyState = getEmptyBookmarkState(bookmarks.length, visibleBookmarks.length);
+  const syncStatusView = getSyncStatusView(syncStatus);
 
   async function refreshBookmarks(options: { keepMessage?: boolean } = {}): Promise<void> {
     setIsLoading(true);
@@ -253,6 +262,11 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         <button type="button" className="ghost" onClick={openSettingsSetup}>
           重新向导
         </button>
+      </div>
+
+      <div className={syncStatusView.className}>
+        <strong>{syncStatusView.label}</strong>
+        <span>{syncStatusView.detail}</span>
       </div>
 
       <div className={`workflow-panel ${workflowGuide.tone}`}>

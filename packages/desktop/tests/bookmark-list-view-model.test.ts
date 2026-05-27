@@ -5,6 +5,7 @@ import {
   formatUrlCheckProgress,
   getEmptyBookmarkState,
   getSlowClassificationMessage,
+  getSyncStatusView,
   getWorkflowGuide,
 } from '../src/renderer/pages/bookmark-list-view-model.js';
 
@@ -59,6 +60,27 @@ describe('BookmarkList view model', () => {
       detail: '试试清除搜索关键词，或切回“全部”分类。',
     });
     expect(getEmptyBookmarkState(5, 2)).toBeNull();
+  });
+
+  it('formats sync status indicators', () => {
+    expect(getSyncStatusView(null)).toEqual({
+      className: 'sync-status unknown',
+      label: '同步状态未知',
+      detail: '正在等待同步状态...',
+    });
+    expect(getSyncStatusView({
+      state: 'watching',
+      profile: 'Default',
+      message: '书签同步正常，正在监听 Chrome 变化。',
+      updatedAt: '2026-05-27T00:00:00.000Z',
+    }).label).toBe('同步正常');
+    expect(getSyncStatusView({
+      state: 'not-started',
+      profile: 'Default',
+      message: '未启动实时同步，请确认 Chrome 已安装并选择正确的 Profile。',
+      reason: '未检测到 Chrome 书签文件',
+      updatedAt: '2026-05-27T00:00:00.000Z',
+    }).detail).toContain('未检测到 Chrome 书签文件');
   });
 
   it('guides users through classification before link checks and export', () => {

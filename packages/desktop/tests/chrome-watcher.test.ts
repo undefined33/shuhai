@@ -85,7 +85,10 @@ describe('ChromeBookmarkWatcher', () => {
     const onSync = vi.fn();
     const watcher = createWatcher(() => [bookmark('https://example.com/a', 'A')], onSync);
 
-    watcher.start();
+    expect(watcher.start()).toEqual({
+      success: true,
+      path: 'C:\\fake\\Bookmarks',
+    });
     expect(watcher.isWatching()).toBe(true);
     expect(watchMock).toHaveBeenCalledWith('C:\\fake\\Bookmarks', expect.any(Function));
 
@@ -107,7 +110,10 @@ describe('ChromeBookmarkWatcher', () => {
     const onSync = vi.fn();
     const watcher = createWatcher(() => [bookmark('https://example.com/a', 'A')], onSync);
 
-    watcher.start();
+    expect(watcher.start()).toEqual({
+      success: true,
+      path: 'C:\\fake\\Bookmarks',
+    });
     watchCallbacks[0]?.('change');
     watcher.stop();
 
@@ -121,8 +127,10 @@ describe('ChromeBookmarkWatcher', () => {
   it('does not crash or start fs.watch when the Chrome bookmarks file is missing', async () => {
     const watcher = createWatcher(() => [], vi.fn(), false);
 
-    watcher.start();
+    const result = watcher.start();
 
+    expect(result.success).toBe(false);
+    expect(result.reason).toContain('未检测到 Chrome 书签文件');
     expect(watcher.isWatching()).toBe(false);
     expect(watchMock).not.toHaveBeenCalled();
     await expect(watcher.syncNow()).resolves.toEqual({
@@ -131,6 +139,28 @@ describe('ChromeBookmarkWatcher', () => {
       removed: 0,
       total: 0,
     });
+  });
+
+  it('returns a failed start result when fs.watch throws', () => {
+    const onError = vi.fn();
+    watchMock.mockImplementationOnce(() => {
+      throw new Error('permission denied');
+    });
+    const watcher = new ChromeBookmarkWatcher({
+      profile: 'Default',
+      database,
+      onError,
+      readerFactory: () => new FakeReader(() => [], true),
+    });
+
+    const result = watcher.start();
+
+    expect(result).toEqual({
+      success: false,
+      path: 'C:\\fake\\Bookmarks',
+      reason: 'permission denied',
+    });
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 });
 
