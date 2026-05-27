@@ -3,6 +3,7 @@ import { Layout } from './components/Layout.js';
 import { BookmarkList } from './pages/BookmarkList.js';
 import { Settings } from './pages/Settings.js';
 import { Setup } from './pages/Setup.js';
+import { UNSAVED_SETTINGS_MESSAGE } from './pages/settings-view-model.js';
 import { formatAppLoadError } from './app-view-model.js';
 import type { AppConfig } from '../main/app-config.js';
 
@@ -13,6 +14,7 @@ export function App() {
   const [page, setPage] = useState<Page>('bookmarks');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSettingsDirty, setIsSettingsDirty] = useState(false);
 
   const loadAppConfig = useCallback(() => {
     setIsLoading(true);
@@ -59,12 +61,27 @@ export function App() {
     );
   }
 
+  function navigate(nextPage: Page): void {
+    if (page === 'settings' && nextPage !== 'settings' && isSettingsDirty) {
+      const confirmed = window.confirm(UNSAVED_SETTINGS_MESSAGE);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setPage(nextPage);
+  }
+
   return (
-    <Layout activePage={page} onNavigate={setPage}>
+    <Layout activePage={page} onNavigate={navigate}>
       {page === 'bookmarks' ? (
         <BookmarkList config={config} onConfigChange={setConfig} />
       ) : (
-        <Settings config={config} onConfigChange={setConfig} />
+        <Settings
+          config={config}
+          onConfigChange={setConfig}
+          onDirtyChange={setIsSettingsDirty}
+        />
       )}
     </Layout>
   );

@@ -22,6 +22,7 @@ export function Layout({ activePage, onNavigate, children }: PropsWithChildren<L
           <button
             type="button"
             className={activePage === 'bookmarks' ? 'active' : ''}
+            aria-current={activePage === 'bookmarks' ? 'page' : undefined}
             onClick={() => onNavigate('bookmarks')}
           >
             书签
@@ -29,6 +30,7 @@ export function Layout({ activePage, onNavigate, children }: PropsWithChildren<L
           <button
             type="button"
             className={activePage === 'settings' ? 'active' : ''}
+            aria-current={activePage === 'settings' ? 'page' : undefined}
             onClick={() => onNavigate('settings')}
           >
             设置

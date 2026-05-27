@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AppConfig } from '../../main/app-config.js';
 import {
   MESSAGE_AUTO_DISMISS_MS,
@@ -7,17 +7,20 @@ import {
   userMessage,
   type UserMessage,
 } from '../message.js';
+import { isSettingsDirty } from './settings-view-model.js';
 
 interface SettingsProps {
   config: AppConfig;
   onConfigChange: (config: AppConfig) => void;
+  onDirtyChange: (isDirty: boolean) => void;
 }
 
-export function Settings({ config, onConfigChange }: SettingsProps) {
+export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProps) {
   const [draft, setDraft] = useState<AppConfig>(config);
   const [profiles, setProfiles] = useState<string[]>([config.chromeProfile]);
   const [message, setMessage] = useState<UserMessage | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const isDirty = useMemo(() => isSettingsDirty(draft, config), [config, draft]);
 
   useEffect(() => {
     setDraft(config);
@@ -26,6 +29,28 @@ export function Settings({ config, onConfigChange }: SettingsProps) {
   useEffect(() => {
     window.shuhai.getChromeProfiles().then(setProfiles).catch(() => setProfiles(['Default']));
   }, []);
+
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => {
+      onDirtyChange(false);
+    };
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!isDirty) {
+      return undefined;
+    }
+
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+    };
+  }, [isDirty]);
 
   useEffect(() => {
     if (!message) {
