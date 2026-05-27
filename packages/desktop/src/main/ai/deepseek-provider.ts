@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { LLMProvider, RawBookmark } from '@shuhai/shared';
 import { AI_BATCH_SIZE } from '@shuhai/shared';
+import type { AiUsageOperation, AiUsageRecord } from '../db/index.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 45_000;
 
@@ -13,6 +14,7 @@ export class DeepSeekProvider implements LLMProvider {
   readonly name = 'deepseek';
   readonly model: string;
   private client: OpenAI;
+  private usageRecords: Array<Required<AiUsageRecord>> = [];
 
   constructor(apiKey: string, options?: { model?: string; baseUrl?: string; timeoutMs?: number }) {
     this.model = options?.model || 'deepseek-chat';
@@ -50,6 +52,7 @@ ${categoriesHint}
       temperature: 0.1,
       max_tokens: 100,
     });
+    this.recordUsage('classify', response.usage);
 
     return this.parseJSON(response.choices[0]?.message?.content || '', {
       category: '未分类',
@@ -70,6 +73,7 @@ ${categoriesHint}
       temperature: 0.3,
       max_tokens: 300,
     });
+    this.recordUsage('summarize', response.usage);
 
     return response.choices[0]?.message?.content?.trim() || '';
   }
@@ -89,6 +93,7 @@ ${categoriesHint}
       temperature: 0.2,
       max_tokens: 100,
     });
+    this.recordUsage('tag', response.usage);
 
     return this.parseJSON(response.choices[0]?.message?.content || '', []);
   }
@@ -121,6 +126,7 @@ ${categoriesHint}
       temperature: 0.2,
       max_tokens: 200,
     });
+    this.recordUsage('classify', response.usage);
 
     return this.parseJSON(response.choices[0]?.message?.content || '', {
       relatedTo: [],
@@ -150,6 +156,7 @@ ${categoriesHint}
         temperature: 0.1,
         max_tokens: 1000,
       });
+      this.recordUsage('classify', response.usage);
 
       const parsed = this.parseJSON<Record<string, string>>(
         response.choices[0]?.message?.content || '',
@@ -165,6 +172,12 @@ ${categoriesHint}
     }
 
     return result;
+  }
+
+  drainUsageRecords(): Array<Required<AiUsageRecord>> {
+    const records = this.usageRecords;
+    this.usageRecords = [];
+    return records;
   }
 
   /**
@@ -192,5 +205,22 @@ ${categoriesHint}
       }
       return fallback;
     }
+  }
+
+  private recordUsage(
+    operation: AiUsageOperation,
+    usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+  ): void {
+    if (!usage) {
+      return;
+    }
+
+    this.usageRecords.push({
+      timestamp: new Date().toISOString(),
+      operation,
+      promptTokens: usage.prompt_tokens ?? 0,
+      completionTokens: usage.completion_tokens ?? 0,
+      model: this.model,
+    });
   }
 }

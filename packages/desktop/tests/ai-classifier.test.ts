@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AIClassifier } from '../src/main/ai/ai-classifier.js';
-import type { RawBookmark } from '@shuhai/shared';
+import type { LLMProvider, RawBookmark } from '@shuhai/shared';
+import type { AiUsageRecord } from '../src/main/db/index.js';
 
 function makeBookmark(overrides: Partial<RawBookmark> = {}): RawBookmark {
   return {
@@ -66,4 +67,49 @@ describe('AIClassifier', () => {
       expect(result.category).toBe('开发/代码');
     });
   });
+
+  it('records usage drained from an AI provider', async () => {
+    const usage: Array<Required<AiUsageRecord>> = [{
+      timestamp: '2024-02-01T00:00:00.000Z',
+      operation: 'classify',
+      promptTokens: 10,
+      completionTokens: 5,
+      model: 'deepseek-chat',
+    }];
+    const onUsage = vi.fn();
+    const classifier = new AIClassifier({
+      provider: 'deepseek',
+      apiKey: 'test-key',
+      batchSize: 50,
+      autoClassify: true,
+    }, {
+      provider: {
+        ...fakeProvider(),
+        batchClassify: vi.fn().mockResolvedValue(new Map([['https://example.com', 'AI/分类']])),
+        drainUsageRecords: vi.fn(() => usage),
+      },
+      onUsage,
+    });
+
+    const results = await classifier.batchClassify([makeBookmark()]);
+
+    expect(results.get('https://example.com')).toMatchObject({
+      category: 'AI/分类',
+      aiClassified: true,
+    });
+    expect(classifier.getTokenUsage()).toBe(15);
+    expect(onUsage).toHaveBeenCalledWith(usage[0]);
+  });
 });
+
+function fakeProvider(): LLMProvider {
+  return {
+    name: 'fake',
+    model: 'fake-model',
+    classify: vi.fn(),
+    summarize: vi.fn(),
+    generateTags: vi.fn(),
+    findRelations: vi.fn(),
+    batchClassify: vi.fn(),
+  };
+}

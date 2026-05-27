@@ -204,6 +204,45 @@ describe('ShuHaiDatabase', () => {
       checksum: 'abc',
     });
   });
+
+  it('records and summarizes monthly AI token usage', () => {
+    database.recordAiUsage({
+      timestamp: '2024-02-01T10:00:00.000Z',
+      operation: 'classify',
+      promptTokens: 100,
+      completionTokens: 20,
+      model: 'deepseek-chat',
+    });
+    database.recordAiUsage({
+      timestamp: '2024-02-01T11:00:00.000Z',
+      operation: 'tag',
+      promptTokens: 30,
+      completionTokens: 10,
+      model: 'deepseek-chat',
+    });
+    database.recordAiUsage({
+      timestamp: '2024-03-01T00:00:00.000Z',
+      operation: 'classify',
+      promptTokens: 999,
+      completionTokens: 999,
+      model: 'deepseek-chat',
+    });
+
+    expect(database.getAiUsageSummary('2024-02')).toEqual({
+      month: '2024-02',
+      promptTokens: 130,
+      completionTokens: 30,
+      totalTokens: 160,
+      callCount: 2,
+      daily: [{
+        date: '2024-02-01',
+        promptTokens: 130,
+        completionTokens: 30,
+        totalTokens: 160,
+        callCount: 2,
+      }],
+    });
+  });
 });
 
 function makeBookmark(overrides: Partial<ProcessedBookmark> = {}): ProcessedBookmark {

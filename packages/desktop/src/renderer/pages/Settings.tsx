@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AppConfig } from '../../main/app-config.js';
-import type { SyncNextRun } from '../../preload.js';
+import type { AiUsageSummary, SyncNextRun } from '../../preload.js';
 import {
   MESSAGE_AUTO_DISMISS_MS,
   errorMessage,
@@ -8,7 +8,13 @@ import {
   userMessage,
   type UserMessage,
 } from '../message.js';
-import { formatSyncNextRun, isSettingsDirty } from './settings-view-model.js';
+import {
+  formatAiUsageSummary,
+  formatSyncNextRun,
+  getAiBudgetPercent,
+  isAiBudgetExceeded,
+  isSettingsDirty,
+} from './settings-view-model.js';
 
 interface SettingsProps {
   config: AppConfig;
@@ -22,7 +28,9 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
   const [message, setMessage] = useState<UserMessage | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [syncNextRun, setSyncNextRun] = useState<SyncNextRun | null>(null);
+  const [aiUsage, setAiUsage] = useState<AiUsageSummary | null>(null);
   const isDirty = useMemo(() => isSettingsDirty(draft, config), [config, draft]);
+  const aiBudgetPercent = getAiBudgetPercent(aiUsage);
 
   useEffect(() => {
     setDraft(config);
@@ -35,6 +43,10 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
   useEffect(() => {
     window.shuhai.getSyncNextRun().then(setSyncNextRun).catch(() => setSyncNextRun(null));
     return window.shuhai.onSyncNextRun(setSyncNextRun);
+  }, []);
+
+  useEffect(() => {
+    loadAiUsage();
   }, []);
 
   useEffect(() => {
@@ -86,11 +98,20 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
     try {
       const nextConfig = await window.shuhai.setConfig(draft);
       onConfigChange(nextConfig);
+      await loadAiUsage();
       setMessage(userMessage('success', '设置已保存'));
     } catch (reason) {
       setMessage(errorMessage(reason, '保存设置失败，请检查 Vault 路径或稍后重试'));
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function loadAiUsage(): Promise<void> {
+    try {
+      setAiUsage(await window.shuhai.getAiUsage());
+    } catch {
+      setAiUsage(null);
     }
   }
 
@@ -213,6 +234,21 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
             placeholder="未设置"
           />
         </label>
+
+        <div className="field span-2 ai-usage">
+          <span>AI 用量</span>
+          <strong>{formatAiUsageSummary(aiUsage)}</strong>
+          {aiBudgetPercent !== null && (
+            <div className="usage-meter" aria-label="AI token budget usage">
+              <progress value={aiBudgetPercent} max={100} />
+              <small className={isAiBudgetExceeded(aiUsage) ? 'field-hint warning' : 'field-hint'}>
+                {isAiBudgetExceeded(aiUsage)
+                  ? '本月用量已超过预算，后续分类仍会继续执行'
+                  : `预算使用 ${aiBudgetPercent}%`}
+              </small>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

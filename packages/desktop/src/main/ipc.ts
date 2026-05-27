@@ -12,6 +12,7 @@ import {
   detectChromeProfiles,
   exportProcessedBookmarks,
   getBookmarkSnapshot,
+  getAiUsageSummary,
   getDeadLinkReviewItems,
   markBookmarksReviewed,
   removeBookmarksFromShuHai,
@@ -73,6 +74,10 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
   ipcMain.handle('bookmarks:classify', async (_event, urls: string[]) => {
     const result = await classifyBookmarks(urls, await loadConfig());
     return classificationMapToRecord(result);
+  });
+
+  ipcMain.handle('ai:get-usage', async () => {
+    return getAiUsageSummary(await loadConfig());
   });
 
   ipcMain.handle('bookmarks:export', async (_event, bookmarks: ProcessedBookmark[]) => {

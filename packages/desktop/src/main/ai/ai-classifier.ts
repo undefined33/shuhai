@@ -1,20 +1,34 @@
 import type { LLMProvider, RawBookmark, AIConfig } from '@shuhai/shared';
 import { DeepSeekProvider } from './deepseek-provider.js';
 import { RuleClassifier, type ClassificationResult } from '../pipeline/classifier.js';
+import type { AiUsageRecord } from '../db/index.js';
+
+interface UsageAwareProvider extends LLMProvider {
+  drainUsageRecords?: () => Array<Required<AiUsageRecord>>;
+}
+
+interface AIClassifierOptions {
+  provider?: UsageAwareProvider;
+  onUsage?: (record: Required<AiUsageRecord>) => void;
+}
 
 /**
  * AI-enhanced classification stage.
  * Falls back to rule-based classification when AI is unavailable.
  */
 export class AIClassifier {
-  private provider: LLMProvider | null = null;
+  private provider: UsageAwareProvider | null = null;
   private ruleClassifier: RuleClassifier;
   private tokenUsage = 0;
+  private readonly onUsage?: (record: Required<AiUsageRecord>) => void;
 
-  constructor(config: AIConfig) {
+  constructor(config: AIConfig, options: AIClassifierOptions = {}) {
     this.ruleClassifier = new RuleClassifier();
+    this.onUsage = options.onUsage;
 
-    if (config.provider !== 'none' && config.apiKey) {
+    if (options.provider) {
+      this.provider = options.provider;
+    } else if (config.provider !== 'none' && config.apiKey) {
       switch (config.provider) {
         case 'deepseek':
           this.provider = new DeepSeekProvider(config.apiKey, {
@@ -58,6 +72,8 @@ export class AIClassifier {
         };
       } catch {
         // AI failed, fall back to rules
+      } finally {
+        this.recordProviderUsage();
       }
     }
 
@@ -90,6 +106,8 @@ export class AIClassifier {
         return results;
       } catch {
         // AI batch failed, fall back entirely
+      } finally {
+        this.recordProviderUsage();
       }
     }
 
@@ -104,5 +122,13 @@ export class AIClassifier {
   /** Get approximate token usage this session */
   getTokenUsage(): number {
     return this.tokenUsage;
+  }
+
+  private recordProviderUsage(): void {
+    const records = this.provider?.drainUsageRecords?.() ?? [];
+    for (const record of records) {
+      this.tokenUsage += record.promptTokens + record.completionTokens;
+      this.onUsage?.(record);
+    }
   }
 }

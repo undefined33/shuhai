@@ -12,8 +12,9 @@ import { MarkdownExporter } from './exporters/markdown-exporter.js';
 import type { AppConfig } from './app-config.js';
 import { getDatabase } from './db/index.js';
 import { UrlHealthChecker, type UrlCheckOptions, type UrlCheckProgress } from './health/index.js';
-import type { DeadLinkReviewItem, ShuHaiDatabase } from './db/index.js';
+import type { AiUsageSummary, DeadLinkReviewItem, ShuHaiDatabase } from './db/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
+import { createLogger } from './logger.js';
 
 export type BookmarkClassification = ClassificationResult & {
   confidence?: number;
@@ -41,6 +42,7 @@ interface SyncChromeBookmarksOptions {
 
 let activeUrlHealthChecker: UrlHealthChecker | null = null;
 let syncMutex: Promise<void> = Promise.resolve();
+const logger = createLogger('bookmark-service');
 
 export async function detectChromeProfiles(): Promise<string[]> {
   try {
@@ -198,9 +200,12 @@ export async function classifyBookmarks(
     bookmarks = (await getBookmarkSnapshot(config)).filter((bookmark) => requestedUrls.has(bookmark.url));
   }
 
-  const classifier = new AIClassifier(config.ai);
-  const classifications = await classifier.batchClassify(bookmarks);
   const database = getDatabase();
+  const classifier = new AIClassifier(config.ai, {
+    onUsage: (usage) => database.recordAiUsage(usage),
+  });
+  const classifications = await classifier.batchClassify(bookmarks);
+  warnIfAiBudgetExceeded(database.getAiUsageSummary(), config);
 
   database.upsertBookmarks(
     bookmarks.map((bookmark) => {
@@ -253,6 +258,13 @@ export async function exportProcessedBookmarks(
 
 export function getDeadLinkReviewItems(): DeadLinkReviewItem[] {
   return getDatabase().getDeadLinkReviewItems();
+}
+
+export function getAiUsageSummary(config: AppConfig): AiUsageSummary & { monthlyBudget?: number } {
+  return {
+    ...getDatabase().getAiUsageSummary(),
+    monthlyBudget: config.ai.monthlyBudget,
+  };
 }
 
 export function markBookmarksReviewed(ids: string[]): void {
@@ -394,4 +406,16 @@ function getActiveBookmarks(bookmarks: ProcessedBookmark[]): ProcessedBookmark[]
 
 function isActiveBookmark(bookmark: ProcessedBookmark): boolean {
   return (bookmark.status as string) !== 'removed';
+}
+
+function warnIfAiBudgetExceeded(summary: AiUsageSummary, config: AppConfig): void {
+  const budget = config.ai.monthlyBudget;
+  if (!budget || summary.totalTokens <= budget) {
+    return;
+  }
+
+  logger.warn('AI monthly token usage exceeded configured budget', {
+    totalTokens: summary.totalTokens,
+    monthlyBudget: budget,
+  });
 }

@@ -65,6 +65,23 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE bookmarks ADD COLUMN reviewed_at TEXT;
     `,
   },
+  {
+    version: 3,
+    description: 'AI token usage tracking',
+    up: `
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        model TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_timestamp ON ai_usage(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_operation ON ai_usage(operation);
+    `,
+  },
 ];
 
 export function migrateDatabase(db: SQLiteDatabase): void {

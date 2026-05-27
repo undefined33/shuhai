@@ -726,6 +726,24 @@ a {
   line-height: 1.4;
 }
 
+.field-hint.warning {
+  color: var(--warning);
+}
+
+.ai-usage strong {
+  font-size: 15px;
+}
+
+.usage-meter {
+  display: grid;
+  gap: 6px;
+}
+
+.usage-meter progress {
+  width: 100%;
+  height: 10px;
+}
+
 .inline-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

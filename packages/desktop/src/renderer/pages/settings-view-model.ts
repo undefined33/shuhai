@@ -1,4 +1,5 @@
 import type { AppConfig } from '../../main/app-config.js';
+import type { AiUsageSummary } from '../../preload.js';
 
 export const UNSAVED_SETTINGS_MESSAGE = '设置尚未保存，确认离开吗？';
 
@@ -20,6 +21,24 @@ export function formatSyncNextRun(nextRunAt: string | null | undefined): string 
     hour: '2-digit',
     minute: '2-digit',
   })}`;
+}
+
+export function formatAiUsageSummary(summary: AiUsageSummary | null): string {
+  const totalTokens = summary?.totalTokens ?? 0;
+  const callCount = summary?.callCount ?? 0;
+  return `本月已用：${totalTokens.toLocaleString('zh-CN')} tokens（${callCount} 次调用）`;
+}
+
+export function getAiBudgetPercent(summary: AiUsageSummary | null): number | null {
+  if (!summary?.monthlyBudget) {
+    return null;
+  }
+
+  return Math.min(100, Math.round((summary.totalTokens / summary.monthlyBudget) * 100));
+}
+
+export function isAiBudgetExceeded(summary: AiUsageSummary | null): boolean {
+  return Boolean(summary?.monthlyBudget && summary.totalTokens > summary.monthlyBudget);
 }
 
 function normalizeConfigForComparison(config: AppConfig): string {

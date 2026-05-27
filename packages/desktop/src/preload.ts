@@ -71,6 +71,24 @@ export interface SyncNextRun {
   updatedAt: string;
 }
 
+export interface AiUsageDailySummary {
+  date: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  callCount: number;
+}
+
+export interface AiUsageSummary {
+  month: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  callCount: number;
+  daily: AiUsageDailySummary[];
+  monthlyBudget?: number;
+}
+
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
   classifyBookmarks(urls: string[]): Promise<BookmarkClassificationRecord>;
@@ -79,6 +97,7 @@ export interface ShuHaiAPI {
   markBookmarksReviewed(ids: string[]): Promise<void>;
   removeBookmarks(ids: string[]): Promise<void>;
   updateBookmarkUrl(id: string, nextUrl: string): Promise<ProcessedBookmark | null>;
+  getAiUsage(): Promise<AiUsageSummary>;
   getConfig(): Promise<AppConfig>;
   setConfig(config: Partial<AppConfig>): Promise<AppConfig>;
   selectDirectory(): Promise<string | null>;
@@ -116,6 +135,7 @@ const api: ShuHaiAPI = {
   updateBookmarkUrl: (id: string, nextUrl: string) => {
     return ipcRenderer.invoke('bookmarks:update-url', id, nextUrl) as Promise<ProcessedBookmark | null>;
   },
+  getAiUsage: () => ipcRenderer.invoke('ai:get-usage') as Promise<AiUsageSummary>,
   getConfig: () => ipcRenderer.invoke('config:get') as Promise<AppConfig>,
   setConfig: (config: Partial<AppConfig>) => {
     return ipcRenderer.invoke('config:set', config) as Promise<AppConfig>;

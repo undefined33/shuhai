@@ -63,6 +63,16 @@ interface SyncStateRow {
   checksum: string | null;
 }
 
+interface AiUsageSummaryRow {
+  call_count: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+}
+
+interface AiUsageDailyRow extends AiUsageSummaryRow {
+  date: string;
+}
+
 interface DeadLinkReviewRow extends BookmarkRow {
   check_checked_at: string | null;
   check_status_code: number | null;
@@ -106,6 +116,33 @@ export interface BookmarkStats {
 export interface DeadLinkReviewItem {
   bookmark: ProcessedBookmark;
   lastCheck: UrlCheckRecord | null;
+}
+
+export type AiUsageOperation = 'classify' | 'summarize' | 'tag';
+
+export interface AiUsageRecord {
+  timestamp?: string;
+  operation: AiUsageOperation;
+  promptTokens: number;
+  completionTokens: number;
+  model: string;
+}
+
+export interface AiUsageDailySummary {
+  date: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  callCount: number;
+}
+
+export interface AiUsageSummary {
+  month: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  callCount: number;
+  daily: AiUsageDailySummary[];
 }
 
 const require = createRequire(import.meta.url);
@@ -493,6 +530,66 @@ export class ShuHaiDatabase {
     });
   }
 
+  recordAiUsage(record: AiUsageRecord): void {
+    this.db.prepare(`
+      INSERT INTO ai_usage (
+        timestamp,
+        operation,
+        prompt_tokens,
+        completion_tokens,
+        model
+      ) VALUES (
+        @timestamp,
+        @operation,
+        @promptTokens,
+        @completionTokens,
+        @model
+      )
+    `).run({
+      timestamp: record.timestamp ?? new Date().toISOString(),
+      operation: record.operation,
+      promptTokens: Math.max(0, Math.trunc(record.promptTokens)),
+      completionTokens: Math.max(0, Math.trunc(record.completionTokens)),
+      model: record.model,
+    });
+  }
+
+  getAiUsageSummary(month = new Date().toISOString().slice(0, 7)): AiUsageSummary {
+    const { start, end } = getMonthRange(month);
+    const parameters = { start, end };
+    const totals = this.db.prepare<AiUsageSummaryRow>(`
+      SELECT
+        COUNT(*) AS call_count,
+        COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+      FROM ai_usage
+      WHERE timestamp >= @start AND timestamp < @end
+    `).get(parameters) ?? { call_count: 0, prompt_tokens: 0, completion_tokens: 0 };
+
+    const daily = this.db.prepare<AiUsageDailyRow>(`
+      SELECT
+        substr(timestamp, 1, 10) AS date,
+        COUNT(*) AS call_count,
+        COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+      FROM ai_usage
+      WHERE timestamp >= @start AND timestamp < @end
+      GROUP BY substr(timestamp, 1, 10)
+      ORDER BY date ASC
+    `).all(parameters).map(rowToAiUsageDailySummary);
+
+    const promptTokens = totals.prompt_tokens ?? 0;
+    const completionTokens = totals.completion_tokens ?? 0;
+    return {
+      month,
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+      callCount: totals.call_count,
+      daily,
+    };
+  }
+
   getStats(): BookmarkStats {
     const row = this.db.prepare<BookmarkStats>(`
       SELECT
@@ -594,6 +691,34 @@ function rowToSyncState(row: SyncStateRow): SyncState {
     lastSyncAt: row.last_sync_at,
     bookmarkCount: row.bookmark_count,
     checksum: row.checksum ?? undefined,
+  };
+}
+
+function rowToAiUsageDailySummary(row: AiUsageDailyRow): AiUsageDailySummary {
+  const promptTokens = row.prompt_tokens ?? 0;
+  const completionTokens = row.completion_tokens ?? 0;
+  return {
+    date: row.date,
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    callCount: row.call_count,
+  };
+}
+
+function getMonthRange(month: string): { start: string; end: string } {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!match) {
+    throw new Error(`Invalid AI usage month: ${month}`);
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const start = new Date(Date.UTC(year, monthIndex, 1));
+  const end = new Date(Date.UTC(year, monthIndex + 1, 1));
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
   };
 }
 

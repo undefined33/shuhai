@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../src/main/app-config.js';
 import {
+  formatAiUsageSummary,
   formatSyncNextRun,
+  getAiBudgetPercent,
+  isAiBudgetExceeded,
   isSettingsDirty,
 } from '../src/renderer/pages/settings-view-model.js';
 
@@ -22,6 +25,22 @@ describe('Settings view model', () => {
     expect(formatSyncNextRun(null)).toBe('下次自动同步：等待设置保存后计算');
     expect(formatSyncNextRun('not-a-date')).toBe('下次自动同步：时间暂不可用');
     expect(formatSyncNextRun('2024-02-01T12:30:00.000Z')).toContain('下次自动同步：');
+  });
+
+  it('formats AI usage and budget state', () => {
+    const summary = {
+      month: '2024-02',
+      promptTokens: 800,
+      completionTokens: 400,
+      totalTokens: 1_200,
+      callCount: 3,
+      monthlyBudget: 1_000,
+      daily: [],
+    };
+
+    expect(formatAiUsageSummary(summary)).toBe('本月已用：1,200 tokens（3 次调用）');
+    expect(getAiBudgetPercent(summary)).toBe(100);
+    expect(isAiBudgetExceeded(summary)).toBe(true);
   });
 });
 
