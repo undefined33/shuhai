@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import type { LLMProvider, RawBookmark } from '@shuhai/shared';
 import { AI_BATCH_SIZE } from '@shuhai/shared';
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 45_000;
+
 /**
  * DeepSeek LLM Provider.
  * Uses OpenAI-compatible API format.
@@ -12,11 +14,13 @@ export class DeepSeekProvider implements LLMProvider {
   readonly model: string;
   private client: OpenAI;
 
-  constructor(apiKey: string, options?: { model?: string; baseUrl?: string }) {
+  constructor(apiKey: string, options?: { model?: string; baseUrl?: string; timeoutMs?: number }) {
     this.model = options?.model || 'deepseek-chat';
     this.client = new OpenAI({
       apiKey,
       baseURL: options?.baseUrl || 'https://api.deepseek.com/v1',
+      timeout: options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
     });
   }
 
@@ -190,4 +194,3 @@ ${categoriesHint}
     }
   }
 }
-

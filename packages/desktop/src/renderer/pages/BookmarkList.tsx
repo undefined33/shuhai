@@ -4,7 +4,12 @@ import type { AppConfig } from '../../main/app-config.js';
 import type { BookmarkClassification } from '../../main/bookmark-service.js';
 import type { UrlCheckProgress } from '../../main/health/index.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
-import { formatSyncMessage, formatUrlCheckProgress } from './bookmark-list-view-model.js';
+import {
+  formatSyncMessage,
+  formatUrlCheckProgress,
+  getSlowClassificationMessage,
+  getWorkflowGuide,
+} from './bookmark-list-view-model.js';
 
 interface BookmarkListProps {
   config: AppConfig;
@@ -25,6 +30,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
   const [isCheckingLinks, setIsCheckingLinks] = useState(false);
   const [exportState, setExportState] = useState<ExportState>('idle');
   const [urlCheckProgress, setUrlCheckProgress] = useState<UrlCheckProgress | null>(null);
+  const [classificationElapsedMs, setClassificationElapsedMs] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,6 +50,22 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
       setMessage(formatUrlCheckProgress(progress));
     });
   }, []);
+
+  useEffect(() => {
+    if (!isClassifying) {
+      setClassificationElapsedMs(0);
+      return undefined;
+    }
+
+    const startedAt = Date.now();
+    const intervalId = window.setInterval(() => {
+      setClassificationElapsedMs(Date.now() - startedAt);
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isClassifying]);
 
   const visibleBookmarks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -67,6 +89,39 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     return ['全部', ...Array.from(values).sort((a, b) => a.localeCompare(b))];
   }, [bookmarks, classifications]);
 
+  const classifiedCount = useMemo(() => {
+    const urls = new Set(classifications.keys());
+    for (const bookmark of bookmarks) {
+      if (bookmark.category !== '未分类' || (bookmark.aiTags?.length ?? 0) > 0) {
+        urls.add(bookmark.url);
+      }
+    }
+    return urls.size;
+  }, [bookmarks, classifications]);
+
+  const checkedCount = useMemo(() => {
+    return bookmarks.filter((bookmark) => bookmark.status !== 'unchecked').length;
+  }, [bookmarks]);
+
+  const hasAiProvider = config.ai.provider !== 'none' && Boolean(config.ai.apiKey?.trim());
+  const hasVaultPath = config.vaultPath.trim().length > 0;
+  const workflowGuide = getWorkflowGuide({
+    bookmarkCount: bookmarks.length,
+    visibleCount: visibleBookmarks.length,
+    classifiedCount,
+    checkedCount,
+    exportState,
+    isClassifying,
+    isCheckingLinks,
+    hasVaultPath,
+    hasAiProvider,
+    isLoading,
+  });
+  const slowClassificationMessage = getSlowClassificationMessage(
+    classificationElapsedMs,
+    hasAiProvider,
+  );
+
   async function refreshBookmarks(options: { keepMessage?: boolean } = {}): Promise<void> {
     setIsLoading(true);
     if (!options.keepMessage) {
@@ -84,6 +139,7 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
 
   async function checkLinks(): Promise<void> {
     setIsCheckingLinks(true);
+    setExportState('idle');
     setUrlCheckProgress(null);
     setMessage(null);
     try {
@@ -100,11 +156,12 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
 
   async function classifyVisibleBookmarks(): Promise<void> {
     setIsClassifying(true);
-    setMessage(null);
+    setExportState('idle');
+    setMessage(`正在分类 ${visibleBookmarks.length} 条书签，结果会保存到 ShuHai 本地库。`);
     try {
       const result = await window.shuhai.classifyBookmarks(visibleBookmarks.map((item) => item.url));
       setClassifications(new Map(result));
-      setMessage(`已分类 ${result.size} 条书签`);
+      setMessage(`已分类 ${result.size} 条书签，下一步可检测链接或导出到 Obsidian`);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -144,6 +201,21 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         </button>
       </div>
 
+      <div className={`workflow-panel ${workflowGuide.tone}`}>
+        <div className="workflow-next">
+          <span>{workflowGuide.title}</span>
+          <strong>{workflowGuide.nextAction}</strong>
+        </div>
+        <ol className="workflow-steps" aria-label="导出流程">
+          {workflowGuide.steps.map((step) => (
+            <li key={step.id} className={`workflow-step ${step.status}`}>
+              <span>{step.label}</span>
+              <small>{step.detail}</small>
+            </li>
+          ))}
+        </ol>
+      </div>
+
       <div className="toolbar">
         <input
           className="search-input"
@@ -164,27 +236,44 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
         <button
           type="button"
           onClick={classifyVisibleBookmarks}
-          disabled={isClassifying || visibleBookmarks.length === 0}
+          disabled={
+            isClassifying
+            || isCheckingLinks
+            || exportState === 'exporting'
+            || visibleBookmarks.length === 0
+          }
         >
           {isClassifying ? '分类中...' : 'AI 分类'}
         </button>
         <button
           type="button"
           onClick={checkLinks}
-          disabled={isCheckingLinks || bookmarks.length === 0}
+          disabled={
+            isClassifying
+            || isCheckingLinks
+            || exportState === 'exporting'
+            || bookmarks.length === 0
+          }
         >
           {isCheckingLinks ? '检测中...' : '检测链接'}
         </button>
         <button
           type="button"
           onClick={exportBookmarks}
-          disabled={exportState === 'exporting' || visibleBookmarks.length === 0}
+          disabled={
+            isClassifying
+            || isCheckingLinks
+            || exportState === 'exporting'
+            || visibleBookmarks.length === 0
+            || !hasVaultPath
+          }
         >
           {exportState === 'exporting' ? '导出中...' : '导出到 Obsidian'}
         </button>
       </div>
 
       {message && <p className={exportState === 'error' ? 'alert' : 'notice'}>{message}</p>}
+      {slowClassificationMessage && <p className="notice warning">{slowClassificationMessage}</p>}
 
       <div className="list-meta">
         <span>{isLoading ? '读取中...' : `${visibleBookmarks.length} / ${bookmarks.length} 条`}</span>

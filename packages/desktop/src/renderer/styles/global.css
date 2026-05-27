@@ -216,6 +216,98 @@ a {
   width: 100%;
 }
 
+.workflow-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.2fr);
+  gap: 12px;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.workflow-panel.warning {
+  border-left-color: var(--warning);
+}
+
+.workflow-panel.success {
+  border-left-color: var(--success);
+}
+
+.workflow-next {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 4px;
+}
+
+.workflow-next span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-next strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-step {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  padding: 8px 10px;
+}
+
+.workflow-step span,
+.workflow-step small {
+  display: block;
+}
+
+.workflow-step span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.workflow-step small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.workflow-step.active {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.09);
+}
+
+.workflow-step.active span {
+  color: var(--primary-strong);
+}
+
+.workflow-step.done {
+  border-color: rgba(15, 118, 110, 0.32);
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.workflow-step.done span {
+  color: var(--success);
+}
+
 .notice,
 .alert {
   margin: 0;
@@ -228,6 +320,12 @@ a {
   border: 1px solid rgba(15, 118, 110, 0.28);
   background: rgba(15, 118, 110, 0.08);
   color: var(--success);
+}
+
+.notice.warning {
+  border-color: rgba(180, 83, 9, 0.28);
+  background: rgba(180, 83, 9, 0.08);
+  color: var(--warning);
 }
 
 .alert {
@@ -465,6 +563,8 @@ a {
   }
 
   .toolbar,
+  .workflow-panel,
+  .workflow-steps,
   .settings-grid,
   .bookmark-card {
     grid-template-columns: 1fr;
