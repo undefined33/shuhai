@@ -11,6 +11,7 @@ import {
 } from './bookmark-service.js';
 import type { SyncResult } from './sync/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
+import { classificationMapToRecord } from './classification-serialization.js';
 
 interface IpcHandlerOptions {
   onConfigChanged?: (config: AppConfig) => Promise<void> | void;
@@ -43,7 +44,8 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
   ipcMain.handle('bookmarks:get', async () => getBookmarkSnapshot(await loadConfig()));
 
   ipcMain.handle('bookmarks:classify', async (_event, urls: string[]) => {
-    return classifyBookmarks(urls, await loadConfig());
+    const result = await classifyBookmarks(urls, await loadConfig());
+    return classificationMapToRecord(result);
   });
 
   ipcMain.handle('bookmarks:export', async (_event, bookmarks: ProcessedBookmark[]) => {

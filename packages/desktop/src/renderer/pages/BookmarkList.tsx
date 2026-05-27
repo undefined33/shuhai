@@ -5,6 +5,7 @@ import type { BookmarkClassification } from '../../main/bookmark-service.js';
 import type { UrlCheckProgress } from '../../main/health/index.js';
 import { BookmarkCard } from '../components/BookmarkCard.js';
 import {
+  classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
   getSlowClassificationMessage,
@@ -160,8 +161,9 @@ export function BookmarkList({ config, onConfigChange }: BookmarkListProps) {
     setMessage(`正在分类 ${visibleBookmarks.length} 条书签，结果会保存到 ShuHai 本地库。`);
     try {
       const result = await window.shuhai.classifyBookmarks(visibleBookmarks.map((item) => item.url));
-      setClassifications(new Map(result));
-      setMessage(`已分类 ${result.size} 条书签，下一步可检测链接或导出到 Obsidian`);
+      const nextClassifications = classificationRecordToMap(result);
+      setClassifications(nextClassifications);
+      setMessage(`已分类 ${nextClassifications.size} 条书签，下一步可检测链接或导出到 Obsidian`);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {

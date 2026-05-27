@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classificationRecordToMap,
   formatSyncMessage,
   formatUrlCheckProgress,
   getSlowClassificationMessage,
@@ -26,6 +27,25 @@ describe('BookmarkList view model', () => {
       errors: 0,
       currentUrl: 'https://example.com',
     })).toBe('检测中：12/100，有效 8，死链 3，重定向 1，错误 0');
+  });
+
+  it('restores IPC-safe classification records into renderer maps', () => {
+    const classifications = classificationRecordToMap({
+      'https://example.com': {
+        category: '开发/文档',
+        tags: ['docs'],
+        confidence: 0.82,
+        aiClassified: true,
+      },
+    });
+
+    expect(classifications).toBeInstanceOf(Map);
+    expect(classifications.get('https://example.com')).toEqual({
+      category: '开发/文档',
+      tags: ['docs'],
+      confidence: 0.82,
+      aiClassified: true,
+    });
   });
 
   it('guides users through classification before link checks and export', () => {

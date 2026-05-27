@@ -1,4 +1,5 @@
 import type { UrlCheckProgress } from '../../main/health/index.js';
+import type { BookmarkClassificationRecord } from '../../preload.js';
 import type { SyncResult } from '../../main/sync/index.js';
 
 export const SLOW_CLASSIFICATION_THRESHOLD_MS = 15_000;
@@ -48,6 +49,12 @@ export function formatUrlCheckProgress(progress: UrlCheckProgress): string {
   ];
 
   return parts.join('，');
+}
+
+export function classificationRecordToMap(
+  record: BookmarkClassificationRecord,
+): Map<string, BookmarkClassificationRecord[string]> {
+  return new Map(Object.entries(record));
 }
 
 export function getWorkflowGuide(state: WorkflowGuideState): WorkflowGuide {

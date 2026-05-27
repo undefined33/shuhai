@@ -22,6 +22,8 @@ export interface BookmarkClassification {
   aiClassified: boolean;
 }
 
+export type BookmarkClassificationRecord = Record<string, BookmarkClassification>;
+
 export interface SyncResult {
   added: number;
   updated: number;
@@ -41,7 +43,7 @@ export interface UrlCheckProgress {
 
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
-  classifyBookmarks(urls: string[]): Promise<Map<string, BookmarkClassification>>;
+  classifyBookmarks(urls: string[]): Promise<BookmarkClassificationRecord>;
   exportBookmarks(bookmarks: ProcessedBookmark[]): Promise<ExportResult>;
   getConfig(): Promise<AppConfig>;
   setConfig(config: Partial<AppConfig>): Promise<AppConfig>;
@@ -57,9 +59,7 @@ export interface ShuHaiAPI {
 const api: ShuHaiAPI = {
   getBookmarks: () => ipcRenderer.invoke('bookmarks:get') as Promise<ProcessedBookmark[]>,
   classifyBookmarks: (urls: string[]) => {
-    return ipcRenderer.invoke('bookmarks:classify', urls) as Promise<
-      Map<string, BookmarkClassification>
-    >;
+    return ipcRenderer.invoke('bookmarks:classify', urls) as Promise<BookmarkClassificationRecord>;
   },
   exportBookmarks: (bookmarks: ProcessedBookmark[]) => {
     return ipcRenderer.invoke('bookmarks:export', bookmarks) as Promise<ExportResult>;
