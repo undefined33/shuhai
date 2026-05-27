@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "isolatedModules": false,
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "sourceMap": true
+  },
+  "include": ["src/preload.ts"]
+}

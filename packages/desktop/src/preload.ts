@@ -1,9 +1,43 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { RawBookmark, ProcessedBookmark, ExportResult } from '@shuhai/shared';
-import type { AppConfig } from './main/app-config.js';
-import type { BookmarkClassification } from './main/bookmark-service.js';
-import type { SyncResult } from './main/sync/index.js';
-import type { UrlCheckProgress } from './main/health/index.js';
+import type { AIConfig, RawBookmark, ProcessedBookmark, ExportResult } from '@shuhai/shared';
+
+export interface AppConfig {
+  vaultPath: string;
+  chromeProfile: string;
+  ai: AIConfig;
+  firstRunComplete: boolean;
+  syncIntervalMinutes: number;
+  windowBounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+export interface BookmarkClassification {
+  category: string;
+  tags: string[];
+  confidence?: number;
+  aiClassified: boolean;
+}
+
+export interface SyncResult {
+  added: number;
+  updated: number;
+  removed: number;
+  total: number;
+}
+
+export interface UrlCheckProgress {
+  total: number;
+  completed: number;
+  alive: number;
+  dead: number;
+  redirect: number;
+  errors: number;
+  currentUrl?: string;
+}
 
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;

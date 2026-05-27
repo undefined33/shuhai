@@ -49,8 +49,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:
-        specifier: 11.9.1
-        version: 11.9.1
+        specifier: 12.10.0
+        version: 12.10.0
       p-limit:
         specifier: 6.2.0
         version: 6.2.0
@@ -749,8 +749,9 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  better-sqlite3@11.9.1:
-    resolution: {integrity: sha512-Ba0KR+Fzxh2jDRhdg6TSH0SJGzb8C0aBY4hR8w8madIdIzzC6Y1+kx5qR6eS1Z+Gy20h6ZU28aeyg0z1VIrShQ==, tarball: https://registry.npmmirror.com/better-sqlite3/-/better-sqlite3-11.9.1.tgz}
+  better-sqlite3@12.10.0:
+    resolution: {integrity: sha512-CyzaZRQKyHkB2ZInfTTl2nvT33EbDpjkLEbE8/Zck3Ll6O0qqvuGdrJ45HgtH+HykRg88ITY3AdreBGN70aBSQ==, tarball: https://registry.npmmirror.com/better-sqlite3/-/better-sqlite3-12.10.0.tgz}
+    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
 
   bindings@1.5.0:
     resolution: {integrity: sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==, tarball: https://registry.npmmirror.com/bindings/-/bindings-1.5.0.tgz}
@@ -2481,7 +2482,7 @@ snapshots:
 
   baseline-browser-mapping@2.10.32: {}
 
-  better-sqlite3@11.9.1:
+  better-sqlite3@12.10.0:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
