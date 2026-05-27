@@ -13,6 +13,7 @@
     "prestart": "node scripts/ensure-sqlite-runtime.mjs electron",
     "start": "electron ./dist/main/index.js",
     "build": "tsc && tsc -p tsconfig.preload.json && vite build",
+    "dist": "pnpm run build && electron-builder --config electron-builder.yml && node scripts/verify-package.mjs",
     "pretest": "node scripts/ensure-sqlite-runtime.mjs node",
     "test": "vitest run --root .",
     "lint": "eslint src/",
@@ -31,6 +32,7 @@
     "@types/react-dom": "19.1.5",
     "@vitejs/plugin-react": "4.4.1",
     "electron": "41.6.1",
+    "electron-builder": "26.8.1",
     "typescript": "5.8.3",
     "vite": "6.3.5"
   }

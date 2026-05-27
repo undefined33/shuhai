@@ -3,9 +3,15 @@ productName: ShuHai
 directories:
   output: release
 files:
-  - dist/**
   - package.json
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+npmRebuild: true
 asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/build/Release/*.node
+  - node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/*.node
 win:
   target:
     - nsis
