@@ -6,3 +6,8 @@ export {
   type SyncStatusState,
   type SyncResult,
 } from './chrome-watcher.js';
+
+export {
+  AutoSyncScheduler,
+  type SyncNextRun,
+} from './auto-sync.js';

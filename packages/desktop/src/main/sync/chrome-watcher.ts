@@ -6,6 +6,7 @@ import {
 } from '../bookmark-service.js';
 import { ChromeFileReader } from '../readers/chrome-file-reader.js';
 import type { ShuHaiDatabase } from '../db/index.js';
+import { createLogger } from '../logger.js';
 
 export type { SyncResult } from '../bookmark-service.js';
 
@@ -35,6 +36,7 @@ export interface SyncStatus {
 }
 
 const DEFAULT_DEBOUNCE_MS = 2_000;
+const logger = createLogger('chrome-watcher');
 const EMPTY_SYNC_RESULT: SyncResult = {
   added: 0,
   updated: 0,
@@ -149,7 +151,7 @@ export class ChromeBookmarkWatcher {
 
   private reportError(error: unknown): void {
     const normalized = error instanceof Error ? error : new Error(String(error));
-    console.error('[ShuHai] Chrome bookmark watcher error:', normalized);
+    logger.error('Chrome bookmark watcher error', { error: normalized });
     this.options.onError?.(normalized);
   }
 }

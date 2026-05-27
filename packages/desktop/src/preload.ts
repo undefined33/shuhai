@@ -65,6 +65,12 @@ export interface SyncStatus {
   updatedAt: string;
 }
 
+export interface SyncNextRun {
+  nextRunAt: string | null;
+  intervalMinutes: number;
+  updatedAt: string;
+}
+
 export interface ShuHaiAPI {
   getBookmarks(): Promise<ProcessedBookmark[]>;
   classifyBookmarks(urls: string[]): Promise<BookmarkClassificationRecord>;
@@ -79,8 +85,11 @@ export interface ShuHaiAPI {
   getChromeProfiles(): Promise<string[]>;
   openExternal(url: string): Promise<void>;
   showItemInFolder(itemPath: string): Promise<void>;
+  openLogsDirectory(): Promise<string>;
   getSyncStatus(): Promise<SyncStatus | null>;
+  getSyncNextRun(): Promise<SyncNextRun | null>;
   onSyncStatus(callback: (status: SyncStatus) => void): () => void;
+  onSyncNextRun(callback: (state: SyncNextRun) => void): () => void;
   onBookmarksChanged(callback: (result: SyncResult) => void): () => void;
   startUrlCheck(): Promise<UrlCheckProgress>;
   abortUrlCheck(): Promise<boolean>;
@@ -117,7 +126,9 @@ const api: ShuHaiAPI = {
   showItemInFolder: (itemPath: string) => {
     return ipcRenderer.invoke('system:show-item-in-folder', itemPath) as Promise<void>;
   },
+  openLogsDirectory: () => ipcRenderer.invoke('system:open-logs-directory') as Promise<string>,
   getSyncStatus: () => ipcRenderer.invoke('sync:status:get') as Promise<SyncStatus | null>,
+  getSyncNextRun: () => ipcRenderer.invoke('sync:next-run:get') as Promise<SyncNextRun | null>,
   startUrlCheck: () => ipcRenderer.invoke('url-check:start') as Promise<UrlCheckProgress>,
   abortUrlCheck: () => ipcRenderer.invoke('url-check:abort') as Promise<boolean>,
   onBookmarksChanged: (callback: (result: SyncResult) => void) => {
@@ -136,6 +147,15 @@ const api: ShuHaiAPI = {
     ipcRenderer.on('sync:status', listener);
     return () => {
       ipcRenderer.removeListener('sync:status', listener);
+    };
+  },
+  onSyncNextRun: (callback: (state: SyncNextRun) => void) => {
+    const listener = (_event: IpcRendererEvent, state: SyncNextRun) => {
+      callback(state);
+    };
+    ipcRenderer.on('sync:next-run', listener);
+    return () => {
+      ipcRenderer.removeListener('sync:next-run', listener);
     };
   },
   onUrlCheckProgress: (callback: (progress: UrlCheckProgress) => void) => {

@@ -1,15 +1,29 @@
 import { app, BrowserWindow, dialog } from 'electron';
-import { registerIpcHandlers, sendBookmarksChanged, sendSyncStatus } from './ipc.js';
+import {
+  registerIpcHandlers,
+  sendBookmarksChanged,
+  sendSyncNextRun,
+  sendSyncStatus,
+} from './ipc.js';
 import { createMainWindow } from './window.js';
 import { createAppTray } from './tray.js';
 import { loadConfig, type AppConfig } from './app-config.js';
 import { closeDatabase, initializeDatabase, resetDatabaseFiles } from './db/index.js';
-import { ChromeBookmarkWatcher, type SyncStatus, type SyncStatusState } from './sync/index.js';
+import {
+  AutoSyncScheduler,
+  ChromeBookmarkWatcher,
+  type SyncResult,
+  type SyncStatus,
+  type SyncStatusState,
+} from './sync/index.js';
 import { handleStartupError } from './startup-error.js';
+import { createLogger, initializeLogging } from './logger.js';
 
 let mainWindow: BrowserWindow | null = null;
 let bookmarkWatcher: ChromeBookmarkWatcher | null = null;
+let autoSyncScheduler: AutoSyncScheduler | null = null;
 let isQuitting = false;
+const logger = createLogger('main');
 
 function showMainWindow(): void {
   if (!mainWindow) return;
@@ -22,6 +36,7 @@ function showMainWindow(): void {
 
 async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
   bookmarkWatcher?.stop();
+  logger.info('Chrome bookmark sync starting', { profile: config.chromeProfile });
   sendSyncStatus(mainWindow, createSyncStatus(
     'syncing',
     config.chromeProfile,
@@ -31,10 +46,11 @@ async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
   bookmarkWatcher = new ChromeBookmarkWatcher({
     profile: config.chromeProfile,
     onSync: (result) => {
+      logger.info('Chrome bookmark sync changed bookmarks', { result });
       sendBookmarksChanged(mainWindow, result);
     },
     onError: (error) => {
-      console.error('[ShuHai] Bookmark sync failed:', error);
+      logger.error('Bookmark sync failed', { error });
       sendSyncStatus(mainWindow, createSyncStatus(
         'error',
         config.chromeProfile,
@@ -44,7 +60,8 @@ async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
     },
   });
 
-  await bookmarkWatcher.syncNow();
+  const syncResult = await bookmarkWatcher.syncNow();
+  logger.info('Chrome bookmark sync completed', { result: syncResult });
   const startResult = bookmarkWatcher.start();
   if (startResult.success) {
     sendSyncStatus(mainWindow, createSyncStatus(
@@ -62,12 +79,39 @@ async function restartBookmarkWatcher(config: AppConfig): Promise<void> {
   }
 }
 
+function restartAutoSync(config: Pick<AppConfig, 'syncIntervalMinutes'>): void {
+  autoSyncScheduler?.stop(false);
+  autoSyncScheduler = new AutoSyncScheduler({
+    intervalMinutes: config.syncIntervalMinutes,
+    syncNow: runScheduledSync,
+    onNextRun: (state) => sendSyncNextRun(mainWindow, state),
+  });
+  autoSyncScheduler.start();
+}
+
+async function handleConfigChanged(config: AppConfig): Promise<void> {
+  await restartBookmarkWatcher(config);
+  restartAutoSync(config);
+}
+
+async function runScheduledSync(): Promise<SyncResult | void> {
+  if (!bookmarkWatcher) {
+    logger.warn('Automatic sync skipped because watcher is not initialized');
+    return undefined;
+  }
+
+  return bookmarkWatcher.syncNow();
+}
+
 async function bootstrap(): Promise<void> {
+  initializeLogging();
+  logger.info('Application bootstrap started');
   initializeDatabase();
+  logger.info('Database initialized');
   const config = await loadConfig();
 
   registerIpcHandlers({
-    onConfigChanged: restartBookmarkWatcher,
+    onConfigChanged: handleConfigChanged,
   });
 
   mainWindow = await createMainWindow({
@@ -78,7 +122,7 @@ async function bootstrap(): Promise<void> {
   createAppTray({
     showMainWindow,
     syncNow: async () => {
-      await bookmarkWatcher?.syncNow();
+      await runScheduledSync();
     },
     quit: () => {
       isQuitting = true;
@@ -88,6 +132,8 @@ async function bootstrap(): Promise<void> {
   });
 
   await restartBookmarkWatcher(config);
+  restartAutoSync(config);
+  logger.info('Application bootstrap completed');
 }
 
 const hasLock = app.requestSingleInstanceLock();
@@ -100,7 +146,7 @@ if (!hasLock) {
     .then(bootstrap)
     .catch((error: unknown) => {
       void handleStartupError(error, {
-        logError: (reason) => console.error('[ShuHai] Failed to start:', reason),
+        logError: (reason) => logger.error('Failed to start', { error: reason }),
         showErrorBox: (title, content) => dialog.showErrorBox(title, content),
         showMessageBox: (options) => dialog.showMessageBox(options),
         resetDatabase: resetDatabaseFiles,
@@ -114,6 +160,9 @@ app.on('activate', showMainWindow);
 
 app.on('before-quit', () => {
   isQuitting = true;
+  logger.info('Application is quitting');
+  autoSyncScheduler?.stop(false);
+  autoSyncScheduler = null;
   bookmarkWatcher?.stop();
   bookmarkWatcher = null;
   closeDatabase();

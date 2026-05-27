@@ -2,6 +2,7 @@ import { app, safeStorage, type Rectangle } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AIConfig } from '@shuhai/shared';
+import { createLogger } from './logger.js';
 
 export interface AppConfig {
   vaultPath: string;
@@ -27,6 +28,7 @@ interface StoredAppConfig extends Partial<Omit<AppConfig, 'ai'>> {
 }
 
 export const AI_KEY_PLACEHOLDER = '********';
+const logger = createLogger('app-config');
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
   vaultPath: '',
@@ -149,7 +151,7 @@ function toStoredConfig(config: AppConfig): StoredAppConfig {
     return stored;
   }
 
-  console.warn('[ShuHai] safeStorage is unavailable; storing AI key with plaintext fallback.');
+  logger.warn('safeStorage is unavailable; storing AI key with plaintext fallback.');
   stored.aiKeyPlaintextFallback = apiKey;
   return stored;
 }

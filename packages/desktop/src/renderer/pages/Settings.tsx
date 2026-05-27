@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AppConfig } from '../../main/app-config.js';
+import type { SyncNextRun } from '../../preload.js';
 import {
   MESSAGE_AUTO_DISMISS_MS,
   errorMessage,
@@ -7,7 +8,7 @@ import {
   userMessage,
   type UserMessage,
 } from '../message.js';
-import { isSettingsDirty } from './settings-view-model.js';
+import { formatSyncNextRun, isSettingsDirty } from './settings-view-model.js';
 
 interface SettingsProps {
   config: AppConfig;
@@ -20,6 +21,7 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
   const [profiles, setProfiles] = useState<string[]>([config.chromeProfile]);
   const [message, setMessage] = useState<UserMessage | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [syncNextRun, setSyncNextRun] = useState<SyncNextRun | null>(null);
   const isDirty = useMemo(() => isSettingsDirty(draft, config), [config, draft]);
 
   useEffect(() => {
@@ -28,6 +30,11 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
 
   useEffect(() => {
     window.shuhai.getChromeProfiles().then(setProfiles).catch(() => setProfiles(['Default']));
+  }, []);
+
+  useEffect(() => {
+    window.shuhai.getSyncNextRun().then(setSyncNextRun).catch(() => setSyncNextRun(null));
+    return window.shuhai.onSyncNextRun(setSyncNextRun);
   }, []);
 
   useEffect(() => {
@@ -87,6 +94,16 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
     }
   }
 
+  async function openLogsDirectory(): Promise<void> {
+    setMessage(null);
+    try {
+      await window.shuhai.openLogsDirectory();
+      setMessage(userMessage('success', '日志目录已打开'));
+    } catch (reason) {
+      setMessage(errorMessage(reason, '打开日志目录失败，请稍后重试'));
+    }
+  }
+
   return (
     <section className="page settings-page">
       <div className="page-header">
@@ -94,9 +111,14 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
           <p className="eyebrow">应用配置</p>
           <h1>设置</h1>
         </div>
-        <button type="button" onClick={save} disabled={isSaving}>
-          {isSaving ? '保存中...' : '保存'}
-        </button>
+        <div className="actions right">
+          <button type="button" onClick={openLogsDirectory}>
+            打开日志目录
+          </button>
+          <button type="button" onClick={save} disabled={isSaving}>
+            {isSaving ? '保存中...' : '保存'}
+          </button>
+        </div>
       </div>
 
       {message && (
@@ -143,6 +165,9 @@ export function Settings({ config, onConfigChange, onDirtyChange }: SettingsProp
             <option value={60}>1 小时</option>
             <option value={240}>4 小时</option>
           </select>
+          <small className="field-hint">
+            {formatSyncNextRun(syncNextRun?.nextRunAt)}
+          </small>
         </label>
 
         <label className="field">

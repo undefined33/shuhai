@@ -19,10 +19,13 @@ import {
   updateBookmarkUrl,
 } from './bookmark-service.js';
 import type { SyncResult, SyncStatus } from './sync/index.js';
+import type { SyncNextRun } from './sync/index.js';
 import { assertAllowedExternalUrl } from './external-url.js';
 import { classificationMapToRecord } from './classification-serialization.js';
+import { initializeLogging } from './logger.js';
 
 let latestSyncStatus: SyncStatus | null = null;
+let latestSyncNextRun: SyncNextRun | null = null;
 
 interface IpcHandlerOptions {
   onConfigChanged?: (config: AppConfig) => Promise<void> | void;
@@ -56,7 +59,14 @@ export function registerIpcHandlers(options: IpcHandlerOptions = {}): void {
     shell.showItemInFolder(itemPath);
   });
 
+  ipcMain.handle('system:open-logs-directory', async () => {
+    const logsDir = initializeLogging();
+    await shell.openPath(logsDir);
+    return logsDir;
+  });
+
   ipcMain.handle('sync:status:get', () => latestSyncStatus);
+  ipcMain.handle('sync:next-run:get', () => latestSyncNextRun);
 
   ipcMain.handle('bookmarks:get', async () => getBookmarkSnapshot(await loadConfig()));
 
@@ -112,4 +122,12 @@ export function sendSyncStatus(
 ): void {
   latestSyncStatus = status;
   window?.webContents.send('sync:status', status);
+}
+
+export function sendSyncNextRun(
+  window: BrowserWindow | null,
+  state: SyncNextRun,
+): void {
+  latestSyncNextRun = state;
+  window?.webContents.send('sync:next-run', state);
 }
