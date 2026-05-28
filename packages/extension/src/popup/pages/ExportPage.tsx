@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Database,
   Download,
+  Eye,
   FileText,
   FolderOpen,
   HelpCircle,
@@ -21,6 +22,13 @@ import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog.js';
 import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { Progress } from '../../components/ui/progress.js';
@@ -104,6 +112,7 @@ export default function ExportPage({
   const [error, setError] = useState('');
   const [selectedCaptureId, setSelectedCaptureId] = useState('');
   const [captureTags, setCaptureTags] = useState('');
+  const [previewCaptureOpen, setPreviewCaptureOpen] = useState(false);
   const exportControllerRef = useRef<AbortController | undefined>(undefined);
 
   useEffect(() => {
@@ -442,10 +451,24 @@ export default function ExportPage({
                       </Button>
                     </div>
                   </div>
-                  <div className="text-sm font-medium">预览：{selectedCapture.title}</div>
-                  <div className="max-h-40 overflow-auto rounded-md bg-card p-2 font-mono text-[11px] text-muted-foreground">
-                    {selectedCapture.text.slice(0, 1200)}
-                    {selectedCapture.text.length > 1200 ? '\n...' : ''}
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1 truncate text-sm font-medium">
+                      预览：{selectedCapture.title}
+                    </div>
+                    <Button
+                      onClick={() => setPreviewCaptureOpen(true)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Eye className="h-4 w-4" />
+                      放大
+                    </Button>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto rounded-md bg-card p-3 text-xs leading-5 text-foreground">
+                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {selectedCapture.text.slice(0, 2400)}
+                      {selectedCapture.text.length > 2400 ? '\n\n...' : ''}
+                    </div>
                   </div>
                   <div className="space-y-1.5">
                     <Label>标签</Label>
@@ -460,6 +483,21 @@ export default function ExportPage({
               <Button disabled={busy} onClick={onClearPendingCapture} variant="ghost">
                 清空待保存队列
               </Button>
+              <Dialog onOpenChange={setPreviewCaptureOpen} open={previewCaptureOpen}>
+                <DialogContent className="flex h-[calc(100vh-1rem)] max-w-[calc(100%-1rem)] flex-col gap-3">
+                  <DialogHeader>
+                    <DialogTitle className="line-clamp-2">{selectedCapture?.title}</DialogTitle>
+                    <DialogDescription>
+                      {selectedCapture ? `${selectedCapture.siteName ?? hostFromUrl(selectedCapture.url)} · ${selectedCapture.wordCount ?? 0} 字 · ${selectedCapture.media.length} 图` : ''}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-card p-3 text-sm leading-6">
+                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {selectedCapture?.text}
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
           )}
         </CardContent>
