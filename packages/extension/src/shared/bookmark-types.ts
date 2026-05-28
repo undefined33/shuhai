@@ -190,7 +190,7 @@ export type UrlHealthPortMessage =
       records: UrlHealthRecord[];
       cancelled: boolean;
     }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string; errorCode?: string };
 
 export type ClassificationPortRequest =
   | { type: 'plan:create'; mode: ClassificationMode }
@@ -204,7 +204,7 @@ export type ClassificationPortMessage =
       progress: ClassificationProgress;
       cancelled: boolean;
     }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string; errorCode?: string };
 
 export interface MoveRecord {
   bookmarkId: string;
@@ -297,6 +297,13 @@ export interface ExtensionState {
   settings: AppSettings;
 }
 
+export interface OnboardingProgressState {
+  vaultConfigured: boolean;
+  providerConfigured: boolean;
+  firstClassifyDone: boolean;
+  firstExportDone: boolean;
+}
+
 export type ExtensionRequest =
   | { type: 'state:get' }
   | { type: 'plan:create'; mode: ClassificationMode }
@@ -309,6 +316,7 @@ export type ExtensionRequest =
   | { type: 'settings:get' }
   | { type: 'settings:set'; settings: AppSettings }
   | { type: 'ai:testConnection'; provider: AiProviderConfig }
+  | { type: 'onboarding:getProgress' }
   | { type: 'onboarding:set'; onboarded: boolean }
   | { type: 'capture:getPending' }
   | { type: 'capture:removePending'; id: string }
@@ -327,6 +335,7 @@ export type ExtensionResponse =
   | { ok: true; data: BackupRecord[] }
   | { ok: true; data: AppSettings }
   | { ok: true; data: AiProviderTestResult }
+  | { ok: true; data: OnboardingProgressState }
   | { ok: true; data: { undone: number } }
   | { ok: true; data: { onboarded: boolean } }
   | { ok: true; data: CapturedContent[] }
@@ -336,4 +345,4 @@ export type ExtensionResponse =
   | { ok: true; data: { record: UrlHealthRecord; records: UrlHealthRecord[] } }
   | { ok: true; data: { deleted: boolean; backupKey: string } }
   | { ok: true; data: { updated: boolean; backupKey: string } }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorCode?: string };

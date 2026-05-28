@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -19,6 +19,7 @@ import type {
   UrlHealthStatus,
 } from '../../shared/bookmark-types.js';
 import { VirtualList } from '../../components/VirtualList.js';
+import { SearchInput } from '../../components/SearchInput.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
@@ -27,6 +28,7 @@ import { Checkbox } from '../../components/ui/checkbox.js';
 import { Input } from '../../components/ui/input.js';
 import { Progress } from '../../components/ui/progress.js';
 import { summarizeHealthRecords } from '../../utils/url-health.js';
+import { friendlyHealthError } from '../../utils/error-messages.js';
 
 interface HealthPageProps {
   bookmarks: BookmarkItem[];
@@ -72,7 +74,9 @@ function statusLabel(status: UrlHealthStatus): string {
   }
 }
 
-function statusVariant(status: UrlHealthStatus): 'danger' | 'outline' | 'secondary' | 'success' | 'warning' {
+function statusVariant(
+  status: UrlHealthStatus,
+): 'danger' | 'outline' | 'secondary' | 'success' | 'warning' {
   switch (status) {
     case 'alive':
       return 'success';
@@ -188,7 +192,9 @@ export default function HealthPage({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [replacementById, setReplacementById] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const deferredSearch = useDeferredValue(search);
   const bookmarkById = useMemo(
     () => new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark])),
     [bookmarks],
@@ -214,9 +220,24 @@ export default function HealthPage({
         : filter === 'actionable'
           ? activeRecords.filter((record) => ACTIONABLE_STATUSES.has(record.status))
           : activeRecords.filter((record) => record.status === filter);
+    const keyword = deferredSearch.trim().toLowerCase();
+    const searched = keyword
+      ? filtered.filter((record) =>
+          [
+            record.bookmarkTitle,
+            record.bookmarkUrl,
+            record.finalUrl ?? '',
+            record.error ?? '',
+            friendlyHealthError(record.error),
+          ]
+            .join('\n')
+            .toLowerCase()
+            .includes(keyword),
+        )
+      : filtered;
 
-    return [...filtered].sort((a, b) => failureGroup(a).localeCompare(failureGroup(b), 'zh-CN'));
-  }, [activeRecords, filter]);
+    return [...searched].sort((a, b) => failureGroup(a).localeCompare(failureGroup(b), 'zh-CN'));
+  }, [activeRecords, deferredSearch, filter]);
   const rows = useMemo(() => buildRows(visibleRecords), [visibleRecords]);
   const selectedRecords = useMemo(
     () => visibleRecords.filter((record) => selectedIds.has(record.bookmarkId)),
@@ -229,8 +250,7 @@ export default function HealthPage({
       ),
     [selectedRecords],
   );
-  const showRedirectBatchAction =
-    filter === 'redirected' || selectedRedirectedRecords.length > 0;
+  const showRedirectBatchAction = filter === 'redirected' || selectedRedirectedRecords.length > 0;
   const deleteManyLabel = useMemo(() => {
     if (selectedRecords.length === 0) {
       return '删除选中';
@@ -388,6 +408,19 @@ export default function HealthPage({
         ))}
       </div>
 
+      {activeRecords.length > 0 ? (
+        <div className="space-y-1.5">
+          <SearchInput
+            onChange={setSearch}
+            placeholder="搜索标题、URL、跳转或错误"
+            value={search}
+          />
+          <div className="text-[11px] text-muted-foreground">
+            显示 {visibleRecords.length} / {activeRecords.length} 条
+          </div>
+        </div>
+      ) : null}
+
       {visibleRecords.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -441,7 +474,12 @@ export default function HealthPage({
           ) : (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
               <CheckCircle2 className="mx-auto h-7 w-7" />
-              <p>当前筛选下没有需要处理的链接。</p>
+              <p>{search ? `未找到匹配「${search}」的链接。` : '当前筛选下没有需要处理的链接。'}</p>
+              {search ? (
+                <Button onClick={() => setSearch('')} size="sm" variant="outline">
+                  清除搜索
+                </Button>
+              ) : null}
             </div>
           )
         }
@@ -486,7 +524,7 @@ export default function HealthPage({
               {record.error ? (
                 <div className="flex items-start gap-1.5 text-[11px] text-destructive">
                   <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span className="truncate">{record.error}</span>
+                  <span className="truncate">{friendlyHealthError(record.error)}</span>
                 </div>
               ) : null}
               {editing ? (

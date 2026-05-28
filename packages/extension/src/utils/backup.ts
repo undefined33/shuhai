@@ -6,6 +6,7 @@ import {
   saveLastMoveRecords,
   setLocalValues,
 } from './storage.js';
+import { addActivityEntry } from './activity-log.js';
 
 const BACKUP_INDEX_KEY = 'backupIndex';
 const MAX_BACKUPS = 5;
@@ -50,6 +51,11 @@ export async function createBackupSnapshot(
   if (staleKeys.length > 0) {
     await removeLocalValues(staleKeys);
   }
+
+  await addActivityEntry({
+    type: 'backup_create',
+    summary: `创建了书签备份（${backup.bookmarkCount} 个书签）`,
+  });
 
   return backup;
 }

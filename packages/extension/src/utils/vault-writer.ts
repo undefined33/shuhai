@@ -6,16 +6,14 @@ import type {
   MovePlan,
 } from '../shared/bookmark-types.js';
 import { stripRootFolder } from '../shared/classifier.js';
-import {
-  generateBookmarkMarkdown,
-  generateCapturedContentMarkdown,
-} from './markdown-generator.js';
+import { generateBookmarkMarkdown, generateCapturedContentMarkdown } from './markdown-generator.js';
 import {
   assertSafeRelativePath,
   sanitizeFileName,
   sanitizePathSegment,
   sanitizeRelativePath,
 } from './sanitize.js';
+import { addActivityEntry, summarizeVaultExport } from './activity-log.js';
 import { saveExportManifest } from './storage.js';
 
 const DB_NAME = 'shuhai-vault';
@@ -91,7 +89,8 @@ function idbSet(key: string, value: unknown): Promise<void> {
         const request = transaction.objectStore(STORE_NAME).put(value, key);
 
         request.onerror = () => reject(request.error ?? new Error('Cannot save vault handle'));
-        transaction.onerror = () => reject(transaction.error ?? new Error('Cannot save vault handle'));
+        transaction.onerror = () =>
+          reject(transaction.error ?? new Error('Cannot save vault handle'));
         transaction.oncomplete = () => {
           db.close();
           resolve();
@@ -119,9 +118,7 @@ export async function requestVaultAccess(): Promise<FileSystemDirectoryHandle> {
   return handle;
 }
 
-export async function checkVaultPermission(
-  handle: FileSystemDirectoryHandle,
-): Promise<boolean> {
+export async function checkVaultPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
   const permissioned = handle as PermissionedDirectoryHandle;
   const descriptor = { mode: 'readwrite' as const };
   const current = await permissioned.queryPermission(descriptor);
@@ -138,10 +135,7 @@ function moveByBookmarkId(moves: MovePlan[] = []): Map<string, MovePlan> {
   return new Map(moves.map((move) => [move.bookmarkId, move]));
 }
 
-export function buildBookmarkExportPath(
-  bookmark: BookmarkItem,
-  options: ExportOptions,
-): string[] {
+export function buildBookmarkExportPath(bookmark: BookmarkItem, options: ExportOptions): string[] {
   const move = moveByBookmarkId(options.moves).get(bookmark.id);
   const folder = stripRootFolder(move?.targetFolder ?? bookmark.parentPath);
   const prefix = sanitizeRelativePath(options.directoryPrefix || 'Bookmarks');
@@ -283,6 +277,13 @@ export async function exportBookmarksToVault(
   }
 
   await saveExportManifest(manifest);
+  if (result.exported > 0) {
+    await addActivityEntry({
+      type: 'vault_export',
+      summary: summarizeVaultExport(result.exported, options.directoryPrefix),
+      details: result.files.map((file) => ({ label: file })),
+    });
+  }
   return result;
 }
 
@@ -327,5 +328,12 @@ export async function exportCaptureToVault(
   }
 
   await saveExportManifest(manifest);
+  if (result.exported > 0) {
+    await addActivityEntry({
+      type: 'vault_export',
+      summary: summarizeVaultExport(result.exported, directoryPrefix),
+      details: result.files.map((file) => ({ label: file })),
+    });
+  }
   return result;
 }

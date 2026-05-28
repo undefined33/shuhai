@@ -51,11 +51,9 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
-        'background/service-worker': resolve(
-          __dirname,
-          'src/background/service-worker.ts',
-        ),
+        'background/service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
         'content/article': resolve(__dirname, 'src/content/article.ts'),
+        'content/toast': resolve(__dirname, 'src/content/toast.ts'),
         'content/twitter': resolve(__dirname, 'src/content/twitter.ts'),
         'content/weibo': resolve(__dirname, 'src/content/weibo.ts'),
       },

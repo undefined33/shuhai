@@ -3,6 +3,7 @@ import {
   Activity,
   Bookmark,
   CheckCircle2,
+  Clock,
   Download,
   FolderTree,
   GitBranch,
@@ -63,6 +64,7 @@ interface OrganizePageProps {
   onDownloadBackup(backup: BackupRecord): void;
   onModeChange(mode: OrganizeMode): void;
   onMoveChange(move: MovePlan): void;
+  onOpenActivity(): void;
   onRefresh(): Promise<void>;
   onRetryHealthRecord(record: UrlHealthRecord): void;
   onStartHealthCheck(): void;
@@ -108,6 +110,7 @@ export default function OrganizePage({
   onDownloadBackup,
   onModeChange,
   onMoveChange,
+  onOpenActivity,
   onRefresh,
   onRetryHealthRecord,
   onStartHealthCheck,
@@ -187,19 +190,16 @@ export default function OrganizePage({
               <Activity className="h-4 w-4" />
               体检链接
             </Button>
-            <Button
-              disabled={busy || !canUndo}
-              onClick={onUndo}
-              variant="outline"
-            >
+            <Button disabled={busy || !canUndo} onClick={onUndo} variant="outline">
               撤销上次整理
             </Button>
-            <Button
-              onClick={() => setShowIndexTool((current) => !current)}
-              variant="outline"
-            >
+            <Button onClick={() => setShowIndexTool((current) => !current)} variant="outline">
               <Download className="h-4 w-4" />
               {showIndexTool ? '收起索引导出' : '导出书签索引'}
+            </Button>
+            <Button onClick={onOpenActivity} variant="outline">
+              <Clock className="h-4 w-4" />
+              操作历史
             </Button>
           </div>
         </CardContent>

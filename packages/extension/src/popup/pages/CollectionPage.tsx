@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Clock, Eye, FolderOpen, Inbox, MessageCircle, Save, Trash2 } from 'lucide-react';
-import type {
-  AppSettings,
-  CapturedContent,
-  ExportManifest,
-} from '../../shared/bookmark-types.js';
+import type { AppSettings, CapturedContent, ExportManifest } from '../../shared/bookmark-types.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
+import { ErrorRecovery } from '../../components/ErrorRecovery.js';
+import { SearchInput } from '../../components/SearchInput.js';
+import { useToast } from '../../components/ui/toast.js';
 import {
   Dialog,
   DialogContent,
@@ -21,9 +20,11 @@ import { Label } from '../../components/ui/label.js';
 import {
   checkVaultPermission,
   exportCaptureToVault,
+  type ExportResult,
   getVaultHandle,
   requestVaultAccess,
 } from '../../utils/vault-writer.js';
+import { toStructuredError, type StructuredError } from '../../utils/error-messages.js';
 
 interface CollectionPageProps {
   exportManifests: ExportManifest[];
@@ -31,6 +32,7 @@ interface CollectionPageProps {
   settings: AppSettings;
   onClearPendingCapture(): Promise<void>;
   onCaptureCurrentSocial(source: 'twitter' | 'weibo'): Promise<CapturedContent>;
+  onOpenSettings?(): void;
   onRemovePendingCapture(id: string): Promise<void>;
   onRefresh(): Promise<void>;
 }
@@ -72,7 +74,8 @@ function activeSocialSource(url: string): 'twitter' | 'weibo' | undefined {
   try {
     const parsed = new URL(url);
     if (
-      (parsed.hostname === 'x.com' || parsed.hostname.endsWith('.x.com') ||
+      (parsed.hostname === 'x.com' ||
+        parsed.hostname.endsWith('.x.com') ||
         parsed.hostname === 'twitter.com' ||
         parsed.hostname.endsWith('.twitter.com')) &&
       /\/[^/]+\/status\/\d+/.test(parsed.pathname)
@@ -81,7 +84,8 @@ function activeSocialSource(url: string): 'twitter' | 'weibo' | undefined {
     }
 
     if (
-      (parsed.hostname === 'weibo.com' || parsed.hostname.endsWith('.weibo.com') ||
+      (parsed.hostname === 'weibo.com' ||
+        parsed.hostname.endsWith('.weibo.com') ||
         parsed.hostname === 'm.weibo.cn') &&
       (/\/detail\/[^/?#]+/.test(parsed.pathname) || /\/status\/[^/?#]+/.test(parsed.pathname))
     ) {
@@ -100,17 +104,20 @@ export default function CollectionPage({
   settings,
   onClearPendingCapture,
   onCaptureCurrentSocial,
+  onOpenSettings,
   onRemovePendingCapture,
   onRefresh,
 }: CollectionPageProps) {
+  const { toast } = useToast();
   const [activeSource, setActiveSource] = useState<'twitter' | 'weibo' | undefined>();
   const [handle, setHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [directoryPrefix, setDirectoryPrefix] = useState(settings.exportDirectory);
   const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<StructuredError | undefined>();
   const [busy, setBusy] = useState(false);
   const [selectedCaptureId, setSelectedCaptureId] = useState('');
   const [captureTags, setCaptureTags] = useState('');
+  const [search, setSearch] = useState('');
   const [previewCaptureOpen, setPreviewCaptureOpen] = useState(false);
 
   useEffect(() => {
@@ -147,6 +154,25 @@ export default function CollectionPage({
     () => pendingCaptures.find((capture) => capture.id === selectedCaptureId) ?? pendingCaptures[0],
     [pendingCaptures, selectedCaptureId],
   );
+  const filteredCaptures = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) {
+      return pendingCaptures;
+    }
+
+    return pendingCaptures.filter((capture) =>
+      [
+        capture.title,
+        capture.url,
+        capture.author ?? '',
+        capture.handle ?? '',
+        capture.text.slice(0, 200),
+      ]
+        .join('\n')
+        .toLowerCase()
+        .includes(keyword),
+    );
+  }, [pendingCaptures, search]);
 
   useEffect(() => {
     if (!selectedCapture) {
@@ -161,13 +187,14 @@ export default function CollectionPage({
 
   const chooseVault = async () => {
     setBusy(true);
-    setError('');
+    setError(undefined);
     try {
       const nextHandle = await requestVaultAccess();
       setHandle(nextHandle);
       setStatus(`已选择 Vault：${nextHandle.name}`);
+      toast({ kind: 'success', message: `已选择 Vault：${nextHandle.name}` });
     } catch (chooseError) {
-      setError(chooseError instanceof Error ? chooseError.message : String(chooseError));
+      setError(toStructuredError(chooseError));
     } finally {
       setBusy(false);
     }
@@ -186,7 +213,7 @@ export default function CollectionPage({
     return handle;
   };
 
-  const exportCapture = async (capture: CapturedContent, tags: string[]) => {
+  const exportCapture = async (capture: CapturedContent, tags: string[]): Promise<ExportResult> => {
     const writableHandle = await ensureWritableVault();
     const result = await exportCaptureToVault(
       writableHandle,
@@ -200,6 +227,8 @@ export default function CollectionPage({
     if (result.errors.length > 0) {
       throw new Error(result.errors.map((item) => item.error).join('；'));
     }
+
+    return result;
   };
 
   const saveSelectedCapture = async () => {
@@ -208,17 +237,23 @@ export default function CollectionPage({
     }
 
     setBusy(true);
-    setError('');
+    setError(undefined);
     try {
       const tags = captureTags
         .split(',')
         .map((tag) => tag.trim())
         .filter(Boolean);
-      await exportCapture(selectedCapture, tags);
+      const result = await exportCapture(selectedCapture, tags);
       setStatus('内容保存完成，已从待保存队列移除。');
+      toast({
+        kind: 'success',
+        message: result.files[0]
+          ? `已写入「${selectedCapture.title}」到 ${directoryPrefix}/`
+          : `「${selectedCapture.title}」已存在，未重复写入。`,
+      });
       await onRemovePendingCapture(selectedCapture.id);
     } catch (captureError) {
-      setError(captureError instanceof Error ? captureError.message : String(captureError));
+      setError(toStructuredError(captureError));
     } finally {
       setBusy(false);
     }
@@ -230,16 +265,22 @@ export default function CollectionPage({
     }
 
     setBusy(true);
-    setError('');
+    setError(undefined);
     try {
+      let exportedCount = 0;
       for (const capture of pendingCaptures) {
-        await exportCapture(capture, capture.tags);
+        const result = await exportCapture(capture, capture.tags);
+        exportedCount += result.exported;
         await onRemovePendingCapture(capture.id);
       }
       setStatus(`已保存 ${pendingCaptures.length} 条内容。`);
+      toast({
+        kind: 'success',
+        message: `已写入 ${exportedCount} 个文件到 ${directoryPrefix}/`,
+      });
       await onRefresh();
     } catch (captureError) {
-      setError(captureError instanceof Error ? captureError.message : String(captureError));
+      setError(toStructuredError(captureError));
     } finally {
       setBusy(false);
     }
@@ -247,14 +288,15 @@ export default function CollectionPage({
 
   const captureCurrentSocial = async (source: 'twitter' | 'weibo') => {
     setBusy(true);
-    setError('');
+    setError(undefined);
     try {
       const capture = await onCaptureCurrentSocial(source);
       setSelectedCaptureId(capture.id);
       setStatus(`${sourceLabel(source)}已加入待保存队列。`);
+      toast({ kind: 'success', message: `${sourceLabel(source)}已加入待保存队列。` });
       await onRefresh();
     } catch (captureError) {
-      setError(captureError instanceof Error ? captureError.message : String(captureError));
+      setError(toStructuredError(captureError));
     } finally {
       setBusy(false);
     }
@@ -262,7 +304,15 @@ export default function CollectionPage({
 
   return (
     <section className="flex h-full min-h-0 flex-col gap-3">
-      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {error ? (
+        <ErrorRecovery
+          error={error}
+          onDismiss={() => setError(undefined)}
+          onOpenSettings={onOpenSettings}
+          onRetry={() => void onRefresh()}
+          onSelectVault={chooseVault}
+        />
+      ) : null}
       {status ? <Alert variant="success">{status}</Alert> : null}
 
       <Card>
@@ -315,11 +365,7 @@ export default function CollectionPage({
               disabled={busy || activeSource !== 'twitter'}
               onClick={() => captureCurrentSocial('twitter')}
               size="sm"
-              title={
-                activeSource === 'twitter'
-                  ? '保存当前推文'
-                  : '请先打开一条推文详情页'
-              }
+              title={activeSource === 'twitter' ? '保存当前推文' : '请先打开一条推文详情页'}
               variant="outline"
             >
               <MessageCircle className="h-4 w-4" />
@@ -337,6 +383,19 @@ export default function CollectionPage({
             </Button>
           </div>
 
+          {pendingCaptures.length > 0 ? (
+            <div className="space-y-1.5">
+              <SearchInput
+                onChange={setSearch}
+                placeholder="搜索标题、URL、作者或正文"
+                value={search}
+              />
+              <div className="text-[11px] text-muted-foreground">
+                显示 {filteredCaptures.length} / {pendingCaptures.length} 条
+              </div>
+            </div>
+          ) : null}
+
           {pendingCaptures.length === 0 ? (
             <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
               <Inbox className="h-7 w-7 text-muted-foreground" />
@@ -345,10 +404,18 @@ export default function CollectionPage({
                 在任意网页右键选择“保存此文章到知识库”，或在 Twitter/X、微博页面保存当前内容。
               </p>
             </div>
+          ) : filteredCaptures.length === 0 ? (
+            <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
+              <Inbox className="h-7 w-7 text-muted-foreground" />
+              <p className="text-sm font-medium">未找到匹配「{search}」的内容</p>
+              <Button onClick={() => setSearch('')} size="sm" variant="outline">
+                清除搜索
+              </Button>
+            </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col gap-3">
               <div className="space-y-2">
-                {pendingCaptures.map((capture) => (
+                {filteredCaptures.map((capture) => (
                   <button
                     className={
                       capture.id === selectedCapture?.id
@@ -403,11 +470,7 @@ export default function CollectionPage({
                       预览：{selectedCapture.title}
                     </div>
                     <Badge variant="outline">{sourceLabel(selectedCapture.source)}</Badge>
-                    <Button
-                      onClick={() => setPreviewCaptureOpen(true)}
-                      size="sm"
-                      variant="outline"
-                    >
+                    <Button onClick={() => setPreviewCaptureOpen(true)} size="sm" variant="outline">
                       <Eye className="h-4 w-4" />
                       放大
                     </Button>

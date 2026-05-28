@@ -45,17 +45,39 @@ import {
 import { Progress } from '../components/ui/progress.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs.js';
 import { Alert } from '../components/ui/alert.js';
-import { DEFAULT_SETTINGS, normalizeSettings } from '../utils/storage.js';
+import { ToastProvider, useToast } from '../components/ui/toast.js';
+import { ErrorRecovery } from '../components/ErrorRecovery.js';
+import { DEFAULT_SETTINGS, normalizeSettings, saveOnboardingProgress } from '../utils/storage.js';
+import {
+  computeOnboardingProgress,
+  onboardingComplete,
+  type OnboardingProgress,
+} from '../utils/onboarding.js';
+import { toStructuredError, type StructuredError } from '../utils/error-messages.js';
+import { getVaultHandle } from '../utils/vault-writer.js';
+import {
+  addActivityEntry,
+  summarizeHealthDelete,
+  summarizeHealthUpdate,
+} from '../utils/activity-log.js';
+import ActivityPage from './pages/ActivityPage.js';
 import CollectionPage from './pages/CollectionPage.js';
+import { OnboardingChecklist } from './pages/OnboardingChecklist.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
 
 type Surface = 'popup' | 'sidepanel';
-type ViewName = 'organize' | 'collect' | 'settings';
+type ViewName = 'organize' | 'collect' | 'activity' | 'settings';
 type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'health' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
 const PREFERRED_VIEW_KEY = 'shuhaiPreferredView';
+const EMPTY_ONBOARDING_PROGRESS: OnboardingProgress = {
+  vaultConfigured: false,
+  providerConfigured: false,
+  firstClassifyDone: false,
+  firstExportDone: false,
+};
 
 function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -100,7 +122,9 @@ function sendMessage<T>(request: ExtensionRequest): Promise<T> {
       }
 
       if (!response.ok) {
-        reject(new Error(response.error));
+        const responseError = new Error(response.error) as Error & { errorCode?: string };
+        responseError.errorCode = response.errorCode;
+        reject(responseError);
         return;
       }
 
@@ -236,7 +260,9 @@ function requestHealthCheckPermission(): Promise<boolean> {
 }
 
 function isViewName(value: unknown): value is ViewName {
-  return value === 'organize' || value === 'collect' || value === 'settings';
+  return (
+    value === 'organize' || value === 'collect' || value === 'activity' || value === 'settings'
+  );
 }
 
 function storePreferredView(view: ViewName): Promise<void> {
@@ -270,19 +296,23 @@ function takePreferredView(): Promise<ViewName | undefined> {
 
 interface PopupLauncherProps {
   busy: boolean;
+  onboardingProgress: OnboardingProgress;
   state?: ExtensionState;
   onOpenSidePanel(view: ViewName): void;
   onQuickClassify(): void;
   onQuickHealth(): void;
+  onSkipOnboarding(): void;
   onUsePopup(view: ViewName): void;
 }
 
 function PopupLauncher({
   busy,
+  onboardingProgress,
   state,
   onOpenSidePanel,
   onQuickClassify,
   onQuickHealth,
+  onSkipOnboarding,
   onUsePopup,
 }: PopupLauncherProps) {
   const bookmarkCount = state?.bookmarks?.length ?? 0;
@@ -297,6 +327,17 @@ function PopupLauncher({
           {bookmarkCount} 书签 · {folderCount} 文件夹
         </p>
       </header>
+
+      {state && !state.onboarded ? (
+        <OnboardingChecklist
+          compact
+          onOpenCollect={() => onUsePopup('collect')}
+          onOpenOrganize={() => onUsePopup('organize')}
+          onOpenSettings={() => onUsePopup('settings')}
+          onSkip={onSkipOnboarding}
+          progress={onboardingProgress}
+        />
+      ) : null}
 
       <Card>
         <CardHeader className="pb-2">
@@ -313,7 +354,9 @@ function PopupLauncher({
           <Button disabled={busy} onClick={() => onOpenSidePanel('collect')} variant="outline">
             <BookOpen className="h-4 w-4" />
             收藏内容
-            {pendingCaptureCount > 0 ? <Badge variant="success">{pendingCaptureCount}</Badge> : null}
+            {pendingCaptureCount > 0 ? (
+              <Badge variant="success">{pendingCaptureCount}</Badge>
+            ) : null}
           </Button>
           <Button disabled={busy} onClick={() => onOpenSidePanel('settings')} variant="outline">
             <SettingsIcon className="h-4 w-4" />
@@ -327,11 +370,19 @@ function PopupLauncher({
           <CardTitle>快捷操作</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-2">
-          <Button disabled={busy || bookmarkCount === 0} onClick={onQuickClassify} variant="secondary">
+          <Button
+            disabled={busy || bookmarkCount === 0}
+            onClick={onQuickClassify}
+            variant="secondary"
+          >
             <Sparkles className="h-4 w-4" />
             AI 分类
           </Button>
-          <Button disabled={busy || bookmarkCount === 0} onClick={onQuickHealth} variant="secondary">
+          <Button
+            disabled={busy || bookmarkCount === 0}
+            onClick={onQuickHealth}
+            variant="secondary"
+          >
             <Activity className="h-4 w-4" />
             体检链接
           </Button>
@@ -385,8 +436,8 @@ function ProgressPanel({ progress, onCancel }: ProgressPanelProps) {
         <div className="min-w-0">
           <p className="text-xs font-medium">AI 正在分析你的书签</p>
           <p className="text-[11px] text-muted-foreground">
-            {done}/{total} ({percent}%) · 批次 {progress?.batch ?? 0}/
-            {progress?.totalBatches ?? 0} · 预计剩余 {formatDuration(progress?.remainingMs)}
+            {done}/{total} ({percent}%) · 批次 {progress?.batch ?? 0}/{progress?.totalBatches ?? 0}{' '}
+            · 预计剩余 {formatDuration(progress?.remainingMs)}
           </p>
         </div>
         <Button onClick={onCancel} size="sm" variant="outline">
@@ -398,75 +449,25 @@ function ProgressPanel({ progress, onCancel }: ProgressPanelProps) {
   );
 }
 
-interface WelcomeGuideProps {
-  open: boolean;
-  onStart(): void;
-  onOpenHelp(): void;
-}
-
-function WelcomeGuide({ open, onStart, onOpenHelp }: WelcomeGuideProps) {
-  return (
-    <Dialog open={open}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>欢迎使用 ShuHai</DialogTitle>
-          <DialogDescription>
-            ShuHai 帮你整理 Chrome 书签，并把值得沉淀的内容写入 Obsidian。
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-2 text-sm">
-          <Card>
-            <CardContent className="p-3">
-              <div className="font-medium">1. 整理书签</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                AI 或内置规则会先生成移动方案，确认前不会修改真实书签。
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="font-medium">2. 收藏内容</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                在网页右键保存文章、推文或微博，到“收藏内容”确认后写入 Vault。
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="font-medium">3. 设置知识库</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                首次选择 Obsidian Vault 目录后，浏览器会记住授权并写入 Markdown。
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-        <DialogFooter>
-          <Button onClick={onOpenHelp} variant="ghost">
-            打开设置
-          </Button>
-          <Button onClick={onStart}>开始使用</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 interface AppProps {
   surface?: Surface;
 }
 
-export default function App({ surface = 'popup' }: AppProps) {
+function AppContent({ surface = 'popup' }: AppProps) {
+  const { toast } = useToast();
   const [view, setView] = useState<ViewName>('organize');
   const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('browse');
   const [state, setState] = useState<ExtensionState | undefined>();
+  const [onboardingProgress, setOnboardingProgress] =
+    useState<OnboardingProgress>(EMPTY_ONBOARDING_PROGRESS);
   const [plan, setPlan] = useState<ClassificationPlan | undefined>();
   const [classifyMode, setClassifyMode] = useState<ClassificationMode>('safe');
   const [busyAction, setBusyAction] = useState<BusyAction>('load');
   const [status, setStatus] = useState('正在读取书签...');
   const [notice, setNotice] = useState<Notice>();
+  const [recoveryError, setRecoveryError] = useState<StructuredError | undefined>();
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
-  const [classificationProgress, setClassificationProgress] =
-    useState<ClassificationProgress>();
+  const [classificationProgress, setClassificationProgress] = useState<ClassificationProgress>();
   const [urlHealthProgress, setUrlHealthProgress] = useState<UrlHealthProgress>();
   const [healthChecking, setHealthChecking] = useState(false);
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
@@ -486,9 +487,15 @@ export default function App({ surface = 'popup' }: AppProps) {
   }, [notice]);
 
   const showError = (error: unknown) => {
-    setNotice({
+    const structured = toStructuredError(
+      error,
+      error && typeof error === 'object' ? (error as { errorCode?: string }).errorCode : undefined,
+    );
+    setRecoveryError(structured);
+    toast({
       kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: structured.message,
+      description: structured.suggestion,
     });
   };
 
@@ -500,10 +507,24 @@ export default function App({ surface = 'popup' }: AppProps) {
     setBusyAction('load');
     setNotice(undefined);
     try {
-      const nextState = normalizeExtensionState(await sendMessage<unknown>({ type: 'state:get' }));
+      let nextState = normalizeExtensionState(await sendMessage<unknown>({ type: 'state:get' }));
+      const vaultHandle = await getVaultHandle().catch(() => null);
+      const progress = computeOnboardingProgress({
+        hasVaultHandle: Boolean(vaultHandle),
+        settings: nextState.settings,
+        lastMoveRecordCount: nextState.lastMoveRecordCount,
+        exportManifests: nextState.exportManifests,
+      });
+      setOnboardingProgress(progress);
+      await saveOnboardingProgress(progress).catch(() => undefined);
+      if (!nextState.onboarded && onboardingComplete(progress)) {
+        await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+        nextState = { ...nextState, onboarded: true };
+      }
       setState(nextState);
       setClassifyMode(nextState.settings.defaultClassifyMode);
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
+      setRecoveryError(undefined);
     } catch (loadError) {
       showError(loadError);
     } finally {
@@ -528,10 +549,7 @@ export default function App({ surface = 'popup' }: AppProps) {
       return undefined;
     }
 
-    const listener = (
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string,
-    ) => {
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
       if (areaName !== 'local') {
         return;
       }
@@ -559,10 +577,10 @@ export default function App({ surface = 'popup' }: AppProps) {
     const previousCount = previousPendingCaptureCountRef.current;
     if (previousCount !== undefined && pendingCount > previousCount) {
       setView('collect');
-      setNotice({ kind: 'success', message: '内容已保存到待写入队列。' });
+      toast({ kind: 'success', message: '内容已保存到待写入队列。' });
     }
     previousPendingCaptureCountRef.current = pendingCount;
-  }, [state?.pendingCaptures?.length]);
+  }, [state?.pendingCaptures?.length, toast]);
 
   const createPlan = async (mode: ClassificationMode) => {
     setBusyAction('plan');
@@ -583,8 +601,8 @@ export default function App({ surface = 'popup' }: AppProps) {
       setPlan(nextPlan);
       setOrganizeMode('plan');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
-      setNotice({
-        kind: nextPlan.moves.length > 0 ? 'success' : 'warning',
+      toast({
+        kind: nextPlan.moves.length > 0 ? 'success' : 'info',
         message:
           nextPlan.moves.length > 0
             ? `已生成 ${nextPlan.moves.length} 条建议，应用前不会修改真实书签。`
@@ -634,7 +652,9 @@ export default function App({ surface = 'popup' }: AppProps) {
 
         if (message.type === 'error') {
           settled = true;
-          reject(new Error(message.error));
+          const error = new Error(message.error) as Error & { errorCode?: string };
+          error.errorCode = message.errorCode;
+          reject(error);
         }
       });
 
@@ -648,7 +668,9 @@ export default function App({ surface = 'popup' }: AppProps) {
     });
 
   const cancelClassification = () => {
-    classificationPortRef.current?.postMessage({ type: 'cancel' } satisfies ClassificationPortRequest);
+    classificationPortRef.current?.postMessage({
+      type: 'cancel',
+    } satisfies ClassificationPortRequest);
     setStatus('正在取消，本批次结束后会生成部分方案...');
   };
 
@@ -695,7 +717,10 @@ export default function App({ surface = 'popup' }: AppProps) {
           healthPortRef.current = undefined;
           void loadState();
           setNotice({
-            kind: message.progress.summary.dead + message.progress.summary.error > 0 ? 'warning' : 'success',
+            kind:
+              message.progress.summary.dead + message.progress.summary.error > 0
+                ? 'warning'
+                : 'success',
             message: message.cancelled
               ? `已暂停：本次已保留 ${message.progress.done} 条体检结果。`
               : `体检完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
@@ -708,7 +733,9 @@ export default function App({ surface = 'popup' }: AppProps) {
           settled = true;
           setHealthChecking(false);
           healthPortRef.current = undefined;
-          showError(new Error(message.error));
+          const error = new Error(message.error) as Error & { errorCode?: string };
+          error.errorCode = message.errorCode;
+          showError(error);
         }
       });
 
@@ -746,8 +773,8 @@ export default function App({ surface = 'popup' }: AppProps) {
         selectedMoveIds: selectedMoveIds(plan),
       });
       setStatus(`已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个`);
-      setNotice({
-        kind: result.failed.length > 0 ? 'warning' : 'success',
+      toast({
+        kind: result.failed.length > 0 ? 'info' : 'success',
         message: `已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个。`,
       });
       setPlan(undefined);
@@ -769,7 +796,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     try {
       const result = await sendMessage<{ undone: number }>({ type: 'plan:undoLast' });
       setStatus(`已撤销 ${result.undone} 个移动操作`);
-      setNotice({ kind: 'success', message: `已撤销 ${result.undone} 个移动操作。` });
+      toast({ kind: 'success', message: `已撤销 ${result.undone} 个移动操作。` });
       await loadState();
     } catch (undoError) {
       showError(undoError);
@@ -793,7 +820,7 @@ export default function App({ surface = 'popup' }: AppProps) {
       );
       setClassifyMode(saved.defaultClassifyMode);
       setStatus('设置已保存');
-      setNotice({ kind: 'success', message: '设置已保存。' });
+      toast({ kind: 'success', message: '设置已保存。' });
     } catch (settingsError) {
       showError(settingsError);
     } finally {
@@ -801,9 +828,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     }
   };
 
-  const testAiProvider = async (
-    provider: AiProviderConfig,
-  ): Promise<AiProviderTestResult> =>
+  const testAiProvider = async (provider: AiProviderConfig): Promise<AiProviderTestResult> =>
     sendMessage<AiProviderTestResult>({ type: 'ai:testConnection', provider });
 
   const clearPendingCapture = async () => {
@@ -852,7 +877,15 @@ export default function App({ surface = 'popup' }: AppProps) {
           id: record.bookmarkId,
         });
       }
-      setNotice({ kind: 'success', message: `已删除 ${records.length} 个书签，并已创建备份。` });
+      await addActivityEntry({
+        type: 'health_delete',
+        summary: summarizeHealthDelete(records.length),
+        details: records.map((record) => ({
+          label: record.bookmarkTitle,
+          meta: record.bookmarkUrl,
+        })),
+      });
+      toast({ kind: 'success', message: `已删除 ${records.length} 个书签，并已创建备份。` });
       await loadState();
     } catch (deleteError) {
       showError(deleteError);
@@ -878,8 +911,8 @@ export default function App({ surface = 'popup' }: AppProps) {
         bookmarkId: record.bookmarkId,
       });
       setHealthRecords(result.records);
-      setNotice({
-        kind: result.record.status === 'alive' ? 'success' : 'warning',
+      toast({
+        kind: result.record.status === 'alive' ? 'success' : 'info',
         message: `已重新检查：${healthStatusLabel(result.record.status)}。`,
       });
       setStatus(`已重新检查：${record.bookmarkTitle}`);
@@ -905,7 +938,12 @@ export default function App({ surface = 'popup' }: AppProps) {
         id: record.bookmarkId,
         url,
       });
-      setNotice({ kind: 'success', message: '已更新书签链接，并已创建备份。' });
+      await addActivityEntry({
+        type: 'health_update',
+        summary: summarizeHealthUpdate(1),
+        details: [{ label: record.bookmarkTitle, meta: `${record.bookmarkUrl} → ${url}` }],
+      });
+      toast({ kind: 'success', message: '已更新书签链接，并已创建备份。' });
       await loadState();
     } catch (updateError) {
       showError(updateError);
@@ -913,7 +951,9 @@ export default function App({ surface = 'popup' }: AppProps) {
   };
 
   const updateBookmarkUrlsFromHealth = async (records: UrlHealthRecord[]) => {
-    const updatableRecords = records.filter((record) => record.status === 'redirected' && record.finalUrl);
+    const updatableRecords = records.filter(
+      (record) => record.status === 'redirected' && record.finalUrl,
+    );
     if (updatableRecords.length === 0) {
       return;
     }
@@ -937,7 +977,15 @@ export default function App({ surface = 'popup' }: AppProps) {
           url: record.finalUrl ?? record.bookmarkUrl,
         });
       }
-      setNotice({
+      await addActivityEntry({
+        type: 'health_update',
+        summary: summarizeHealthUpdate(updatableRecords.length),
+        details: updatableRecords.map((record) => ({
+          label: record.bookmarkTitle,
+          meta: `${record.bookmarkUrl} → ${record.finalUrl ?? record.bookmarkUrl}`,
+        })),
+      });
+      toast({
         kind: 'success',
         message: `已更新 ${updatableRecords.length} 个重定向书签，并已创建备份。`,
       });
@@ -953,21 +1001,33 @@ export default function App({ surface = 'popup' }: AppProps) {
     try {
       await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
       setState((current) => (current ? { ...current, onboarded: true } : current));
+      toast({ kind: 'success', message: '已跳过首次引导。' });
     } catch (onboardingError) {
       showError(onboardingError);
     }
   };
 
-  const openHelpFromWelcome = () => {
+  const openSettingsFromOnboarding = () => {
+    setForcePopupWorkspace(true);
     setView('settings');
-    void completeOnboarding();
+  };
+
+  const openOrganizeFromOnboarding = () => {
+    setForcePopupWorkspace(true);
+    setView('organize');
+    setOrganizeMode('browse');
+  };
+
+  const openCollectFromOnboarding = () => {
+    setForcePopupWorkspace(true);
+    setView('collect');
   };
 
   const handleOpenSidePanel = (nextView: ViewName) => {
     void storePreferredView(nextView)
       .then(openSidePanel)
       .then(() => {
-        setNotice({ kind: 'success', message: '侧边栏已打开。' });
+        toast({ kind: 'success', message: '侧边栏已打开。' });
       })
       .catch((error) => {
         showError(error);
@@ -991,6 +1051,19 @@ export default function App({ surface = 'popup' }: AppProps) {
     void startHealthCheck();
   };
 
+  const useRuleClassification = () => {
+    const nextSettings = { ...settings, useAi: false };
+    void saveSettings(nextSettings)
+      .then(() => {
+        toast({ kind: 'info', message: '已切换为规则分类。' });
+        setRecoveryError(undefined);
+        setView('organize');
+        setOrganizeMode('plan');
+        void createPlan('safe');
+      })
+      .catch(showError);
+  };
+
   const folders = state?.folders ?? [];
   const backups = state?.backups ?? [];
   const settings = state?.settings ?? DEFAULT_SETTINGS;
@@ -1003,8 +1076,7 @@ export default function App({ surface = 'popup' }: AppProps) {
   );
   const alertVariant =
     notice?.kind === 'error' ? 'destructive' : notice?.kind === 'warning' ? 'warning' : 'success';
-  const workspaceClass =
-    surface === 'sidepanel' ? 'h-screen' : 'h-[600px]';
+  const workspaceClass = surface === 'sidepanel' ? 'h-screen' : 'h-[600px]';
   const showWorkspace = surface === 'sidepanel' || forcePopupWorkspace;
 
   useEffect(() => {
@@ -1018,13 +1090,7 @@ export default function App({ surface = 'popup' }: AppProps) {
       }
 
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        if (
-          view === 'organize' &&
-          organizeMode === 'plan' &&
-          plan &&
-          selectedCount > 0 &&
-          !busy
-        ) {
+        if (view === 'organize' && organizeMode === 'plan' && plan && selectedCount > 0 && !busy) {
           event.preventDefault();
           setConfirmApplyOpen(true);
         }
@@ -1064,35 +1130,20 @@ export default function App({ surface = 'popup' }: AppProps) {
 
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [
-    busy,
-    busyAction,
-    confirmApplyOpen,
-    organizeMode,
-    plan,
-    selectedCount,
-    showWorkspace,
-    view,
-  ]);
+  }, [busy, busyAction, confirmApplyOpen, organizeMode, plan, selectedCount, showWorkspace, view]);
 
   if (!showWorkspace) {
     return (
       <>
         <PopupLauncher
           busy={busy}
+          onboardingProgress={onboardingProgress}
           onOpenSidePanel={handleOpenSidePanel}
           onQuickClassify={quickClassifyFromPopup}
           onQuickHealth={quickHealthFromPopup}
+          onSkipOnboarding={completeOnboarding}
           onUsePopup={usePopupWorkspace}
           state={state}
-        />
-        <WelcomeGuide
-          onOpenHelp={() => {
-            setForcePopupWorkspace(true);
-            openHelpFromWelcome();
-          }}
-          onStart={completeOnboarding}
-          open={Boolean(state && !state.onboarded)}
         />
       </>
     );
@@ -1141,6 +1192,31 @@ export default function App({ surface = 'popup' }: AppProps) {
           </TabsTrigger>
         </TabsList>
 
+        {state && !state.onboarded ? (
+          <div className="mt-3">
+            <OnboardingChecklist
+              onOpenCollect={openCollectFromOnboarding}
+              onOpenOrganize={openOrganizeFromOnboarding}
+              onOpenSettings={openSettingsFromOnboarding}
+              onSkip={completeOnboarding}
+              progress={onboardingProgress}
+            />
+          </div>
+        ) : null}
+
+        {recoveryError ? (
+          <div className="mt-3">
+            <ErrorRecovery
+              error={recoveryError}
+              onDismiss={() => setRecoveryError(undefined)}
+              onOpenSettings={openSettingsFromOnboarding}
+              onRetry={loadState}
+              onSelectVault={openSettingsFromOnboarding}
+              onUseRules={useRuleClassification}
+            />
+          </div>
+        ) : null}
+
         {notice ? (
           <Alert
             className="mt-3"
@@ -1178,6 +1254,7 @@ export default function App({ surface = 'popup' }: AppProps) {
             onMoveChange={(move) =>
               setPlan((current) => (current ? replaceMove(current, move) : current))
             }
+            onOpenActivity={() => setView('activity')}
             onRefresh={loadState}
             onRetryHealthRecord={retryHealthRecord}
             onStartHealthCheck={startHealthCheck}
@@ -1197,11 +1274,16 @@ export default function App({ surface = 'popup' }: AppProps) {
             exportManifests={state?.exportManifests ?? []}
             onCaptureCurrentSocial={captureCurrentSocial}
             onClearPendingCapture={clearPendingCapture}
+            onOpenSettings={openSettingsFromOnboarding}
             onRefresh={loadState}
             onRemovePendingCapture={removePendingCapture}
             pendingCaptures={state?.pendingCaptures ?? []}
             settings={settings}
           />
+        </TabsContent>
+
+        <TabsContent className="min-h-0 flex-1" value="activity">
+          <ActivityPage onBack={() => setView('organize')} />
         </TabsContent>
 
         <TabsContent className="min-h-0 flex-1" value="settings">
@@ -1222,7 +1304,8 @@ export default function App({ surface = 'popup' }: AppProps) {
           <DialogHeader>
             <DialogTitle>确认移动真实 Chrome 书签？</DialogTitle>
             <DialogDescription>
-              将移动 {selectedCount} 个书签。ShuHai 会先备份并支持撤销，但这一步会实际修改当前浏览器书签。
+              将移动 {selectedCount} 个书签。ShuHai
+              会先备份并支持撤销，但这一步会实际修改当前浏览器书签。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1235,11 +1318,14 @@ export default function App({ surface = 'popup' }: AppProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <WelcomeGuide
-        onOpenHelp={openHelpFromWelcome}
-        onStart={completeOnboarding}
-        open={Boolean(state && !state.onboarded)}
-      />
     </main>
+  );
+}
+
+export default function App(props: AppProps) {
+  return (
+    <ToastProvider>
+      <AppContent {...props} />
+    </ToastProvider>
   );
 }

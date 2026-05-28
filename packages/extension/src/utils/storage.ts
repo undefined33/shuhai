@@ -10,6 +10,7 @@ import type {
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import { PROVIDER_TEMPLATES } from '../shared/bookmark-types.js';
+import type { OnboardingProgress } from './onboarding.js';
 import {
   DEFAULT_ACTIVE_PROVIDER_ID,
   createDefaultAiProviders,
@@ -24,6 +25,7 @@ export const EXPORT_MANIFESTS_KEY = 'exportManifests';
 export const PENDING_CAPTURE_KEY = 'pendingCapture';
 export const URL_HEALTH_RECORDS_KEY = 'urlHealthRecords';
 export const ONBOARDED_KEY = 'onboarded';
+export const ONBOARDING_PROGRESS_KEY = 'onboardingProgress';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   useAi: false,
@@ -287,4 +289,12 @@ export function getOnboarded(): Promise<boolean> {
 
 export function saveOnboarded(onboarded: boolean): Promise<void> {
   return setLocalValues({ [ONBOARDED_KEY]: onboarded });
+}
+
+export function getOnboardingProgress(): Promise<OnboardingProgress | undefined> {
+  return getLocalValue<OnboardingProgress | undefined>(ONBOARDING_PROGRESS_KEY, undefined);
+}
+
+export function saveOnboardingProgress(progress: OnboardingProgress): Promise<void> {
+  return setLocalValues({ [ONBOARDING_PROGRESS_KEY]: progress });
 }
