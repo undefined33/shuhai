@@ -1,15 +1,18 @@
 import { AI_BATCH_SIZE } from '@shuhai/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  AiProviderConfig,
   AppSettings,
   BookmarkItem,
   FolderItem,
 } from '../src/shared/bookmark-types.js';
 import {
-  classifyAllWithDeepSeek,
-  classifyWithDeepSeek,
+  classifyAllWithAi,
+  classifyWithAi,
+  testAiProviderConnection,
   type FetchLike,
 } from '../src/shared/ai-classifier.js';
+import { createProviderFromTemplate, providerTemplate } from '../src/shared/ai-providers.js';
 
 function bookmark(id: string): BookmarkItem {
   return {
@@ -23,10 +26,14 @@ function bookmark(id: string): BookmarkItem {
   };
 }
 
+const deepseekProvider = createProviderFromTemplate(providerTemplate('deepseek'), {
+  apiKey: 'test-key',
+});
+
 const settings: AppSettings = {
-  deepSeekApiKey: 'test-key',
-  deepSeekModel: 'deepseek-chat',
   useAi: true,
+  activeProviderId: deepseekProvider.id,
+  aiProviders: [deepseekProvider],
   customRules: [],
   defaultClassifyMode: 'safe',
   exportDirectory: 'Bookmarks',
@@ -44,20 +51,22 @@ const folders: FolderItem[] = [
 describe('ai classifier', () => {
   it('does not call fetch when AI is disabled or no API key exists', async () => {
     const fetchImpl = vi.fn<FetchLike>();
-    const result = await classifyWithDeepSeek(
-      [bookmark('b1')],
-      {
-        ...settings,
-        useAi: false,
-      },
+    const disabledResult = await classifyAllWithAi([bookmark('b1')], {
+      ...settings,
+      useAi: false,
+    }, { fetchImpl });
+    const noKeyResult = await classifyWithAi(
+      [bookmark('b2')],
+      { ...deepseekProvider, apiKey: '' },
       fetchImpl,
     );
 
-    expect(result).toEqual([]);
+    expect(disabledResult).toEqual([]);
+    expect(noKeyResult).toEqual([]);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('parses DeepSeek JSON suggestions and sanitizes target folders', async () => {
+  it('parses OpenAI-compatible JSON suggestions and sanitizes target folders', async () => {
     const fetchImpl = vi.fn<FetchLike>().mockResolvedValue({
       ok: true,
       status: 200,
@@ -74,7 +83,7 @@ describe('ai classifier', () => {
       }),
     });
 
-    const result = await classifyWithDeepSeek([bookmark('b1')], settings, fetchImpl);
+    const result = await classifyWithAi([bookmark('b1')], deepseekProvider, fetchImpl);
 
     expect(result).toEqual([
       {
@@ -98,7 +107,7 @@ describe('ai classifier', () => {
       }),
     });
 
-    await classifyWithDeepSeek([bookmark('b1')], settings, {
+    await classifyWithAi([bookmark('b1')], deepseekProvider, {
       fetchImpl,
       folders,
       mode: 'full',
@@ -147,7 +156,7 @@ describe('ai classifier', () => {
       };
     });
 
-    const result = await classifyAllWithDeepSeek(bookmarks, settings, {
+    const result = await classifyAllWithAi(bookmarks, settings, {
       fetchImpl,
       folders,
       mode: 'full',
@@ -204,7 +213,7 @@ describe('ai classifier', () => {
       };
     });
 
-    const result = await classifyAllWithDeepSeek(bookmarks, settings, {
+    const result = await classifyAllWithAi(bookmarks, settings, {
       fetchImpl,
       folders,
       mode: 'full',
@@ -214,5 +223,67 @@ describe('ai classifier', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(AI_BATCH_SIZE);
+  });
+
+  it('uses the active provider base URL and model', async () => {
+    const kimiProvider: AiProviderConfig = createProviderFromTemplate(providerTemplate('kimi'), {
+      apiKey: 'kimi-key',
+    });
+    const fetchImpl = vi.fn<FetchLike>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '',
+      json: async () => ({
+        choices: [{ message: { content: '[]' } }],
+      }),
+    });
+
+    await classifyAllWithAi([bookmark('kimi')], {
+      ...settings,
+      activeProviderId: kimiProvider.id,
+      aiProviders: [deepseekProvider, kimiProvider],
+    }, { fetchImpl });
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.moonshot.cn/v1/chat/completions');
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1].body ?? '{}')).toMatchObject({
+      model: 'moonshot-v1-8k',
+    });
+  });
+
+  it('tests provider connections with minimal payload and readable failures', async () => {
+    const fetchImpl = vi.fn<FetchLike>().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => '',
+      json: async () => ({ choices: [] }),
+    });
+
+    const result = await testAiProviderConnection(deepseekProvider, fetchImpl);
+    const body = JSON.parse(fetchImpl.mock.calls[0]?.[1].body ?? '{}') as {
+      messages: Array<{ content: string }>;
+      max_tokens: number;
+    };
+
+    expect(result).toEqual({ success: false, message: 'API Key 无效', status: 401 });
+    expect(body.messages[0]?.content).toBe('请回复"ok"');
+    expect(body.max_tokens).toBe(5);
+  });
+
+  it('validates provider connection input and model URL failures', async () => {
+    const fetchImpl = vi.fn<FetchLike>().mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: async () => '',
+      json: async () => ({ choices: [] }),
+    });
+
+    await expect(
+      testAiProviderConnection({ ...deepseekProvider, baseUrl: '' }, fetchImpl),
+    ).resolves.toEqual({ success: false, message: '请先填写 API 地址' });
+    await expect(testAiProviderConnection(deepseekProvider, fetchImpl)).resolves.toEqual({
+      success: false,
+      message: '模型不存在或 API 地址错误',
+      status: 404,
+    });
   });
 });

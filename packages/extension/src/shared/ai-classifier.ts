@@ -1,5 +1,7 @@
 import { AI_BATCH_SIZE } from '@shuhai/shared';
 import type {
+  AiProviderConfig,
+  AiProviderTestResult,
   AppSettings,
   BookmarkItem,
   ClassificationMode,
@@ -7,16 +9,17 @@ import type {
   ClassificationSuggestion,
   FolderItem,
 } from './bookmark-types.js';
+import { getActiveProvider, trimTrailingSlash } from './ai-providers.js';
 import { normalizeFolderPath, stripRootFolder } from './classifier.js';
 
-interface DeepSeekChoice {
+interface AiChoice {
   message?: {
     content?: string;
   };
 }
 
-interface DeepSeekResponse {
-  choices?: DeepSeekChoice[];
+interface AiResponse {
+  choices?: AiChoice[];
 }
 
 interface RawAiSuggestion {
@@ -36,12 +39,14 @@ export interface FetchLike {
       body: string;
       signal?: AbortSignal;
     },
-  ): Promise<{
-    ok: boolean;
-    status: number;
-    text(): Promise<string>;
-    json(): Promise<DeepSeekResponse>;
-  }>;
+  ): Promise<FetchResponse>;
+}
+
+interface FetchResponse {
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+  json(): Promise<AiResponse>;
 }
 
 interface AiPromptContext {
@@ -174,12 +179,25 @@ function optionsFromFetch(
   };
 }
 
-export async function classifyWithDeepSeek(
+function chatCompletionsUrl(provider: AiProviderConfig): string {
+  return `${trimTrailingSlash(provider.baseUrl)}/chat/completions`;
+}
+
+function providerReady(provider: AiProviderConfig | undefined): provider is AiProviderConfig {
+  return Boolean(
+    provider?.enabled &&
+      provider.apiKey.trim() &&
+      provider.baseUrl.trim() &&
+      provider.model.trim(),
+  );
+}
+
+export async function classifyWithAi(
   bookmarks: BookmarkItem[],
-  settings: AppSettings,
+  provider: AiProviderConfig,
   fetchImplOrOptions?: FetchLike | ClassifyAllOptions,
 ): Promise<ClassificationSuggestion[]> {
-  if (!settings.useAi || !settings.deepSeekApiKey.trim()) {
+  if (!providerReady(provider)) {
     return [];
   }
 
@@ -190,14 +208,14 @@ export async function classifyWithDeepSeek(
     return [];
   }
 
-  const response = await options.fetchImpl('https://api.deepseek.com/chat/completions', {
+  const response = await options.fetchImpl(chatCompletionsUrl(provider), {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${settings.deepSeekApiKey}`,
+      Authorization: `Bearer ${provider.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: settings.deepSeekModel,
+      model: provider.model,
       messages: [
         {
           role: 'user',
@@ -207,13 +225,14 @@ export async function classifyWithDeepSeek(
           }),
         },
       ],
-      temperature: 0.1,
+      temperature: provider.temperature ?? 0.1,
+      ...(provider.maxTokens ? { max_tokens: provider.maxTokens } : {}),
     }),
     signal: options.signal,
   });
 
   if (!response.ok) {
-    throw new Error(`DeepSeek request failed: ${response.status} ${await response.text()}`);
+    throw new Error(`AI request failed: ${response.status} ${await response.text()}`);
   }
 
   const data = await response.json();
@@ -224,7 +243,7 @@ export async function classifyWithDeepSeek(
     .filter((suggestion): suggestion is ClassificationSuggestion => Boolean(suggestion));
 }
 
-export async function classifyAllWithDeepSeek(
+export async function classifyAllWithAi(
   bookmarks: BookmarkItem[],
   settings: AppSettings,
   options: ClassifyAllOptions = {},
@@ -233,8 +252,9 @@ export async function classifyAllWithDeepSeek(
   const results: ClassificationSuggestion[] = [];
   let processed = 0;
   const startedAt = Date.now();
+  const provider = getActiveProvider(settings);
 
-  if (batches.length === 0 || !settings.useAi || !settings.deepSeekApiKey.trim()) {
+  if (batches.length === 0 || !settings.useAi || !providerReady(provider)) {
     return [];
   }
 
@@ -244,7 +264,7 @@ export async function classifyAllWithDeepSeek(
     }
 
     try {
-      const suggestions = await classifyWithDeepSeek(batch, settings, options);
+      const suggestions = await classifyWithAi(batch, provider, options);
       results.push(...suggestions);
     } catch (error) {
       if (options.signal?.aborted) {
@@ -278,4 +298,64 @@ export async function classifyAllWithDeepSeek(
   }
 
   return results;
+}
+
+export async function testAiProviderConnection(
+  provider: AiProviderConfig,
+  fetchImpl: FetchLike = fetch,
+): Promise<AiProviderTestResult> {
+  if (!provider.apiKey.trim()) {
+    return { success: false, message: '请先填写 API Key' };
+  }
+
+  if (!provider.baseUrl.trim()) {
+    return { success: false, message: '请先填写 API 地址' };
+  }
+
+  if (!provider.model.trim()) {
+    return { success: false, message: '请先填写模型名称' };
+  }
+
+  try {
+    const response = await fetchImpl(chatCompletionsUrl(provider), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        messages: [{ role: 'user', content: '请回复"ok"' }],
+        max_tokens: 5,
+        temperature: 0,
+      }),
+    });
+
+    if (response.ok) {
+      return { success: true, message: '连接成功，模型可用', status: response.status };
+    }
+
+    if (response.status === 401) {
+      return { success: false, message: 'API Key 无效', status: response.status };
+    }
+
+    if (response.status === 404) {
+      return {
+        success: false,
+        message: '模型不存在或 API 地址错误',
+        status: response.status,
+      };
+    }
+
+    return {
+      success: false,
+      message: `请求失败: ${response.status}`,
+      status: response.status,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `网络错误: ${error instanceof Error ? error.message : '未知'}`,
+    };
+  }
 }

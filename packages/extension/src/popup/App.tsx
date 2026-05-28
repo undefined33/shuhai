@@ -8,6 +8,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type {
+  AiProviderConfig,
+  AiProviderTestResult,
   AppSettings,
   BackupRecord,
   BookmarkItem,
@@ -43,7 +45,7 @@ import {
 import { Progress } from '../components/ui/progress.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs.js';
 import { Alert } from '../components/ui/alert.js';
-import { DEFAULT_SETTINGS } from '../utils/storage.js';
+import { DEFAULT_SETTINGS, normalizeSettings } from '../utils/storage.js';
 import CollectionPage from './pages/CollectionPage.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
@@ -65,15 +67,6 @@ function arrayOrEmpty<T>(value: unknown): T[] {
 
 export function normalizeExtensionState(value: unknown): ExtensionState {
   const state = objectRecord(value);
-  const settings = objectRecord(state.settings);
-  const defaultClassifyMode =
-    settings.defaultClassifyMode === 'full' || settings.defaultClassifyMode === 'safe'
-      ? settings.defaultClassifyMode
-      : DEFAULT_SETTINGS.defaultClassifyMode;
-  const deepSeekModel =
-    settings.deepSeekModel === 'deepseek-chat' || settings.deepSeekModel === 'deepseek-reasoner'
-      ? settings.deepSeekModel
-      : DEFAULT_SETTINGS.deepSeekModel;
 
   return {
     tree: arrayOrEmpty<BookmarkNode>(state.tree),
@@ -88,21 +81,7 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
         ? state.lastMoveRecordCount
         : 0,
     onboarded: state.onboarded === true,
-    settings: {
-      ...DEFAULT_SETTINGS,
-      deepSeekApiKey:
-        typeof settings.deepSeekApiKey === 'string'
-          ? settings.deepSeekApiKey
-          : DEFAULT_SETTINGS.deepSeekApiKey,
-      deepSeekModel,
-      useAi: settings.useAi === true,
-      customRules: arrayOrEmpty<AppSettings['customRules'][number]>(settings.customRules),
-      defaultClassifyMode,
-      exportDirectory:
-        typeof settings.exportDirectory === 'string'
-          ? settings.exportDirectory
-          : DEFAULT_SETTINGS.exportDirectory,
-    },
+    settings: normalizeSettings(state.settings),
   };
 }
 
@@ -807,6 +786,11 @@ export default function App({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const testAiProvider = async (
+    provider: AiProviderConfig,
+  ): Promise<AiProviderTestResult> =>
+    sendMessage<AiProviderTestResult>({ type: 'ai:testConnection', provider });
+
   const clearPendingCapture = async () => {
     await sendMessage<{ cleared: boolean }>({ type: 'capture:clearPending' });
     await loadState();
@@ -1191,6 +1175,7 @@ export default function App({ surface = 'popup' }: AppProps) {
             exportManifests={state?.exportManifests ?? []}
             onDownloadBackup={downloadBackup}
             onSave={saveSettings}
+            onTestProvider={testAiProvider}
             settings={settings}
           />
         </TabsContent>

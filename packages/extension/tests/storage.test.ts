@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SETTINGS_KEY,
   getOnboarded,
   getPendingCaptures,
+  getSettings,
   getUrlHealthRecords,
   removePendingCapture,
   saveOnboarded,
   savePendingCapture,
   saveUrlHealthRecords,
+  setLocalValues,
 } from '../src/utils/storage.js';
 import { getStorageSnapshot } from './setup.js';
 
@@ -70,5 +73,34 @@ describe('storage helpers', () => {
     await expect(getUrlHealthRecords()).resolves.toEqual([
       expect.objectContaining({ bookmarkId: '1', status: 'dead' }),
     ]);
+  });
+
+  it('migrates legacy DeepSeek settings into provider config', async () => {
+    await setLocalValues({
+      [SETTINGS_KEY]: {
+        deepSeekApiKey: 'legacy-key',
+        deepSeekModel: 'deepseek-reasoner',
+        useAi: true,
+        defaultClassifyMode: 'full',
+        exportDirectory: 'Knowledge',
+      },
+    });
+
+    await expect(getSettings()).resolves.toMatchObject({
+      useAi: true,
+      activeProviderId: 'deepseek-migrated',
+      defaultClassifyMode: 'full',
+      exportDirectory: 'Knowledge',
+      aiProviders: [
+        expect.objectContaining({
+          id: 'deepseek-migrated',
+          provider: 'deepseek',
+          apiKey: 'legacy-key',
+          model: 'deepseek-reasoner',
+        }),
+        expect.objectContaining({ provider: 'kimi' }),
+        expect.objectContaining({ provider: 'glm' }),
+      ],
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { AI_BATCH_SIZE } from '@shuhai/shared';
-import { classifyAllWithDeepSeek } from '../shared/ai-classifier.js';
+import { classifyAllWithAi, testAiProviderConnection } from '../shared/ai-classifier.js';
 import type {
   BookmarkItem,
   CapturedContent,
@@ -31,6 +31,7 @@ import {
   getExportManifests,
   getPendingCaptures,
   getSettings,
+  normalizeSettings,
   getOnboarded,
   getUrlHealthRecords,
   removePendingCapture,
@@ -92,7 +93,7 @@ async function createPlan(
   };
 
   options.onProgress?.(initialProgress);
-  const aiSuggestions = await classifyAllWithDeepSeek(summary.bookmarks, settings, {
+  const aiSuggestions = await classifyAllWithAi(summary.bookmarks, settings, {
     mode,
     folders: summary.folders,
     signal: options.signal,
@@ -288,9 +289,13 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
       }
       case 'settings:get':
         return { ok: true, data: await getSettings() };
-      case 'settings:set':
-        await saveSettings(request.settings);
-        return { ok: true, data: request.settings };
+      case 'settings:set': {
+        const settings = normalizeSettings(request.settings);
+        await saveSettings(settings);
+        return { ok: true, data: settings };
+      }
+      case 'ai:testConnection':
+        return { ok: true, data: await testAiProviderConnection(request.provider) };
       case 'onboarding:set':
         await saveOnboarded(request.onboarded);
         return { ok: true, data: { onboarded: request.onboarded } };

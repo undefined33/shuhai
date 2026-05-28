@@ -20,6 +20,7 @@ describe('popup state normalization', () => {
     expect(state.settings.useAi).toBe(true);
     expect(state.settings.customRules).toEqual([]);
     expect(state.settings.defaultClassifyMode).toBe('safe');
+    expect(state.settings.aiProviders).toHaveLength(3);
   });
 
   it('falls back to defaults for malformed state payloads', () => {
@@ -27,7 +28,11 @@ describe('popup state normalization', () => {
 
     expect(state.bookmarks).toEqual([]);
     expect(state.folders).toEqual([]);
-    expect(state.settings.deepSeekModel).toBe('deepseek-chat');
+    expect(state.settings.activeProviderId).toBe('deepseek-default');
+    expect(state.settings.aiProviders[0]).toMatchObject({
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+    });
     expect(state.settings.exportDirectory).toBe('Bookmarks');
   });
 });

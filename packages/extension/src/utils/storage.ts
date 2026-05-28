@@ -1,10 +1,22 @@
 import type {
+  AiProviderConfig,
+  AiProviderType,
   AppSettings,
   CapturedContent,
+  ClassificationMode,
+  CustomRule,
   ExportManifest,
   MoveRecord,
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
+import { PROVIDER_TEMPLATES } from '../shared/bookmark-types.js';
+import {
+  DEFAULT_ACTIVE_PROVIDER_ID,
+  createDefaultAiProviders,
+  createProviderFromTemplate,
+  providerTemplate,
+  trimTrailingSlash,
+} from '../shared/ai-providers.js';
 
 export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
@@ -14,9 +26,9 @@ export const URL_HEALTH_RECORDS_KEY = 'urlHealthRecords';
 export const ONBOARDED_KEY = 'onboarded';
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  deepSeekApiKey: '',
-  deepSeekModel: 'deepseek-chat',
   useAi: false,
+  activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
+  aiProviders: createDefaultAiProviders(),
   customRules: [],
   defaultClassifyMode: 'safe',
   exportDirectory: 'Bookmarks',
@@ -69,14 +81,133 @@ export function removeLocalValues(keys: string[]): Promise<void> {
   });
 }
 
-export async function getSettings(): Promise<AppSettings> {
-  const settings = await getLocalValue<Partial<AppSettings>>(SETTINGS_KEY, {});
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function arrayOrEmpty<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function normalizeClassifyMode(value: unknown): ClassificationMode {
+  return value === 'full' || value === 'safe' ? value : DEFAULT_SETTINGS.defaultClassifyMode;
+}
+
+function normalizeCustomRules(value: unknown): CustomRule[] {
+  return arrayOrEmpty<CustomRule>(value).filter(
+    (rule) =>
+      (rule.type === 'domain' || rule.type === 'title-keyword') &&
+      typeof rule.pattern === 'string' &&
+      typeof rule.category === 'string' &&
+      Array.isArray(rule.tags),
+  );
+}
+
+function normalizeProvider(value: unknown): AiProviderConfig | undefined {
+  const provider = objectRecord(value);
+  const providerType = provider.provider;
+  const isKnownType = PROVIDER_TEMPLATES.some((template) => template.provider === providerType);
+
+  if (!isKnownType) {
+    return undefined;
+  }
+
+  const template = providerTemplate(providerType as AiProviderType);
+  const id = typeof provider.id === 'string' && provider.id.trim() ? provider.id.trim() : undefined;
+  const name =
+    typeof provider.name === 'string' && provider.name.trim()
+      ? provider.name.trim()
+      : template.name;
+  const baseUrl =
+    typeof provider.baseUrl === 'string'
+      ? trimTrailingSlash(provider.baseUrl.trim())
+      : template.baseUrl;
+  const model =
+    typeof provider.model === 'string' && provider.model.trim()
+      ? provider.model.trim()
+      : template.defaultModel;
+  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey : '';
+  const temperature =
+    typeof provider.temperature === 'number' && Number.isFinite(provider.temperature)
+      ? provider.temperature
+      : 0.1;
+  const maxTokens =
+    typeof provider.maxTokens === 'number' && Number.isFinite(provider.maxTokens)
+      ? provider.maxTokens
+      : undefined;
+
+  return createProviderFromTemplate(template, {
+    id,
+    name,
+    enabled: provider.enabled !== false,
+    apiKey,
+    baseUrl,
+    model,
+    temperature,
+    maxTokens,
+  });
+}
+
+function providersWithDefaults(providers: AiProviderConfig[]): AiProviderConfig[] {
+  const existing = new Map(providers.map((provider) => [provider.provider, provider]));
+  const defaults = createDefaultAiProviders().map(
+    (provider) => existing.get(provider.provider) ?? provider,
+  );
+  const defaultIds = new Set(defaults.map((provider) => provider.id));
+  const customProviders = providers.filter((provider) => !defaultIds.has(provider.id));
+
+  return [...defaults, ...customProviders];
+}
+
+export function normalizeSettings(value: unknown): AppSettings {
+  const settings = objectRecord(value);
+  const legacyApiKey = typeof settings.deepSeekApiKey === 'string' ? settings.deepSeekApiKey : '';
+  const legacyModel =
+    settings.deepSeekModel === 'deepseek-chat' || settings.deepSeekModel === 'deepseek-reasoner'
+      ? settings.deepSeekModel
+      : 'deepseek-chat';
+  const hasProviderList = Array.isArray(settings.aiProviders);
+  const normalizedProviders = hasProviderList
+    ? providersWithDefaults(
+        arrayOrEmpty<unknown>(settings.aiProviders)
+          .map(normalizeProvider)
+          .filter((provider): provider is AiProviderConfig => Boolean(provider)),
+      )
+    : providersWithDefaults(
+        legacyApiKey
+          ? [
+              createProviderFromTemplate(providerTemplate('deepseek'), {
+                id: 'deepseek-migrated',
+                apiKey: legacyApiKey,
+                model: legacyModel,
+              }),
+            ]
+          : [],
+      );
+  const activeProviderId =
+    typeof settings.activeProviderId === 'string' &&
+    normalizedProviders.some((provider) => provider.id === settings.activeProviderId)
+      ? settings.activeProviderId
+      : legacyApiKey
+        ? 'deepseek-migrated'
+        : DEFAULT_SETTINGS.activeProviderId;
+  const exportDirectory =
+    typeof settings.exportDirectory === 'string' && settings.exportDirectory.trim()
+      ? settings.exportDirectory
+      : DEFAULT_SETTINGS.exportDirectory;
 
   return {
-    ...DEFAULT_SETTINGS,
-    ...settings,
-    customRules: Array.isArray(settings.customRules) ? settings.customRules : [],
+    useAi: settings.useAi === true || Boolean(legacyApiKey),
+    activeProviderId,
+    aiProviders: normalizedProviders,
+    customRules: normalizeCustomRules(settings.customRules),
+    defaultClassifyMode: normalizeClassifyMode(settings.defaultClassifyMode),
+    exportDirectory,
   };
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return normalizeSettings(await getLocalValue<unknown>(SETTINGS_KEY, {}));
 }
 
 export function saveSettings(settings: AppSettings): Promise<void> {

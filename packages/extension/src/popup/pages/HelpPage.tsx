@@ -123,11 +123,11 @@ export default function HelpPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-primary" />
-              DeepSeek API Key
+              AI 服务商配置
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>API Key 是可选项。不配置时使用内置规则，配置后会调用 DeepSeek 生成更细的分类建议。</p>
+            <p>API Key 是可选项。不配置时使用内置规则，配置后会调用当前 AI 服务商生成更细的分类建议。</p>
             <p>Key 保存在 Chrome 本地存储中，不会上传到 ShuHai 自己的服务器。</p>
             <a
               className="text-primary underline-offset-4 hover:underline"

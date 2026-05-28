@@ -3,6 +3,69 @@ export type ClassificationMode = 'safe' | 'full';
 export type ExportScope = 'all' | 'plan' | 'selected';
 export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
 export type UrlHealthStatus = 'alive' | 'redirected' | 'dead' | 'error' | 'skipped';
+export type AiProviderType = 'deepseek' | 'kimi' | 'glm' | 'openai-compatible';
+
+export interface AiProviderConfig {
+  id: string;
+  name: string;
+  provider: AiProviderType;
+  enabled: boolean;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface AiProviderTemplate {
+  provider: AiProviderType;
+  name: string;
+  baseUrl: string;
+  defaultModel: string;
+  models: string[];
+  description: string;
+}
+
+export interface AiProviderTestResult {
+  success: boolean;
+  message: string;
+  status?: number;
+}
+
+export const PROVIDER_TEMPLATES: AiProviderTemplate[] = [
+  {
+    provider: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    description: '高性价比，适合书签分类',
+  },
+  {
+    provider: 'kimi',
+    name: 'Kimi (Moonshot)',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'moonshot-v1-8k',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    description: '月之暗面，支持长上下文',
+  },
+  {
+    provider: 'glm',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    defaultModel: 'glm-4-flash',
+    models: ['glm-4-flash', 'glm-4-plus', 'glm-4'],
+    description: '智谱 AI，国产大模型',
+  },
+  {
+    provider: 'openai-compatible',
+    name: '自定义 (OpenAI 兼容)',
+    baseUrl: '',
+    defaultModel: '',
+    models: [],
+    description: '任何兼容 OpenAI /chat/completions 接口的服务',
+  },
+];
 
 export interface BookmarkNode {
   id: string;
@@ -172,9 +235,9 @@ export interface BackupRecord {
 }
 
 export interface AppSettings {
-  deepSeekApiKey: string;
-  deepSeekModel: 'deepseek-chat' | 'deepseek-reasoner';
   useAi: boolean;
+  activeProviderId: string;
+  aiProviders: AiProviderConfig[];
   customRules: CustomRule[];
   defaultClassifyMode: ClassificationMode;
   exportDirectory: string;
@@ -244,6 +307,7 @@ export type ExtensionRequest =
   | { type: 'plan:undoLast' }
   | { type: 'settings:get' }
   | { type: 'settings:set'; settings: AppSettings }
+  | { type: 'ai:testConnection'; provider: AiProviderConfig }
   | { type: 'onboarding:set'; onboarded: boolean }
   | { type: 'capture:getPending' }
   | { type: 'capture:removePending'; id: string }
@@ -259,6 +323,7 @@ export type ExtensionResponse =
   | { ok: true; data: ApplyResult }
   | { ok: true; data: BackupRecord[] }
   | { ok: true; data: AppSettings }
+  | { ok: true; data: AiProviderTestResult }
   | { ok: true; data: { undone: number } }
   | { ok: true; data: { onboarded: boolean } }
   | { ok: true; data: CapturedContent[] }
