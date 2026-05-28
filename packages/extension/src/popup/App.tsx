@@ -56,7 +56,7 @@ import Settings from './pages/Settings.js';
 
 type Surface = 'popup' | 'sidepanel';
 type ViewName = 'tree' | 'preview' | 'health' | 'export' | 'settings' | 'help';
-type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | undefined;
+type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'health' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
 function objectRecord(value: unknown): Record<string, unknown> {
@@ -847,6 +847,43 @@ export default function App({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const updateBookmarkUrlsFromHealth = async (records: UrlHealthRecord[]) => {
+    const updatableRecords = records.filter((record) => record.status === 'redirected' && record.finalUrl);
+    if (updatableRecords.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确定批量更新 ${updatableRecords.length} 个重定向书签吗？\n\n会把它们替换为检测到的跳转目标，更新前会逐条创建备份。`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBusyAction('health');
+    setNotice(undefined);
+    try {
+      for (const [index, record] of updatableRecords.entries()) {
+        setStatus(`正在更新重定向 ${index + 1}/${updatableRecords.length}`);
+        await sendMessage<{ updated: boolean; backupKey: string }>({
+          type: 'bookmark:updateUrl',
+          id: record.bookmarkId,
+          url: record.finalUrl ?? record.bookmarkUrl,
+        });
+      }
+      setNotice({
+        kind: 'success',
+        message: `已更新 ${updatableRecords.length} 个重定向书签，并已创建备份。`,
+      });
+      await loadState();
+    } catch (updateError) {
+      showError(updateError);
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
   const completeOnboarding = async () => {
     try {
       await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
@@ -1082,6 +1119,7 @@ export default function App({ surface = 'popup' }: AppProps) {
             onDelete={deleteBookmarkFromHealth}
             onDeleteMany={deleteBookmarksFromHealth}
             onStart={startHealthCheck}
+            onUpdateManyUrls={updateBookmarkUrlsFromHealth}
             onUpdateUrl={updateBookmarkUrlFromHealth}
             progress={urlHealthProgress}
             records={state?.urlHealthRecords ?? []}

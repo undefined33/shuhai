@@ -34,6 +34,7 @@ interface HealthPageProps {
   onDelete(record: UrlHealthRecord): void;
   onDeleteMany(records: UrlHealthRecord[]): void;
   onStart(): void;
+  onUpdateManyUrls(records: UrlHealthRecord[]): void;
   onUpdateUrl(record: UrlHealthRecord, url: string): void;
 }
 
@@ -176,6 +177,7 @@ export default function HealthPage({
   onDelete,
   onDeleteMany,
   onStart,
+  onUpdateManyUrls,
   onUpdateUrl,
 }: HealthPageProps) {
   const [filter, setFilter] = useState<HealthFilter>('all');
@@ -212,6 +214,12 @@ export default function HealthPage({
   const rows = useMemo(() => buildRows(visibleRecords), [visibleRecords]);
   const selectedRecords = visibleRecords.filter((record) => selectedIds.has(record.bookmarkId));
   const deadRecords = visibleRecords.filter((record) => record.status === 'dead');
+  const redirectedRecords = visibleRecords.filter(
+    (record) => record.status === 'redirected' && Boolean(record.finalUrl),
+  );
+  const selectedRedirectedRecords = selectedRecords.filter(
+    (record) => record.status === 'redirected' && Boolean(record.finalUrl),
+  );
   const percent =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
@@ -321,7 +329,7 @@ export default function HealthPage({
       </div>
 
       {visibleRecords.length > 0 ? (
-        <div className="grid grid-cols-[auto_auto_1fr] items-center gap-2">
+        <div className="grid grid-cols-2 items-center gap-2">
           <Button
             disabled={deadRecords.length === 0}
             onClick={() => setSelectedIds(new Set(deadRecords.map((record) => record.bookmarkId)))}
@@ -334,10 +342,28 @@ export default function HealthPage({
             清空选择
           </Button>
           <Button
+            disabled={redirectedRecords.length === 0}
+            onClick={() =>
+              setSelectedIds(new Set(redirectedRecords.map((record) => record.bookmarkId)))
+            }
+            size="sm"
+            variant="outline"
+          >
+            全选重定向
+          </Button>
+          <Button
+            disabled={selectedRedirectedRecords.length === 0}
+            onClick={() => onUpdateManyUrls(selectedRedirectedRecords)}
+            size="sm"
+          >
+            更新选中 {selectedRedirectedRecords.length}
+          </Button>
+          <Button
             disabled={selectedRecords.length === 0}
             onClick={() => onDeleteMany(selectedRecords)}
             size="sm"
             variant="outline"
+            className="col-span-2"
           >
             <Trash2 className="h-4 w-4" />
             删除选中 {selectedRecords.length}
