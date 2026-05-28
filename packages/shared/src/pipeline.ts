@@ -14,7 +14,7 @@ export interface PipelineStage<TIn = unknown, TOut = unknown> {
  */
 export interface Exporter {
   readonly format: 'markdown' | 'json' | 'pdf';
-  export(bookmarks: ProcessedBookmark[]): Promise<string | Buffer>;
+  export(bookmarks: ProcessedBookmark[]): Promise<string | Uint8Array>;
 }
 
 /**

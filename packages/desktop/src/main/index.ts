@@ -1,4 +1,4 @@
-import { getChromeBookmarksPath } from '@shuhai/shared';
+import { getChromeBookmarksPath } from './platform-paths.js';
 
 /**
  * ShuHai Desktop - Main Process Entry

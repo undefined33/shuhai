@@ -13,4 +13,4 @@ export type {
   AIConfig,
   ExportResult,
 } from './pipeline.js';
-export { getChromeBookmarksPath, getDataDir, DEFAULT_PORT, URL_CHECK_CONCURRENCY, DOMAIN_RATE_LIMIT_MS, AI_BATCH_SIZE } from './constants.js';
+export { DEFAULT_PORT, URL_CHECK_CONCURRENCY, DOMAIN_RATE_LIMIT_MS, AI_BATCH_SIZE } from './constants.js';

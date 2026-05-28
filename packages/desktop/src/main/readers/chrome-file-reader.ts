@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import type { RawBookmark } from '@shuhai/shared';
-import { getChromeBookmarksPath } from '@shuhai/shared';
+import { getChromeBookmarksPath } from '../platform-paths.js';
 
 /**
  * Chrome Bookmarks JSON file structure

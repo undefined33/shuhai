@@ -1,0 +1,245 @@
+import { useEffect, useMemo, useState } from 'react';
+import type {
+  AppSettings,
+  BackupRecord,
+  ClassificationPlan,
+  ExtensionRequest,
+  ExtensionResponse,
+  ExtensionState,
+  MovePlan,
+} from '../shared/bookmark-types.js';
+import { DEFAULT_SETTINGS } from '../utils/storage.js';
+import BookmarkTree from './pages/BookmarkTree.js';
+import ClassifyPreview from './pages/ClassifyPreview.js';
+import Settings from './pages/Settings.js';
+
+type ViewName = 'tree' | 'preview' | 'settings';
+
+function sendMessage<T>(request: ExtensionRequest): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(request, (response: ExtensionResponse | undefined) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) {
+        reject(new Error(error));
+        return;
+      }
+
+      if (!response) {
+        reject(new Error('扩展后台没有响应'));
+        return;
+      }
+
+      if (!response.ok) {
+        reject(new Error(response.error));
+        return;
+      }
+
+      resolve(response.data as T);
+    });
+  });
+}
+
+function selectedMoveIds(plan: ClassificationPlan): string[] {
+  return plan.moves.filter((move) => move.selected).map((move) => move.id);
+}
+
+function replaceMove(plan: ClassificationPlan, nextMove: MovePlan): ClassificationPlan {
+  const moves = plan.moves.map((move) => (move.id === nextMove.id ? nextMove : move));
+  const targetFolders = new Set(moves.map((move) => move.targetFolder).filter(Boolean));
+
+  return {
+    ...plan,
+    moves,
+    newFolders: Array.from(targetFolders).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+  };
+}
+
+function downloadBackup(backup: BackupRecord): void {
+  const blob = new Blob([JSON.stringify(backup.tree, null, 2)], {
+    type: 'application/json',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `shuhai-bookmarks-${backup.createdAt.replace(/[:.]/g, '-')}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function App() {
+  const [view, setView] = useState<ViewName>('tree');
+  const [state, setState] = useState<ExtensionState | undefined>();
+  const [plan, setPlan] = useState<ClassificationPlan | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('正在读取书签...');
+  const [error, setError] = useState('');
+
+  const loadState = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const nextState = await sendMessage<ExtensionState>({ type: 'state:get' });
+      setState(nextState);
+      setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadState();
+  }, []);
+
+  const createPlan = async () => {
+    setBusy(true);
+    setError('');
+    setStatus('正在生成整理方案...');
+    try {
+      const nextPlan = await sendMessage<ClassificationPlan>({ type: 'plan:create' });
+      setPlan(nextPlan);
+      setView('preview');
+      setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
+    } catch (planError) {
+      setError(planError instanceof Error ? planError.message : String(planError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyPlan = async () => {
+    if (!plan) {
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    setStatus('正在备份并移动书签...');
+    try {
+      const result = await sendMessage<{ moved: number; failed: unknown[] }>({
+        type: 'plan:apply',
+        plan,
+        selectedMoveIds: selectedMoveIds(plan),
+      });
+      setStatus(`已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个`);
+      setPlan(undefined);
+      setView('tree');
+      await loadState();
+    } catch (applyError) {
+      setError(applyError instanceof Error ? applyError.message : String(applyError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const undoLast = async () => {
+    setBusy(true);
+    setError('');
+    setStatus('正在撤销上次整理...');
+    try {
+      const result = await sendMessage<{ undone: number }>({ type: 'plan:undoLast' });
+      setStatus(`已撤销 ${result.undone} 个移动操作`);
+      await loadState();
+    } catch (undoError) {
+      setError(undoError instanceof Error ? undoError.message : String(undoError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSettings = async (settings: AppSettings) => {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = await sendMessage<AppSettings>({ type: 'settings:set', settings });
+      setState((current) =>
+        current
+          ? {
+              ...current,
+              settings: saved,
+            }
+          : current,
+      );
+      setStatus('设置已保存');
+    } catch (settingsError) {
+      setError(settingsError instanceof Error ? settingsError.message : String(settingsError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const folders = state?.folders ?? [];
+  const backups = state?.backups ?? [];
+  const settings = state?.settings ?? DEFAULT_SETTINGS;
+  const canUndo = (state?.lastMoveRecordCount ?? 0) > 0;
+  const selectedCount = useMemo(
+    () => plan?.moves.filter((move) => move.selected).length ?? 0,
+    [plan],
+  );
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div>
+          <h1>ShuHai</h1>
+          <p>{status}</p>
+        </div>
+        <nav aria-label="主导航">
+          <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}>
+            书签
+          </button>
+          <button
+            className={view === 'preview' ? 'active' : ''}
+            disabled={!plan}
+            onClick={() => setView('preview')}
+          >
+            方案
+          </button>
+          <button
+            className={view === 'settings' ? 'active' : ''}
+            onClick={() => setView('settings')}
+          >
+            设置
+          </button>
+        </nav>
+      </header>
+
+      {error ? <div className="notice error">{error}</div> : null}
+
+      {view === 'tree' && (
+        <BookmarkTree
+          bookmarks={state?.bookmarks ?? []}
+          busy={busy}
+          folders={folders}
+          onCreatePlan={createPlan}
+          onRefresh={loadState}
+          onUndo={undoLast}
+          canUndo={canUndo}
+        />
+      )}
+
+      {view === 'preview' && plan && (
+        <ClassifyPreview
+          folders={folders}
+          plan={plan}
+          busy={busy}
+          selectedCount={selectedCount}
+          onApply={applyPlan}
+          onCancel={() => setView('tree')}
+          onMoveChange={(move) => setPlan((current) => (current ? replaceMove(current, move) : current))}
+        />
+      )}
+
+      {view === 'settings' && (
+        <Settings
+          backups={backups}
+          busy={busy}
+          settings={settings}
+          onDownloadBackup={downloadBackup}
+          onSave={saveSettings}
+        />
+      )}
+    </main>
+  );
+}

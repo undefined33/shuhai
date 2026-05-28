@@ -1,0 +1,289 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 420px;
+  width: 420px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 90%, CanvasText 10%);
+  color: CanvasText;
+  cursor: pointer;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button.primary {
+  background: #146c5b;
+  border-color: #146c5b;
+  color: white;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 560px;
+  padding: 12px;
+}
+
+.topbar {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.topbar h1,
+.preview-header h2,
+.backup-list h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.topbar p,
+.preview-header p {
+  color: color-mix(in srgb, CanvasText 65%, transparent);
+  margin: 2px 0 0;
+}
+
+nav,
+.actions {
+  display: flex;
+  gap: 6px;
+}
+
+nav button.active {
+  border-color: #146c5b;
+  color: #146c5b;
+}
+
+.panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.notice {
+  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.notice.error {
+  border-color: #b3261e;
+  color: #b3261e;
+}
+
+.search,
+.settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.search input,
+.settings input,
+.settings select,
+.settings textarea,
+.diff-line input {
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  min-height: 32px;
+  padding: 6px 8px;
+  width: 100%;
+}
+
+.summary-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.summary-grid div {
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.summary-grid strong {
+  display: block;
+  font-size: 20px;
+}
+
+.summary-grid span,
+.meta-line,
+.backup-row small,
+.move-card small {
+  color: color-mix(in srgb, CanvasText 65%, transparent);
+}
+
+.tree-list,
+.move-list,
+.backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.tree-list {
+  max-height: 350px;
+}
+
+.move-list {
+  max-height: 430px;
+}
+
+.folder-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.folder-toggle {
+  min-width: 30px;
+  padding: 4px;
+}
+
+.folder-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-title,
+.diff-line,
+.meta-line,
+.preview-header,
+.backup-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.folder-title span,
+.move-check span,
+.move-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-title em {
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  font-style: normal;
+  margin-left: auto;
+}
+
+ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+li {
+  border-left: 2px solid color-mix(in srgb, #146c5b 70%, transparent);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: 8px;
+}
+
+li span,
+li small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-header {
+  justify-content: space-between;
+}
+
+.move-card {
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.move-card.selected {
+  border-color: color-mix(in srgb, #146c5b 70%, CanvasText 10%);
+}
+
+.move-check {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.diff-line span {
+  flex: 1;
+  min-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-line input {
+  flex: 1.2;
+}
+
+.meta-line {
+  flex-wrap: wrap;
+}
+
+.meta-line .low {
+  color: #a15c00;
+}
+
+.settings textarea {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  resize: vertical;
+}
+
+.inline-check {
+  align-items: center;
+  flex-direction: row !important;
+}
+
+.backup-row {
+  border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+  justify-content: space-between;
+  padding-top: 8px;
+}
