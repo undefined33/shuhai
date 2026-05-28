@@ -174,7 +174,6 @@ export default function HealthPage({
   records,
   onCancel,
   onClear,
-  onDelete,
   onDeleteMany,
   onStart,
   onUpdateManyUrls,
@@ -212,19 +211,45 @@ export default function HealthPage({
     return [...filtered].sort((a, b) => failureGroup(a).localeCompare(failureGroup(b), 'zh-CN'));
   }, [activeRecords, filter]);
   const rows = useMemo(() => buildRows(visibleRecords), [visibleRecords]);
-  const selectedRecords = visibleRecords.filter((record) => selectedIds.has(record.bookmarkId));
-  const deadRecords = visibleRecords.filter((record) => record.status === 'dead');
-  const redirectedRecords = visibleRecords.filter(
-    (record) => record.status === 'redirected' && Boolean(record.finalUrl),
+  const selectedRecords = useMemo(
+    () => visibleRecords.filter((record) => selectedIds.has(record.bookmarkId)),
+    [selectedIds, visibleRecords],
   );
-  const selectedRedirectedRecords = selectedRecords.filter(
-    (record) => record.status === 'redirected' && Boolean(record.finalUrl),
+  const selectedRedirectedRecords = useMemo(
+    () =>
+      selectedRecords.filter(
+        (record) => record.status === 'redirected' && Boolean(record.finalUrl),
+      ),
+    [selectedRecords],
   );
+  const deleteManyLabel = useMemo(() => {
+    if (selectedRecords.length === 0) {
+      return '删除选中';
+    }
+
+    const allDead = selectedRecords.every((record) => record.status === 'dead');
+    const allError = selectedRecords.every((record) => record.status === 'error');
+
+    if (allDead) {
+      return `删除选中 ${selectedRecords.length} 条死链`;
+    }
+
+    if (allError) {
+      return `删除选中 ${selectedRecords.length} 条检查失败书签`;
+    }
+
+    return `删除选中 ${selectedRecords.length} 条书签`;
+  }, [selectedRecords]);
   const percent =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   const setReplacement = (id: string, value: string) => {
     setReplacementById((current) => ({ ...current, [id]: value }));
+  };
+
+  const selectFilter = (nextFilter: HealthFilter) => {
+    setFilter(nextFilter);
+    setSelectedIds(new Set());
   };
 
   const toggleSelected = (id: string, selected: boolean) => {
@@ -319,7 +344,7 @@ export default function HealthPage({
         ].map(([value, label]) => (
           <Button
             key={value}
-            onClick={() => setFilter(value as HealthFilter)}
+            onClick={() => selectFilter(value as HealthFilter)}
             size="sm"
             variant={filter === value ? 'default' : 'outline'}
           >
@@ -329,44 +354,39 @@ export default function HealthPage({
       </div>
 
       {visibleRecords.length > 0 ? (
-        <div className="grid grid-cols-2 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
-            disabled={deadRecords.length === 0}
-            onClick={() => setSelectedIds(new Set(deadRecords.map((record) => record.bookmarkId)))}
-            size="sm"
-            variant="outline"
-          >
-            全选死链
-          </Button>
-          <Button onClick={() => setSelectedIds(new Set())} size="sm" variant="outline">
-            清空选择
-          </Button>
-          <Button
-            disabled={redirectedRecords.length === 0}
             onClick={() =>
-              setSelectedIds(new Set(redirectedRecords.map((record) => record.bookmarkId)))
+              setSelectedIds(new Set(visibleRecords.map((record) => record.bookmarkId)))
             }
             size="sm"
             variant="outline"
           >
-            全选重定向
+            全选当前 {visibleRecords.length}
           </Button>
           <Button
-            disabled={selectedRedirectedRecords.length === 0}
-            onClick={() => onUpdateManyUrls(selectedRedirectedRecords)}
+            disabled={selectedIds.size === 0}
+            onClick={() => setSelectedIds(new Set())}
             size="sm"
+            variant="outline"
           >
-            更新选中 {selectedRedirectedRecords.length}
+            清空选择
           </Button>
           <Button
             disabled={selectedRecords.length === 0}
             onClick={() => onDeleteMany(selectedRecords)}
             size="sm"
             variant="outline"
-            className="col-span-2"
           >
             <Trash2 className="h-4 w-4" />
-            删除选中 {selectedRecords.length}
+            {deleteManyLabel}
+          </Button>
+          <Button
+            disabled={selectedRedirectedRecords.length === 0}
+            onClick={() => onUpdateManyUrls(selectedRedirectedRecords)}
+            size="sm"
+          >
+            更新重定向 {selectedRedirectedRecords.length}
           </Button>
         </div>
       ) : null}
@@ -429,7 +449,13 @@ export default function HealthPage({
                   <span>{record.error}</span>
                 </div>
               ) : null}
-              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+              <div
+                className={
+                  record.status === 'redirected' && record.finalUrl
+                    ? 'grid grid-cols-[1fr_auto_auto] gap-2'
+                    : 'grid grid-cols-[1fr_auto] gap-2'
+                }
+              >
                 <Input
                   className={replacementValid ? 'h-8 text-xs' : 'h-8 border-destructive text-xs'}
                   onChange={(event) => setReplacement(record.bookmarkId, event.target.value)}
@@ -448,11 +474,7 @@ export default function HealthPage({
                   <Button onClick={() => onUpdateUrl(record, record.finalUrl ?? record.bookmarkUrl)} size="sm">
                     更新
                   </Button>
-                ) : (
-                  <Button onClick={() => onDelete(record)} size="sm" variant="outline">
-                    删除
-                  </Button>
-                )}
+                ) : null}
               </div>
             </div>
           );
