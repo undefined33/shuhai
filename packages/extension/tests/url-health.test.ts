@@ -2,19 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BookmarkItem } from '../src/shared/bookmark-types.js';
 import {
   checkBookmarkUrl,
+  checkBookmarkUrls,
   summarizeHealthRecords,
   type HealthFetch,
 } from '../src/utils/url-health.js';
 
-function bookmark(url: string): BookmarkItem {
+function bookmark(url: string, id = 'b1', index = 0): BookmarkItem {
   return {
-    id: 'b1',
+    id,
     title: 'Example',
     url,
     parentId: 'p1',
     parentPath: 'Bookmarks Bar',
     parentTitle: 'Bookmarks Bar',
-    index: 0,
+    index,
   };
 }
 
@@ -109,6 +110,39 @@ describe('URL health checker', () => {
       status: 'skipped',
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('checks bookmark URLs with bounded concurrency', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const fetchImpl = vi.fn<HealthFetch>(async (input) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5);
+      });
+      inFlight -= 1;
+
+      return response(200, String(input));
+    });
+    const progressDone: number[] = [];
+    const bookmarks = Array.from({ length: 7 }, (_, index) =>
+      bookmark(`https://example.com/${index}`, `b${index}`, index),
+    );
+
+    const result = await checkBookmarkUrls(bookmarks, {
+      concurrency: 3,
+      fetchImpl,
+      onProgress: (progress) => progressDone.push(progress.done),
+    });
+
+    expect(maxInFlight).toBe(3);
+    expect(result.progress.done).toBe(7);
+    expect(result.records.map((record) => record.bookmarkId)).toEqual(
+      bookmarks.map((item) => item.id),
+    );
+    expect(progressDone[0]).toBe(0);
+    expect(progressDone[progressDone.length - 1]).toBe(7);
   });
 
   it('summarizes health records for the review UI', () => {

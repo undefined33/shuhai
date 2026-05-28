@@ -1,5 +1,6 @@
 import type {
   BookmarkItem,
+  UrlHealthProgress,
   UrlHealthRecord,
   UrlHealthStatus,
   UrlHealthSummary,
@@ -17,6 +18,13 @@ export interface UrlHealthCheckOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
+
+export interface UrlHealthBatchCheckOptions extends UrlHealthCheckOptions {
+  concurrency?: number;
+  onProgress?: (progress: UrlHealthProgress) => void;
+}
+
+export const DEFAULT_HEALTH_CONCURRENCY = 8;
 
 export const EMPTY_HEALTH_SUMMARY: UrlHealthSummary = {
   alive: 0,
@@ -240,4 +248,94 @@ export async function checkBookmarkUrl(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function checkBookmarkUrls(
+  bookmarks: BookmarkItem[],
+  options: UrlHealthBatchCheckOptions = {},
+): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
+  const startedAt = Date.now();
+  const completedRecords: UrlHealthRecord[] = [];
+  const orderedRecords: Array<UrlHealthRecord | undefined> = new Array(bookmarks.length);
+  let nextIndex = 0;
+
+  const buildProgress = (currentUrl?: string): UrlHealthProgress => {
+    const elapsedMs = Date.now() - startedAt;
+    const done = completedRecords.length;
+    const averageMs = done > 0 ? elapsedMs / done : 0;
+    const remainingMs = Math.round(Math.max(0, bookmarks.length - done) * averageMs);
+
+    return {
+      done,
+      total: bookmarks.length,
+      elapsedMs,
+      remainingMs,
+      currentUrl,
+      summary:
+        completedRecords.length > 0
+          ? summarizeHealthRecords(completedRecords)
+          : { ...EMPTY_HEALTH_SUMMARY },
+    };
+  };
+
+  const checkOne = async (bookmark: BookmarkItem): Promise<UrlHealthRecord> => {
+    try {
+      return await checkBookmarkUrl(bookmark, options);
+    } catch (error) {
+      if (abortError(error) && options.signal?.aborted) {
+        throw error;
+      }
+
+      return makeRecord(bookmark, 'error', Date.now(), new Date().toISOString(), {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const worker = async (): Promise<void> => {
+    while (!options.signal?.aborted) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      if (index >= bookmarks.length) {
+        return;
+      }
+
+      const bookmark = bookmarks[index];
+      if (!bookmark) {
+        return;
+      }
+
+      options.onProgress?.(buildProgress(bookmark.url));
+
+      try {
+        const record = await checkOne(bookmark);
+        orderedRecords[index] = record;
+        completedRecords.push(record);
+        options.onProgress?.(buildProgress());
+      } catch (error) {
+        if (abortError(error) && options.signal?.aborted) {
+          return;
+        }
+
+        throw error;
+      }
+    }
+  };
+
+  options.onProgress?.(buildProgress());
+
+  const workerCount = Math.min(
+    bookmarks.length,
+    Math.max(1, Math.floor(options.concurrency ?? DEFAULT_HEALTH_CONCURRENCY)),
+  );
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  const records = orderedRecords.filter(
+    (record): record is UrlHealthRecord => record !== undefined,
+  );
+  const progress = buildProgress();
+
+  return { records, progress };
 }

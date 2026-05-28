@@ -39,9 +39,7 @@ import {
   saveUrlHealthRecords,
 } from '../utils/storage.js';
 import {
-  checkBookmarkUrl,
-  EMPTY_HEALTH_SUMMARY,
-  summarizeHealthRecords,
+  checkBookmarkUrls,
 } from '../utils/url-health.js';
 
 let activeClassification: AbortController | undefined;
@@ -136,57 +134,11 @@ async function checkBookmarkHealth(options: {
   const bookmarks = selectedIds
     ? summary.bookmarks.filter((bookmark) => selectedIds.has(bookmark.id))
     : summary.bookmarks;
-  const startedAt = Date.now();
-  const records: UrlHealthRecord[] = [];
+  const { records, progress } = await checkBookmarkUrls(bookmarks, {
+    signal: options.signal,
+    onProgress: options.onProgress,
+  });
 
-  const buildProgress = (currentUrl?: string): UrlHealthProgress => {
-    const elapsedMs = Date.now() - startedAt;
-    const done = records.length;
-    const averageMs = done > 0 ? elapsedMs / done : 0;
-    const remainingMs = Math.round(Math.max(0, bookmarks.length - done) * averageMs);
-
-    return {
-      done,
-      total: bookmarks.length,
-      elapsedMs,
-      remainingMs,
-      currentUrl,
-      summary: records.length > 0 ? summarizeHealthRecords(records) : { ...EMPTY_HEALTH_SUMMARY },
-    };
-  };
-
-  options.onProgress?.(buildProgress());
-
-  for (const bookmark of bookmarks) {
-    if (options.signal?.aborted) {
-      break;
-    }
-
-    options.onProgress?.(buildProgress(bookmark.url));
-
-    try {
-      records.push(await checkBookmarkUrl(bookmark, { signal: options.signal }));
-    } catch (error) {
-      if (options.signal?.aborted) {
-        break;
-      }
-
-      records.push({
-        bookmarkId: bookmark.id,
-        bookmarkTitle: bookmark.title || bookmark.url,
-        bookmarkUrl: bookmark.url,
-        parentPath: bookmark.parentPath,
-        status: 'error',
-        checkedAt: new Date().toISOString(),
-        durationMs: 0,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    options.onProgress?.(buildProgress());
-  }
-
-  const progress = buildProgress();
   await saveUrlHealthRecords(records);
 
   return { records, progress };
