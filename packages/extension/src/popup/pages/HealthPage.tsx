@@ -222,6 +222,8 @@ export default function HealthPage({
       ),
     [selectedRecords],
   );
+  const showRedirectBatchAction =
+    filter === 'redirected' || selectedRedirectedRecords.length > 0;
   const deleteManyLabel = useMemo(() => {
     if (selectedRecords.length === 0) {
       return '删除选中';
@@ -381,13 +383,15 @@ export default function HealthPage({
             <Trash2 className="h-4 w-4" />
             {deleteManyLabel}
           </Button>
-          <Button
-            disabled={selectedRedirectedRecords.length === 0}
-            onClick={() => onUpdateManyUrls(selectedRedirectedRecords)}
-            size="sm"
-          >
-            更新重定向 {selectedRedirectedRecords.length}
-          </Button>
+          {showRedirectBatchAction ? (
+            <Button
+              disabled={selectedRedirectedRecords.length === 0}
+              onClick={() => onUpdateManyUrls(selectedRedirectedRecords)}
+              size="sm"
+            >
+              更新重定向 {selectedRedirectedRecords.length}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
