@@ -4,7 +4,9 @@ import {
   applyClassificationPlan,
   flattenBookmarkTree,
   getFullTree,
+  removeBookmarkWithBackup,
   undoMoveRecords,
+  updateBookmarkUrlWithBackup,
 } from '../src/utils/chrome-bookmarks.js';
 import { getBookmarkMocks, setBookmarkTree } from './setup.js';
 
@@ -115,5 +117,24 @@ describe('chrome bookmark utilities', () => {
       { parentId: '1', index: 0 },
       expect.any(Function),
     );
+  });
+
+  it('backs up before updating or deleting bookmarks', async () => {
+    setBookmarkTree(chromeTree());
+
+    await expect(updateBookmarkUrlWithBackup('10', 'https://example.com/new')).resolves.toEqual(
+      expect.objectContaining({ backupKey: expect.stringMatching(/^backup_/) }),
+    );
+    await expect(removeBookmarkWithBackup('10')).resolves.toEqual(
+      expect.objectContaining({ backupKey: expect.stringMatching(/^backup_/) }),
+    );
+
+    const mocks = getBookmarkMocks();
+    expect(mocks.update).toHaveBeenCalledWith(
+      '10',
+      { url: 'https://example.com/new' },
+      expect.any(Function),
+    );
+    expect(mocks.remove).toHaveBeenCalledWith('10', expect.any(Function));
   });
 });

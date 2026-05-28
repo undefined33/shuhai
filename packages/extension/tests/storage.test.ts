@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   getOnboarded,
   getPendingCaptures,
+  getUrlHealthRecords,
   removePendingCapture,
   saveOnboarded,
   savePendingCapture,
+  saveUrlHealthRecords,
 } from '../src/utils/storage.js';
 import { getStorageSnapshot } from './setup.js';
 
@@ -48,6 +50,25 @@ describe('storage helpers', () => {
     await expect(removePendingCapture('article-1')).resolves.toBe(true);
     await expect(getPendingCaptures()).resolves.toEqual([
       expect.objectContaining({ id: 'tweet-1' }),
+    ]);
+  });
+
+  it('stores URL health records', async () => {
+    await saveUrlHealthRecords([
+      {
+        bookmarkId: '1',
+        bookmarkTitle: 'Missing',
+        bookmarkUrl: 'https://example.com/missing',
+        checkedAt: new Date(0).toISOString(),
+        durationMs: 12,
+        httpStatus: 404,
+        parentPath: 'Bookmarks Bar',
+        status: 'dead',
+      },
+    ]);
+
+    await expect(getUrlHealthRecords()).resolves.toEqual([
+      expect.objectContaining({ bookmarkId: '1', status: 'dead' }),
     ]);
   });
 });

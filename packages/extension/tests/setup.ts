@@ -52,6 +52,18 @@ const bookmarks = {
       callback?.({ id: _id, title: 'moved', syncing: false });
     },
   ),
+  update: vi.fn(
+    (
+      id: string,
+      changes: { title?: string; url?: string },
+      callback?: (result: TreeNode) => void,
+    ) => {
+      callback?.({ id, title: 'updated', url: changes.url, syncing: false });
+    },
+  ),
+  remove: vi.fn((_id: string, callback?: () => void) => {
+    callback?.();
+  }),
   create: vi.fn(
     (
       bookmark: chrome.bookmarks.CreateDetails,

@@ -86,6 +86,34 @@ export function moveBookmark(
   });
 }
 
+export function updateBookmarkUrl(id: string, url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.bookmarks.update(id, { url }, () => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+export function removeBookmark(id: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.bookmarks.remove(id, () => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
 export function createFolder(title: string, parentId: string): Promise<BookmarkNode> {
   return new Promise((resolve, reject) => {
     chrome.bookmarks.create({ parentId, title }, (node) => {
@@ -302,6 +330,47 @@ export async function applyClassificationPlan(
     failed,
     backupKey: backup.key,
     records,
+  };
+}
+
+function assertHttpUrl(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return;
+    }
+  } catch {
+    // Fall through to the shared error below.
+  }
+
+  throw new Error('只允许替换为 http/https 链接');
+}
+
+export async function updateBookmarkUrlWithBackup(
+  id: string,
+  url: string,
+): Promise<{ updated: boolean; backupKey: string }> {
+  assertHttpUrl(url);
+  const tree = await getFullTree();
+  const backup = await createBackupSnapshot(tree);
+  await updateBookmarkUrl(id, url);
+
+  return {
+    updated: true,
+    backupKey: backup.key,
+  };
+}
+
+export async function removeBookmarkWithBackup(
+  id: string,
+): Promise<{ deleted: boolean; backupKey: string }> {
+  const tree = await getFullTree();
+  const backup = await createBackupSnapshot(tree);
+  await removeBookmark(id);
+
+  return {
+    deleted: true,
+    backupKey: backup.key,
   };
 }
 

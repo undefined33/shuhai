@@ -9,6 +9,10 @@ import type {
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
+  UrlHealthPortMessage,
+  UrlHealthPortRequest,
+  UrlHealthProgress,
+  UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import { generateClassificationPlan } from '../shared/classifier.js';
 import { getLastMoveRecords, listBackups } from '../utils/backup.js';
@@ -16,21 +20,32 @@ import {
   applyClassificationPlan,
   flattenBookmarkTree,
   getFullTree,
+  removeBookmarkWithBackup,
+  updateBookmarkUrlWithBackup,
   undoMoveRecords,
 } from '../utils/chrome-bookmarks.js';
 import {
   clearPendingCapture,
+  clearUrlHealthRecords,
   getExportManifests,
   getPendingCaptures,
   getSettings,
   getOnboarded,
+  getUrlHealthRecords,
   removePendingCapture,
   savePendingCapture,
   saveOnboarded,
   saveSettings,
+  saveUrlHealthRecords,
 } from '../utils/storage.js';
+import {
+  checkBookmarkUrl,
+  EMPTY_HEALTH_SUMMARY,
+  summarizeHealthRecords,
+} from '../utils/url-health.js';
 
 let activeClassification: AbortController | undefined;
+let activeHealthCheck: AbortController | undefined;
 
 async function getState(): Promise<ExtensionState> {
   const tree = await getFullTree();
@@ -40,6 +55,7 @@ async function getState(): Promise<ExtensionState> {
   const lastMoveRecords = await getLastMoveRecords();
   const settings = await getSettings();
   const pendingCaptures = await getPendingCaptures();
+  const urlHealthRecords = await getUrlHealthRecords();
   const onboarded = await getOnboarded();
 
   return {
@@ -49,6 +65,7 @@ async function getState(): Promise<ExtensionState> {
     backups,
     exportManifests,
     pendingCaptures,
+    urlHealthRecords,
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
@@ -106,6 +123,73 @@ async function createPlan(
   }
 
   return plan;
+}
+
+async function checkBookmarkHealth(options: {
+  bookmarkIds?: string[];
+  signal?: AbortSignal;
+  onProgress?: (progress: UrlHealthProgress) => void;
+} = {}): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
+  const tree = await getFullTree();
+  const summary = flattenBookmarkTree(tree);
+  const selectedIds = options.bookmarkIds ? new Set(options.bookmarkIds) : undefined;
+  const bookmarks = selectedIds
+    ? summary.bookmarks.filter((bookmark) => selectedIds.has(bookmark.id))
+    : summary.bookmarks;
+  const startedAt = Date.now();
+  const records: UrlHealthRecord[] = [];
+
+  const buildProgress = (currentUrl?: string): UrlHealthProgress => {
+    const elapsedMs = Date.now() - startedAt;
+    const done = records.length;
+    const averageMs = done > 0 ? elapsedMs / done : 0;
+    const remainingMs = Math.round(Math.max(0, bookmarks.length - done) * averageMs);
+
+    return {
+      done,
+      total: bookmarks.length,
+      elapsedMs,
+      remainingMs,
+      currentUrl,
+      summary: records.length > 0 ? summarizeHealthRecords(records) : { ...EMPTY_HEALTH_SUMMARY },
+    };
+  };
+
+  options.onProgress?.(buildProgress());
+
+  for (const bookmark of bookmarks) {
+    if (options.signal?.aborted) {
+      break;
+    }
+
+    options.onProgress?.(buildProgress(bookmark.url));
+
+    try {
+      records.push(await checkBookmarkUrl(bookmark, { signal: options.signal }));
+    } catch (error) {
+      if (options.signal?.aborted) {
+        break;
+      }
+
+      records.push({
+        bookmarkId: bookmark.id,
+        bookmarkTitle: bookmark.title || bookmark.url,
+        bookmarkUrl: bookmark.url,
+        parentPath: bookmark.parentPath,
+        status: 'error',
+        checkedAt: new Date().toISOString(),
+        durationMs: 0,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    options.onProgress?.(buildProgress());
+  }
+
+  const progress = buildProgress();
+  await saveUrlHealthRecords(records);
+
+  return { records, progress };
 }
 
 function storeCapture(capture: CapturedContent | undefined): void {
@@ -212,6 +296,13 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
       case 'capture:clearPending':
         await clearPendingCapture();
         return { ok: true, data: { cleared: true } };
+      case 'health:clearRecords':
+        await clearUrlHealthRecords();
+        return { ok: true, data: { cleared: true } };
+      case 'bookmark:delete':
+        return { ok: true, data: await removeBookmarkWithBackup(request.id) };
+      case 'bookmark:updateUrl':
+        return { ok: true, data: await updateBookmarkUrlWithBackup(request.id, request.url) };
       case 'backups:list':
         return { ok: true, data: await listBackups() };
       default:
@@ -296,6 +387,67 @@ function handleClassificationPort(port: chrome.runtime.Port): void {
   });
 }
 
+function postHealthMessage(port: chrome.runtime.Port, message: UrlHealthPortMessage): void {
+  try {
+    port.postMessage(message);
+  } catch {
+    activeHealthCheck?.abort();
+  }
+}
+
+function handleHealthPort(port: chrome.runtime.Port): void {
+  let controller: AbortController | undefined;
+
+  port.onDisconnect.addListener(() => {
+    controller?.abort();
+    if (activeHealthCheck === controller) {
+      activeHealthCheck = undefined;
+    }
+  });
+
+  port.onMessage.addListener((message: UrlHealthPortRequest) => {
+    if (message.type === 'cancel') {
+      controller?.abort();
+      return;
+    }
+
+    if (message.type !== 'health:check') {
+      return;
+    }
+
+    controller?.abort();
+    controller = new AbortController();
+    activeHealthCheck = controller;
+
+    void checkBookmarkHealth({
+      bookmarkIds: message.bookmarkIds,
+      signal: controller.signal,
+      onProgress: (progress) => {
+        postHealthMessage(port, { type: 'progress', progress });
+      },
+    })
+      .then(({ records, progress }) => {
+        postHealthMessage(port, {
+          type: 'complete',
+          progress,
+          records,
+          cancelled: Boolean(controller?.signal.aborted),
+        });
+      })
+      .catch((error) => {
+        postHealthMessage(port, {
+          type: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        if (activeHealthCheck === controller) {
+          activeHealthCheck = undefined;
+        }
+      });
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   if (chrome.sidePanel?.setPanelBehavior) {
     void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
@@ -335,6 +487,11 @@ chrome.runtime.onMessage.addListener((message: ExtensionRequest, _sender, sendRe
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'classify') {
     handleClassificationPort(port);
+    return;
+  }
+
+  if (port.name === 'health') {
+    handleHealthPort(port);
   }
 });
 

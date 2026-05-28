@@ -2,6 +2,7 @@ export type ClassificationReason = 'folder' | 'rule' | 'ai' | 'manual';
 export type ClassificationMode = 'safe' | 'full';
 export type ExportScope = 'all' | 'plan' | 'selected';
 export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
+export type UrlHealthStatus = 'alive' | 'redirected' | 'dead' | 'error' | 'skipped';
 
 export interface BookmarkNode {
   id: string;
@@ -82,6 +83,50 @@ export interface ClassificationProgress {
   remainingMs?: number;
   cancelled?: boolean;
 }
+
+export interface UrlHealthSummary {
+  alive: number;
+  redirected: number;
+  dead: number;
+  error: number;
+  skipped: number;
+}
+
+export interface UrlHealthRecord {
+  bookmarkId: string;
+  bookmarkTitle: string;
+  bookmarkUrl: string;
+  parentPath: string;
+  status: UrlHealthStatus;
+  checkedAt: string;
+  durationMs: number;
+  httpStatus?: number;
+  finalUrl?: string;
+  error?: string;
+}
+
+export interface UrlHealthProgress {
+  done: number;
+  total: number;
+  elapsedMs: number;
+  remainingMs?: number;
+  currentUrl?: string;
+  summary: UrlHealthSummary;
+}
+
+export type UrlHealthPortRequest =
+  | { type: 'health:check'; bookmarkIds?: string[] }
+  | { type: 'cancel' };
+
+export type UrlHealthPortMessage =
+  | { type: 'progress'; progress: UrlHealthProgress }
+  | {
+      type: 'complete';
+      progress: UrlHealthProgress;
+      records: UrlHealthRecord[];
+      cancelled: boolean;
+    }
+  | { type: 'error'; error: string };
 
 export type ClassificationPortRequest =
   | { type: 'plan:create'; mode: ClassificationMode }
@@ -181,6 +226,7 @@ export interface ExtensionState {
   backups: BackupRecord[];
   exportManifests: ExportManifest[];
   pendingCaptures: CapturedContent[];
+  urlHealthRecords: UrlHealthRecord[];
   lastMoveRecordCount: number;
   onboarded: boolean;
   settings: AppSettings;
@@ -201,6 +247,9 @@ export type ExtensionRequest =
   | { type: 'capture:getPending' }
   | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
+  | { type: 'health:clearRecords' }
+  | { type: 'bookmark:delete'; id: string }
+  | { type: 'bookmark:updateUrl'; id: string; url: string }
   | { type: 'backups:list' };
 
 export type ExtensionResponse =
@@ -214,4 +263,6 @@ export type ExtensionResponse =
   | { ok: true; data: CapturedContent[] }
   | { ok: true; data: { removed: boolean } }
   | { ok: true; data: { cleared: boolean } }
+  | { ok: true; data: { deleted: boolean; backupKey: string } }
+  | { ok: true; data: { updated: boolean; backupKey: string } }
   | { ok: false; error: string };

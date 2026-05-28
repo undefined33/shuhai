@@ -3,12 +3,14 @@ import type {
   CapturedContent,
   ExportManifest,
   MoveRecord,
+  UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 
 export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
 export const EXPORT_MANIFESTS_KEY = 'exportManifests';
 export const PENDING_CAPTURE_KEY = 'pendingCapture';
+export const URL_HEALTH_RECORDS_KEY = 'urlHealthRecords';
 export const ONBOARDED_KEY = 'onboarded';
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -134,6 +136,18 @@ export async function removePendingCapture(id: string): Promise<boolean> {
 
 export function clearPendingCapture(): Promise<void> {
   return removeLocalValues([PENDING_CAPTURE_KEY]);
+}
+
+export function getUrlHealthRecords(): Promise<UrlHealthRecord[]> {
+  return getLocalValue<UrlHealthRecord[]>(URL_HEALTH_RECORDS_KEY, []);
+}
+
+export function saveUrlHealthRecords(records: UrlHealthRecord[]): Promise<void> {
+  return setLocalValues({ [URL_HEALTH_RECORDS_KEY]: records });
+}
+
+export function clearUrlHealthRecords(): Promise<void> {
+  return removeLocalValues([URL_HEALTH_RECORDS_KEY]);
 }
 
 export function getOnboarded(): Promise<boolean> {

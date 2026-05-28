@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
   "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel", "activeTab", "scripting"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",

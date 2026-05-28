@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   Bookmark,
   CircleHelp,
   Download,
@@ -22,6 +23,10 @@ import type {
   ExtensionResponse,
   ExtensionState,
   MovePlan,
+  UrlHealthPortMessage,
+  UrlHealthPortRequest,
+  UrlHealthProgress,
+  UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import { Badge } from '../components/ui/badge.js';
 import { Button } from '../components/ui/button.js';
@@ -41,11 +46,12 @@ import { DEFAULT_SETTINGS } from '../utils/storage.js';
 import BookmarkTree from './pages/BookmarkTree.js';
 import ClassifyPreview from './pages/ClassifyPreview.js';
 import ExportPage from './pages/ExportPage.js';
+import HealthPage from './pages/HealthPage.js';
 import HelpPage from './pages/HelpPage.js';
 import Settings from './pages/Settings.js';
 
 type Surface = 'popup' | 'sidepanel';
-type ViewName = 'tree' | 'preview' | 'export' | 'settings' | 'help';
+type ViewName = 'tree' | 'preview' | 'health' | 'export' | 'settings' | 'help';
 type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
@@ -167,6 +173,21 @@ async function openSidePanel(): Promise<void> {
 
   const windowId = await getCurrentWindowId();
   await chrome.sidePanel.open({ windowId });
+}
+
+function requestHealthCheckPermission(): Promise<boolean> {
+  if (!chrome.permissions?.request) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    chrome.permissions.request(
+      {
+        origins: ['http://*/*', 'https://*/*'],
+      },
+      (granted) => resolve(Boolean(granted)),
+    );
+  });
 }
 
 interface PopupLauncherProps {
@@ -364,11 +385,14 @@ export default function App({ surface = 'popup' }: AppProps) {
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
   const [classificationProgress, setClassificationProgress] =
     useState<ClassificationProgress>();
+  const [urlHealthProgress, setUrlHealthProgress] = useState<UrlHealthProgress>();
+  const [healthChecking, setHealthChecking] = useState(false);
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
+  const healthPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const previousPendingCaptureCountRef = useRef(0);
 
-  const busy = Boolean(busyAction);
+  const busy = Boolean(busyAction) || healthChecking;
 
   useEffect(() => {
     if (notice?.kind !== 'success') {
@@ -499,6 +523,79 @@ export default function App({ surface = 'popup' }: AppProps) {
     setStatus('正在取消，本批次结束后会生成部分方案...');
   };
 
+  const startHealthCheck = async () => {
+    setNotice(undefined);
+    setUrlHealthProgress(undefined);
+
+    try {
+      const granted = await requestHealthCheckPermission();
+      if (!granted) {
+        setNotice({
+          kind: 'warning',
+          message: '链接体检需要临时访问书签中的 http/https 地址，未授权时不会发起检测。',
+        });
+        return;
+      }
+
+      if (!chrome.runtime.connect) {
+        throw new Error('当前扩展环境不支持长任务连接');
+      }
+
+      healthPortRef.current?.disconnect();
+      const port = chrome.runtime.connect({ name: 'health' });
+      let settled = false;
+      healthPortRef.current = port;
+      setHealthChecking(true);
+      setStatus('正在体检书签链接...');
+
+      port.onMessage.addListener((message: UrlHealthPortMessage) => {
+        if (message.type === 'progress') {
+          setUrlHealthProgress(message.progress);
+          setStatus(`链接体检 ${message.progress.done}/${message.progress.total}`);
+          return;
+        }
+
+        if (message.type === 'complete') {
+          settled = true;
+          setUrlHealthProgress(message.progress);
+          setHealthChecking(false);
+          healthPortRef.current = undefined;
+          void loadState();
+          setNotice({
+            kind: message.progress.summary.dead + message.progress.summary.error > 0 ? 'warning' : 'success',
+            message: `体检完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
+          });
+          setStatus('链接体检完成');
+          return;
+        }
+
+        if (message.type === 'error') {
+          settled = true;
+          setHealthChecking(false);
+          healthPortRef.current = undefined;
+          showError(new Error(message.error));
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (!settled) {
+          setHealthChecking(false);
+          healthPortRef.current = undefined;
+        }
+      });
+
+      port.postMessage({ type: 'health:check' } satisfies UrlHealthPortRequest);
+    } catch (healthError) {
+      setHealthChecking(false);
+      showError(healthError);
+    }
+  };
+
+  const cancelHealthCheck = () => {
+    healthPortRef.current?.postMessage({ type: 'cancel' } satisfies UrlHealthPortRequest);
+    setStatus('正在取消链接体检...');
+  };
+
   const applyPlan = async () => {
     if (!plan) {
       return;
@@ -576,6 +673,55 @@ export default function App({ surface = 'popup' }: AppProps) {
   const removePendingCapture = async (id: string) => {
     await sendMessage<{ removed: boolean }>({ type: 'capture:removePending', id });
     await loadState();
+  };
+
+  const clearHealthRecords = async () => {
+    await sendMessage<{ cleared: boolean }>({ type: 'health:clearRecords' });
+    setUrlHealthProgress(undefined);
+    await loadState();
+  };
+
+  const deleteBookmarkFromHealth = async (record: UrlHealthRecord) => {
+    const confirmed = window.confirm(
+      `确定删除这个 Chrome 书签吗？\n\n${record.bookmarkTitle}\n${record.bookmarkUrl}`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await sendMessage<{ deleted: boolean; backupKey: string }>({
+        type: 'bookmark:delete',
+        id: record.bookmarkId,
+      });
+      setNotice({ kind: 'success', message: '已删除书签，并已创建备份。' });
+      await loadState();
+    } catch (deleteError) {
+      showError(deleteError);
+    }
+  };
+
+  const updateBookmarkUrlFromHealth = async (record: UrlHealthRecord, url: string) => {
+    const confirmed = window.confirm(
+      `确定替换这个 Chrome 书签的 URL 吗？\n\n${record.bookmarkTitle}\n${url}`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await sendMessage<{ updated: boolean; backupKey: string }>({
+        type: 'bookmark:updateUrl',
+        id: record.bookmarkId,
+        url,
+      });
+      setNotice({ kind: 'success', message: '已更新书签链接，并已创建备份。' });
+      await loadState();
+    } catch (updateError) {
+      showError(updateError);
+    }
   };
 
   const completeOnboarding = async () => {
@@ -720,7 +866,7 @@ export default function App({ surface = 'popup' }: AppProps) {
         onValueChange={(next) => setView(next as ViewName)}
         value={view}
       >
-        <TabsList className="grid-cols-5">
+        <TabsList className="grid-cols-6">
           <TabsTrigger value="tree">
             <Bookmark className="h-3.5 w-3.5" />
             书签
@@ -732,6 +878,10 @@ export default function App({ surface = 'popup' }: AppProps) {
           <TabsTrigger value="export">
             <Download className="h-3.5 w-3.5" />
             导出
+          </TabsTrigger>
+          <TabsTrigger value="health">
+            <Activity className="h-3.5 w-3.5" />
+            体检
           </TabsTrigger>
           <TabsTrigger value="settings">
             <SettingsIcon className="h-3.5 w-3.5" />
@@ -797,6 +947,20 @@ export default function App({ surface = 'popup' }: AppProps) {
             selectedMoveIds={plan ? selectedMoveIds(plan) : []}
             settings={settings}
             surface={surface}
+          />
+        </TabsContent>
+
+        <TabsContent className="min-h-0 flex-1" value="health">
+          <HealthPage
+            bookmarks={bookmarks}
+            checking={healthChecking}
+            onCancel={cancelHealthCheck}
+            onClear={clearHealthRecords}
+            onDelete={deleteBookmarkFromHealth}
+            onStart={startHealthCheck}
+            onUpdateUrl={updateBookmarkUrlFromHealth}
+            progress={urlHealthProgress}
+            records={state?.urlHealthRecords ?? []}
           />
         </TabsContent>
 
