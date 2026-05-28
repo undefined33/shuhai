@@ -1,13 +1,22 @@
-import type { AppSettings, MoveRecord } from '../shared/bookmark-types.js';
+import type {
+  AppSettings,
+  CapturedContent,
+  ExportManifest,
+  MoveRecord,
+} from '../shared/bookmark-types.js';
 
 export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
+export const EXPORT_MANIFESTS_KEY = 'exportManifests';
+export const PENDING_CAPTURE_KEY = 'pendingCapture';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   deepSeekApiKey: '',
   deepSeekModel: 'deepseek-chat',
   useAi: false,
   customRules: [],
+  defaultClassifyMode: 'safe',
+  exportDirectory: 'Bookmarks',
 };
 
 function getLastError(): Error | undefined {
@@ -77,4 +86,27 @@ export function getLastMoveRecords(): Promise<MoveRecord[]> {
 
 export function saveLastMoveRecords(records: MoveRecord[]): Promise<void> {
   return setLocalValues({ [LAST_MOVE_RECORDS_KEY]: records });
+}
+
+export function getExportManifests(): Promise<ExportManifest[]> {
+  return getLocalValue<ExportManifest[]>(EXPORT_MANIFESTS_KEY, []);
+}
+
+export async function saveExportManifest(manifest: ExportManifest): Promise<void> {
+  const manifests = await getExportManifests();
+  await setLocalValues({
+    [EXPORT_MANIFESTS_KEY]: [manifest, ...manifests].slice(0, 10),
+  });
+}
+
+export function getPendingCapture(): Promise<CapturedContent | undefined> {
+  return getLocalValue<CapturedContent | undefined>(PENDING_CAPTURE_KEY, undefined);
+}
+
+export function savePendingCapture(capture: CapturedContent): Promise<void> {
+  return setLocalValues({ [PENDING_CAPTURE_KEY]: capture });
+}
+
+export function clearPendingCapture(): Promise<void> {
+  return removeLocalValues([PENDING_CAPTURE_KEY]);
 }

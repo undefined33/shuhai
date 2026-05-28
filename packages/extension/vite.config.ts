@@ -38,6 +38,8 @@ export default defineConfig({
           __dirname,
           'src/background/service-worker.ts',
         ),
+        'content/twitter': resolve(__dirname, 'src/content/twitter.ts'),
+        'content/weibo': resolve(__dirname, 'src/content/weibo.ts'),
       },
       output: {
         assetFileNames: 'assets/[name].[ext]',

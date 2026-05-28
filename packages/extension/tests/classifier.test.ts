@@ -36,16 +36,22 @@ describe('classifier', () => {
       }),
     );
 
-    expect(result.targetFolder).toBe('安全/漏洞');
+    expect(result.targetFolder).toBe('安全/漏洞研究');
     expect(result.tags).toContain('exploit');
     expect(result.confidence).toBeGreaterThan(0.9);
   });
 
-  it('classifies CVE and CTF title payloads without user-provided regex rules', () => {
+  it('classifies CVE, malware, red-team, and CTF title payloads', () => {
     const cve = classifyBookmark(
       bookmark({
         id: 'cve',
-        title: 'CVE-2026-1000 reverse.shell payload analysis',
+        title: 'CVE-2026-1000 reverse shell payload analysis',
+      }),
+    );
+    const malware = classifyBookmark(
+      bookmark({
+        id: 'malware',
+        title: 'Cobalt Strike Beacon malware development part 2',
       }),
     );
     const ctf = classifyBookmark(
@@ -55,16 +61,17 @@ describe('classifier', () => {
       }),
     );
 
-    expect(cve.targetFolder).toBe('安全/研究');
+    expect(cve.targetFolder).toBe('安全/漏洞研究');
+    expect(malware.targetFolder).toBe('安全/恶意软件分析');
     expect(ctf.targetFolder).toBe('安全/CTF');
   });
 
-  it('keeps bookmarks that are already in a specific Chrome folder unchanged', () => {
+  it('keeps bookmarks that are already in a specific Chrome folder unchanged in safe mode', () => {
     const plan = generateClassificationPlan(
       [
         bookmark({
           id: 'already-sorted',
-          parentPath: 'Bookmarks Bar/安全/研究',
+          parentPath: 'Bookmarks Bar/安全/漏洞研究',
           url: 'https://github.com/example/repo',
         }),
       ],
@@ -72,16 +79,39 @@ describe('classifier', () => {
         ...folders,
         {
           id: 'safe',
-          title: '研究',
-          path: 'Bookmarks Bar/安全/研究',
+          title: '漏洞研究',
+          path: 'Bookmarks Bar/安全/漏洞研究',
           parentId: 'sec',
           bookmarkCount: 1,
         },
       ],
     );
 
+    expect(plan.mode).toBe('safe');
     expect(plan.moves).toHaveLength(0);
     expect(plan.unchanged).toBe(1);
+  });
+
+  it('can reclassify bookmarks that are already in folders in full mode', () => {
+    const plan = generateClassificationPlan(
+      [
+        bookmark({
+          id: 'repo',
+          parentPath: 'Bookmarks Bar/APT',
+          title: 'GitHub malware tooling repo',
+          url: 'https://github.com/example/repo',
+        }),
+      ],
+      folders,
+      [],
+      [],
+      'full',
+    );
+
+    expect(plan.mode).toBe('full');
+    expect(plan.moves).toHaveLength(1);
+    expect(plan.moves[0]?.targetFolder).toBe('开发/代码');
+    expect(plan.moves[0]?.selected).toBe(false);
   });
 
   it('marks low-confidence fallback moves as unchecked', () => {

@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, BackupRecord, CustomRule } from '../../shared/bookmark-types.js';
+import type {
+  AppSettings,
+  BackupRecord,
+  CustomRule,
+  ExportManifest,
+} from '../../shared/bookmark-types.js';
 
 interface SettingsProps {
   backups: BackupRecord[];
   busy: boolean;
+  exportManifests: ExportManifest[];
   settings: AppSettings;
   onSave(settings: AppSettings): void;
   onDownloadBackup(backup: BackupRecord): void;
@@ -42,6 +48,7 @@ function parseRules(value: string): CustomRule[] {
 export default function Settings({
   backups,
   busy,
+  exportManifests,
   settings,
   onSave,
   onDownloadBackup,
@@ -117,6 +124,36 @@ export default function Settings({
       </label>
 
       <label>
+        <span>默认整理模式</span>
+        <select
+          value={form.defaultClassifyMode}
+          onChange={(event) =>
+            setForm({
+              ...form,
+              defaultClassifyMode: event.target.value as AppSettings['defaultClassifyMode'],
+            })
+          }
+        >
+          <option value="safe">仅整理未分类书签</option>
+          <option value="full">重新分类全部书签</option>
+        </select>
+      </label>
+
+      <label>
+        <span>导出目录前缀</span>
+        <input
+          value={form.exportDirectory}
+          onChange={(event) =>
+            setForm({
+              ...form,
+              exportDirectory: event.target.value,
+            })
+          }
+          placeholder="Bookmarks"
+        />
+      </label>
+
+      <label>
         <span>自定义规则 JSON</span>
         <textarea
           value={rulesText}
@@ -131,7 +168,19 @@ export default function Settings({
       </button>
 
       <div className="backup-list">
-        <h2>备份</h2>
+        <h2>导出历史</h2>
+        {exportManifests.length === 0 ? <p>暂无导出记录</p> : null}
+        {exportManifests.map((manifest) => (
+          <div className="backup-row" key={manifest.id}>
+            <span>{new Date(manifest.exportedAt).toLocaleString()}</span>
+            <small>{manifest.bookmarkCount} 个条目</small>
+            <small>{manifest.vaultPath}</small>
+          </div>
+        ))}
+      </div>
+
+      <div className="backup-list">
+        <h2>书签备份</h2>
         {backups.length === 0 ? <p>暂无备份</p> : null}
         {backups.map((backup) => (
           <div className="backup-row" key={backup.key}>

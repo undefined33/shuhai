@@ -1,4 +1,7 @@
 export type ClassificationReason = 'folder' | 'rule' | 'ai' | 'manual';
+export type ClassificationMode = 'safe' | 'full';
+export type ExportScope = 'all' | 'plan' | 'selected';
+export type CaptureSource = 'page' | 'twitter' | 'weibo';
 
 export interface BookmarkNode {
   id: string;
@@ -62,6 +65,7 @@ export interface MovePlan {
 }
 
 export interface ClassificationPlan {
+  mode: ClassificationMode;
   moves: MovePlan[];
   newFolders: string[];
   unchanged: number;
@@ -102,6 +106,45 @@ export interface AppSettings {
   deepSeekModel: 'deepseek-chat' | 'deepseek-reasoner';
   useAi: boolean;
   customRules: CustomRule[];
+  defaultClassifyMode: ClassificationMode;
+  exportDirectory: string;
+}
+
+export interface ExportManifest {
+  id: string;
+  exportedAt: string;
+  vaultPath: string;
+  files: string[];
+  bookmarkCount: number;
+}
+
+export interface ExportPreviewFolder {
+  path: string;
+  count: number;
+}
+
+export interface ExportPreview {
+  total: number;
+  folders: ExportPreviewFolder[];
+}
+
+export interface CapturedMedia {
+  url: string;
+  alt?: string;
+}
+
+export interface CapturedContent {
+  id: string;
+  source: CaptureSource;
+  title: string;
+  url: string;
+  author?: string;
+  handle?: string;
+  created?: string;
+  text: string;
+  media: CapturedMedia[];
+  tags: string[];
+  capturedAt: string;
 }
 
 export interface ExtensionState {
@@ -109,13 +152,15 @@ export interface ExtensionState {
   bookmarks: BookmarkItem[];
   folders: FolderItem[];
   backups: BackupRecord[];
+  exportManifests: ExportManifest[];
+  pendingCapture?: CapturedContent;
   lastMoveRecordCount: number;
   settings: AppSettings;
 }
 
 export type ExtensionRequest =
   | { type: 'state:get' }
-  | { type: 'plan:create' }
+  | { type: 'plan:create'; mode: ClassificationMode }
   | {
       type: 'plan:apply';
       plan: ClassificationPlan;
@@ -124,6 +169,8 @@ export type ExtensionRequest =
   | { type: 'plan:undoLast' }
   | { type: 'settings:get' }
   | { type: 'settings:set'; settings: AppSettings }
+  | { type: 'capture:getPending' }
+  | { type: 'capture:clearPending' }
   | { type: 'backups:list' };
 
 export type ExtensionResponse =
@@ -133,4 +180,6 @@ export type ExtensionResponse =
   | { ok: true; data: BackupRecord[] }
   | { ok: true; data: AppSettings }
   | { ok: true; data: { undone: number } }
+  | { ok: true; data: CapturedContent | undefined }
+  | { ok: true; data: { cleared: boolean } }
   | { ok: false; error: string };

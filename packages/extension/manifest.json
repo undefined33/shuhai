@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
   "permissions": ["bookmarks", "storage", "contextMenus"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://weibo.com/*",
+    "https://m.weibo.cn/*"
+  ],
   "action": {
     "default_popup": "popup/index.html",
     "default_title": "ShuHai"
@@ -11,5 +17,17 @@
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content/twitter.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://weibo.com/*", "https://m.weibo.cn/*"],
+      "js": ["content/weibo.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   AppSettings,
   BackupRecord,
+  BookmarkItem,
+  ClassificationMode,
   ClassificationPlan,
   ExtensionRequest,
   ExtensionResponse,
@@ -11,9 +13,10 @@ import type {
 import { DEFAULT_SETTINGS } from '../utils/storage.js';
 import BookmarkTree from './pages/BookmarkTree.js';
 import ClassifyPreview from './pages/ClassifyPreview.js';
+import ExportPage from './pages/ExportPage.js';
 import Settings from './pages/Settings.js';
 
-type ViewName = 'tree' | 'preview' | 'settings';
+type ViewName = 'tree' | 'preview' | 'export' | 'settings';
 
 function sendMessage<T>(request: ExtensionRequest): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -66,10 +69,26 @@ function downloadBackup(backup: BackupRecord): void {
   URL.revokeObjectURL(url);
 }
 
+function applyPlanFolders(bookmarks: BookmarkItem[], plan: ClassificationPlan): BookmarkItem[] {
+  const movesByBookmarkId = new Map(plan.moves.map((move) => [move.bookmarkId, move]));
+
+  return bookmarks.map((bookmark) => {
+    const move = movesByBookmarkId.get(bookmark.id);
+    return move
+      ? {
+          ...bookmark,
+          parentPath: move.targetFolder,
+          parentTitle: move.targetFolder.split('/').at(-1) ?? move.targetFolder,
+        }
+      : bookmark;
+  });
+}
+
 export default function App() {
   const [view, setView] = useState<ViewName>('tree');
   const [state, setState] = useState<ExtensionState | undefined>();
   const [plan, setPlan] = useState<ClassificationPlan | undefined>();
+  const [classifyMode, setClassifyMode] = useState<ClassificationMode>('safe');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('正在读取书签...');
   const [error, setError] = useState('');
@@ -80,6 +99,7 @@ export default function App() {
     try {
       const nextState = await sendMessage<ExtensionState>({ type: 'state:get' });
       setState(nextState);
+      setClassifyMode(nextState.settings.defaultClassifyMode);
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -92,12 +112,13 @@ export default function App() {
     void loadState();
   }, []);
 
-  const createPlan = async () => {
+  const createPlan = async (mode: ClassificationMode) => {
     setBusy(true);
     setError('');
-    setStatus('正在生成整理方案...');
+    setClassifyMode(mode);
+    setStatus(mode === 'full' ? '正在重新审视全部书签...' : '正在生成安全整理方案...');
     try {
-      const nextPlan = await sendMessage<ClassificationPlan>({ type: 'plan:create' });
+      const nextPlan = await sendMessage<ClassificationPlan>({ type: 'plan:create', mode });
       setPlan(nextPlan);
       setView('preview');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
@@ -110,6 +131,15 @@ export default function App() {
 
   const applyPlan = async () => {
     if (!plan) {
+      return;
+    }
+
+    const count = selectedMoveIds(plan).length;
+    const confirmed = window.confirm(
+      `将移动 ${count} 个真实 Chrome 书签。ShuHai 会先备份并支持撤销，是否继续？`,
+    );
+
+    if (!confirmed) {
       return;
     }
 
@@ -161,6 +191,7 @@ export default function App() {
             }
           : current,
       );
+      setClassifyMode(saved.defaultClassifyMode);
       setStatus('设置已保存');
     } catch (settingsError) {
       setError(settingsError instanceof Error ? settingsError.message : String(settingsError));
@@ -169,9 +200,16 @@ export default function App() {
     }
   };
 
+  const clearPendingCapture = async () => {
+    await sendMessage<{ cleared: boolean }>({ type: 'capture:clearPending' });
+    await loadState();
+  };
+
   const folders = state?.folders ?? [];
   const backups = state?.backups ?? [];
   const settings = state?.settings ?? DEFAULT_SETTINGS;
+  const bookmarks = state?.bookmarks ?? [];
+  const exportBookmarks = plan ? applyPlanFolders(bookmarks, plan) : bookmarks;
   const canUndo = (state?.lastMoveRecordCount ?? 0) > 0;
   const selectedCount = useMemo(
     () => plan?.moves.filter((move) => move.selected).length ?? 0,
@@ -196,6 +234,9 @@ export default function App() {
           >
             方案
           </button>
+          <button className={view === 'export' ? 'active' : ''} onClick={() => setView('export')}>
+            导出
+          </button>
           <button
             className={view === 'settings' ? 'active' : ''}
             onClick={() => setView('settings')}
@@ -209,9 +250,11 @@ export default function App() {
 
       {view === 'tree' && (
         <BookmarkTree
-          bookmarks={state?.bookmarks ?? []}
+          bookmarks={bookmarks}
           busy={busy}
+          classifyMode={classifyMode}
           folders={folders}
+          onClassifyModeChange={setClassifyMode}
           onCreatePlan={createPlan}
           onRefresh={loadState}
           onUndo={undoLast}
@@ -231,10 +274,24 @@ export default function App() {
         />
       )}
 
+      {view === 'export' && (
+        <ExportPage
+          bookmarks={exportBookmarks}
+          exportManifests={state?.exportManifests ?? []}
+          pendingCapture={state?.pendingCapture}
+          plan={plan}
+          settings={settings}
+          selectedMoveIds={plan ? selectedMoveIds(plan) : []}
+          onClearPendingCapture={clearPendingCapture}
+          onRefresh={loadState}
+        />
+      )}
+
       {view === 'settings' && (
         <Settings
           backups={backups}
           busy={busy}
+          exportManifests={state?.exportManifests ?? []}
           settings={settings}
           onDownloadBackup={downloadBackup}
           onSave={saveSettings}

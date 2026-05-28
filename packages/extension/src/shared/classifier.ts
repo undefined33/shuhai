@@ -1,5 +1,6 @@
 import type {
   BookmarkItem,
+  ClassificationMode,
   ClassificationPlan,
   ClassificationReason,
   ClassificationSuggestion,
@@ -41,20 +42,35 @@ const DEFAULT_RULES: InternalRule[] = [
   { type: 'domain', pattern: 'stackoverflow.com', category: '开发/问答', tags: ['StackOverflow'], priority: 1, safeRegex: false },
   { type: 'domain', pattern: 'npmjs.com', category: '开发/工具', tags: ['npm'], priority: 1, safeRegex: false },
   { type: 'domain', pattern: 'developer.mozilla.org', category: '开发/文档', tags: ['MDN'], priority: 1, safeRegex: false },
-  { type: 'domain', pattern: 'exploit-db.com', category: '安全/漏洞', tags: ['exploit'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'exploit-db.com', category: '安全/漏洞研究', tags: ['exploit'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'nvd.nist.gov', category: '安全/CVE', tags: ['CVE'], priority: 1, safeRegex: false },
   { type: 'domain', pattern: 'cve.mitre.org', category: '安全/CVE', tags: ['CVE'], priority: 1, safeRegex: false },
-  { type: 'domain', pattern: 'virustotal.com', category: '安全/分析', tags: ['malware'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'cve.org', category: '安全/CVE', tags: ['CVE'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'virustotal.com', category: '安全/恶意软件分析', tags: ['malware'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'any.run', category: '安全/恶意软件分析', tags: ['sandbox'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'hybrid-analysis.com', category: '安全/恶意软件分析', tags: ['sandbox'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'malware-traffic-analysis.net', category: '安全/恶意软件分析', tags: ['malware'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'attack.mitre.org', category: '安全/ATT&CK', tags: ['ATT&CK'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'ired.team', category: '安全/红队', tags: ['redteam'], priority: 1, safeRegex: false },
+  { type: 'domain', pattern: 'specterops.io', category: '安全/红队', tags: ['redteam'], priority: 1, safeRegex: false },
   { type: 'domain', pattern: 'medium.com', category: '文章/技术', tags: ['blog'], priority: 2, safeRegex: false },
   { type: 'domain', pattern: 'dev.to', category: '文章/技术', tags: ['blog'], priority: 2, safeRegex: false },
-  { type: 'domain', pattern: 'youtube.com', category: '视频', tags: ['YouTube'], priority: 2, safeRegex: false },
-  { type: 'domain', pattern: 'bilibili.com', category: '视频', tags: ['Bilibili'], priority: 2, safeRegex: false },
+  { type: 'domain', pattern: 'youtube.com', category: '视频/YouTube', tags: ['YouTube'], priority: 2, safeRegex: false },
+  { type: 'domain', pattern: 'bilibili.com', category: '视频/Bilibili', tags: ['Bilibili'], priority: 2, safeRegex: false },
   { type: 'domain', pattern: 'zhihu.com', category: '知识/知乎', tags: ['知乎'], priority: 2, safeRegex: false },
   { type: 'domain', pattern: 'wikipedia.org', category: '知识/百科', tags: ['Wikipedia'], priority: 2, safeRegex: false },
   { type: 'domain', pattern: 'figma.com', category: '设计', tags: ['Figma'], priority: 2, safeRegex: false },
-  { type: 'domain', pattern: 'notion.so', category: '工具', tags: ['Notion'], priority: 2, safeRegex: false },
-  { type: 'title-keyword', pattern: 'React|Vue|Angular|Svelte|Next', category: '开发/前端', tags: ['前端'], priority: 3, safeRegex: true },
-  { type: 'title-keyword', pattern: 'Python|Rust|Go|Java|C\\+\\+', category: '开发/语言', tags: ['语言'], priority: 3, safeRegex: true },
-  { type: 'title-keyword', pattern: 'CVE-\\d{4}|exploit|payload|reverse\\.shell', category: '安全/研究', tags: ['安全'], priority: 3, safeRegex: true },
+  { type: 'domain', pattern: 'notion.so', category: '工具/Notion', tags: ['Notion'], priority: 2, safeRegex: false },
+  { type: 'domain', pattern: 'x.com', category: '社交/Twitter', tags: ['twitter'], priority: 2, safeRegex: false },
+  { type: 'domain', pattern: 'twitter.com', category: '社交/Twitter', tags: ['twitter'], priority: 2, safeRegex: false },
+  { type: 'domain', pattern: 'weibo.com', category: '社交/微博', tags: ['weibo'], priority: 2, safeRegex: false },
+  { type: 'title-keyword', pattern: 'React|Vue|Angular|Svelte|Next\\.js|Tailwind', category: '开发/前端', tags: ['前端'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'Python|Rust|Golang|\\bGo\\b|Java|C\\+\\+|TypeScript', category: '开发/语言', tags: ['语言'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'CVE-\\d{4}|漏洞|exploit|payload|PoC|RCE|0day|1day', category: '安全/漏洞研究', tags: ['漏洞'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'APT|threat actor|IOC|TTP|ATT&CK|威胁情报|溯源', category: '安全/威胁情报', tags: ['威胁情报'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'malware|ransomware|loader|stealer|YARA|Sigma|恶意软件|样本分析', category: '安全/恶意软件分析', tags: ['malware'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'Cobalt Strike|Beacon|Red Team|redteam|pentest|offensive|横向移动|权限提升', category: '安全/红队', tags: ['redteam'], priority: 3, safeRegex: true },
+  { type: 'title-keyword', pattern: 'EDR|AV bypass|defender|检测绕过|免杀', category: '安全/EDR', tags: ['EDR'], priority: 3, safeRegex: true },
   { type: 'title-keyword', pattern: 'CTF|writeup|flag\\{', category: '安全/CTF', tags: ['CTF'], priority: 3, safeRegex: true },
 ];
 
@@ -68,6 +84,7 @@ function getHostname(url: string): string {
 
 function normalizeFolderPath(value: string): string {
   return value
+    .normalize('NFC')
     .split(/[\\/]/)
     .map((segment) =>
       Array.from(segment)
@@ -157,10 +174,11 @@ function matchRule(bookmark: BookmarkItem, rules: InternalRule[]): RuleMatch | u
 export function classifyBookmark(
   bookmark: BookmarkItem,
   customRules: CustomRule[] = [],
+  mode: ClassificationMode = 'safe',
 ): ClassificationSuggestion {
   const existingCategory = stripRootFolder(bookmark.parentPath);
 
-  if (existingCategory && !isRootishPath(bookmark.parentPath)) {
+  if (mode === 'safe' && existingCategory && !isRootishPath(bookmark.parentPath)) {
     return {
       bookmarkId: bookmark.id,
       targetFolder: existingCategory,
@@ -187,11 +205,11 @@ export function classifyBookmark(
 
   return {
     bookmarkId: bookmark.id,
-    targetFolder: '未分类',
+    targetFolder: mode === 'full' && existingCategory ? existingCategory : '未分类',
     confidence: 0.4,
-    reason: 'rule',
-    ruleName: 'fallback',
-    tags: [],
+    reason: mode === 'full' && existingCategory ? 'folder' : 'rule',
+    ruleName: mode === 'full' && existingCategory ? 'no-better-match' : 'fallback',
+    tags: existingCategory ? existingCategory.split('/') : [],
   };
 }
 
@@ -216,11 +234,28 @@ function getExistingFolderPaths(folders: FolderItem[]): Set<string> {
   );
 }
 
+function isSelectedByDefault(
+  bookmark: BookmarkItem,
+  suggestion: ClassificationSuggestion,
+  mode: ClassificationMode,
+): boolean {
+  if (suggestion.confidence < 0.6) {
+    return false;
+  }
+
+  if (mode === 'full' && !isRootishPath(bookmark.parentPath)) {
+    return false;
+  }
+
+  return true;
+}
+
 export function generateClassificationPlan(
   bookmarks: BookmarkItem[],
   folders: FolderItem[],
   customRules: CustomRule[] = [],
   aiSuggestions: ClassificationSuggestion[] = [],
+  mode: ClassificationMode = 'safe',
   now = new Date(),
 ): ClassificationPlan {
   const aiById = new Map(aiSuggestions.map((suggestion) => [suggestion.bookmarkId, suggestion]));
@@ -229,7 +264,7 @@ export function generateClassificationPlan(
   let unchanged = 0;
 
   for (const bookmark of bookmarks) {
-    const suggestion = aiById.get(bookmark.id) ?? classifyBookmark(bookmark, customRules);
+    const suggestion = aiById.get(bookmark.id) ?? classifyBookmark(bookmark, customRules, mode);
     const targetFolder = normalizeFolderPath(suggestion.targetFolder);
 
     if (!shouldMove(bookmark.parentPath, targetFolder)) {
@@ -248,7 +283,7 @@ export function generateClassificationPlan(
       reason: suggestion.reason,
       ruleName: suggestion.ruleName,
       tags: [...suggestion.tags],
-      selected: suggestion.confidence >= 0.6,
+      selected: isSelectedByDefault(bookmark, suggestion, mode),
     });
   }
 
@@ -263,6 +298,7 @@ export function generateClassificationPlan(
   moves.sort((a, b) => b.confidence - a.confidence || a.bookmarkTitle.localeCompare(b.bookmarkTitle));
 
   return {
+    mode,
     moves,
     newFolders,
     unchanged,

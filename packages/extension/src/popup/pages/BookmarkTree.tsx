@@ -1,12 +1,18 @@
 import { useMemo, useState } from 'react';
-import type { BookmarkItem, FolderItem } from '../../shared/bookmark-types.js';
+import type {
+  BookmarkItem,
+  ClassificationMode,
+  FolderItem,
+} from '../../shared/bookmark-types.js';
 
 interface BookmarkTreeProps {
   bookmarks: BookmarkItem[];
   folders: FolderItem[];
   busy: boolean;
   canUndo: boolean;
-  onCreatePlan(): void;
+  classifyMode: ClassificationMode;
+  onClassifyModeChange(mode: ClassificationMode): void;
+  onCreatePlan(mode: ClassificationMode): void;
   onRefresh(): void;
   onUndo(): void;
 }
@@ -26,6 +32,8 @@ export default function BookmarkTree({
   folders,
   busy,
   canUndo,
+  classifyMode,
+  onClassifyModeChange,
   onCreatePlan,
   onRefresh,
   onUndo,
@@ -79,13 +87,44 @@ export default function BookmarkTree({
         <button onClick={onRefresh} disabled={busy}>
           刷新
         </button>
-        <button className="primary" onClick={onCreatePlan} disabled={busy || bookmarks.length === 0}>
-          整理书签
+        <button
+          className="primary"
+          onClick={() => onCreatePlan(classifyMode)}
+          disabled={busy || bookmarks.length === 0}
+        >
+          生成整理方案
         </button>
         <button onClick={onUndo} disabled={busy || !canUndo}>
           撤销上次整理
         </button>
       </div>
+
+      <fieldset className="mode-box">
+        <legend>整理模式</legend>
+        <label className="inline-check">
+          <input
+            checked={classifyMode === 'safe'}
+            name="classify-mode"
+            onChange={() => onClassifyModeChange('safe')}
+            type="radio"
+          />
+          <span>仅整理未分类书签</span>
+        </label>
+        <label className="inline-check">
+          <input
+            checked={classifyMode === 'full'}
+            name="classify-mode"
+            onChange={() => onClassifyModeChange('full')}
+            type="radio"
+          />
+          <span>重新分类全部书签</span>
+        </label>
+        <p>
+          {classifyMode === 'safe'
+            ? '安全模式不会移动已经在文件夹里的书签。'
+            : '全量模式会重新审视所有文件夹，生成的跨文件夹移动默认不勾选。'}
+        </p>
+      </fieldset>
 
       <label className="search">
         <span>搜索</span>

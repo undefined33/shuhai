@@ -52,6 +52,7 @@ describe('chrome bookmark utilities', () => {
   it('creates a backup, creates target folders, and moves selected bookmarks', async () => {
     setBookmarkTree(chromeTree());
     const plan: ClassificationPlan = {
+      mode: 'safe',
       generatedAt: new Date(0).toISOString(),
       moves: [
         {

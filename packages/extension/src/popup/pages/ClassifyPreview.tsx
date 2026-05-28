@@ -18,6 +18,16 @@ function confidenceLabel(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
 }
 
+function emptyReason(plan: ClassificationPlan): string {
+  if (plan.moves.length > 0) {
+    return '';
+  }
+
+  return plan.mode === 'safe'
+    ? '安全模式下，已有文件夹中的书签不会被重新分类。切换到“重新分类全部书签”可审视现有分类。'
+    : '全量模式没有发现需要调整的书签；AI 或规则认为当前分类已足够合理。';
+}
+
 export default function ClassifyPreview({
   plan,
   folders,
@@ -47,6 +57,13 @@ export default function ClassifyPreview({
           </button>
         </div>
       </div>
+
+      <div className="notice">
+        当前为{plan.mode === 'safe' ? '仅整理未分类书签' : '重新分类全部书签'}模式。
+        这里只是预览，点击“应用选中”前不会修改 Chrome 书签。
+      </div>
+
+      {plan.moves.length === 0 ? <div className="notice">{emptyReason(plan)}</div> : null}
 
       {plan.newFolders.length > 0 ? (
         <div className="notice">
@@ -89,6 +106,9 @@ export default function ClassifyPreview({
               <span>{move.reason === 'ai' ? 'AI' : move.ruleName ?? '规则'}</span>
               <span>置信度 {confidenceLabel(move.confidence)}</span>
               {move.confidence < 0.6 ? <span className="low">需手动确认</span> : null}
+              {plan.mode === 'full' && !move.selected ? (
+                <span className="low">跨文件夹移动默认不选中</span>
+              ) : null}
             </div>
           </article>
         ))}
