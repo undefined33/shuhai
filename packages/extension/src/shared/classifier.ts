@@ -29,8 +29,11 @@ interface RuleMatch {
 const ROOT_FOLDER_NAMES = new Set([
   '',
   'Bookmarks Bar',
+  'Bookmarks bar',
   'Other Bookmarks',
+  'Other bookmarks',
   'Mobile Bookmarks',
+  'Mobile bookmarks',
   '书签栏',
   '其他书签',
   '移动设备书签',
