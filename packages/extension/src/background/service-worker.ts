@@ -192,15 +192,29 @@ async function checkBookmarkHealth(options: {
   return { records, progress };
 }
 
-function storeCapture(capture: CapturedContent | undefined): void {
+function openSidePanelForTab(tab: chrome.tabs.Tab | undefined): Promise<void | undefined> {
+  const windowId = tab?.windowId;
+  if (typeof windowId === 'number' && chrome.sidePanel?.open) {
+    return chrome.sidePanel.open({ windowId }).catch(() => undefined);
+  }
+
+  return Promise.resolve(undefined);
+}
+
+async function storeCapture(
+  capture: CapturedContent | undefined,
+  tab?: chrome.tabs.Tab,
+): Promise<void> {
   if (!capture) {
     return;
   }
 
-  void savePendingCapture(capture);
+  await savePendingCapture(capture);
+  await openSidePanelForTab(tab);
 }
 
-function requestCapture(tabId: number | undefined, source: CapturedContent['source']): void {
+function requestCapture(tab: chrome.tabs.Tab | undefined, source: CapturedContent['source']): void {
+  const tabId = tab?.id;
   if (typeof tabId !== 'number') {
     return;
   }
@@ -213,7 +227,7 @@ function requestCapture(tabId: number | undefined, source: CapturedContent['sour
         return;
       }
 
-      storeCapture(response.data);
+      void storeCapture(response.data, tab);
     },
   );
 }
@@ -261,15 +275,7 @@ function requestArticleCapture(tab: chrome.tabs.Tab | undefined): void {
   }
 
   void executeArticleExtractor(tabId)
-    .then((capture) => savePendingCapture(capture))
-    .then(() => {
-      const windowId = tab?.windowId;
-      if (typeof windowId === 'number' && chrome.sidePanel?.open) {
-        return chrome.sidePanel.open({ windowId }).catch(() => undefined);
-      }
-
-      return undefined;
-    })
+    .then((capture) => storeCapture(capture, tab))
     .catch(() => undefined);
 }
 
@@ -513,12 +519,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 
   if (info.menuItemId === 'shuhai-save-tweet') {
-    requestCapture(tab?.id, 'twitter');
+    requestCapture(tab, 'twitter');
     return;
   }
 
   if (info.menuItemId === 'shuhai-save-weibo') {
-    requestCapture(tab?.id, 'weibo');
+    requestCapture(tab, 'weibo');
     return;
   }
 
