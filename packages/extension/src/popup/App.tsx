@@ -785,7 +785,7 @@ export default function App({ surface = 'popup' }: AppProps) {
           ) : null}
         </TabsContent>
 
-        <TabsContent className="min-h-0 flex-1" value="export">
+        <TabsContent className="min-h-0 flex-1" forceMount value="export">
           <ExportPage
             bookmarks={exportBookmarks}
             exportManifests={state?.exportManifests ?? []}

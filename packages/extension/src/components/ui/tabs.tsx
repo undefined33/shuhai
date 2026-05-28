@@ -40,7 +40,10 @@ export function TabsContent({
 }: ComponentPropsWithoutRef<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
-      className={cn('animate-page mt-3 focus-visible:outline-none', className)}
+      className={cn(
+        'animate-page mt-3 focus-visible:outline-none data-[state=inactive]:hidden',
+        className,
+      )}
       {...props}
     />
   );
