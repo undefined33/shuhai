@@ -107,9 +107,10 @@ export function VirtualList<T>({
           const index = range.startIndex + visibleIndex;
           return (
             <div
-              className="absolute left-0 right-0 px-0.5"
+              className="animate-list-item absolute left-0 right-0 px-0.5"
               key={index}
               style={{
+                animationDelay: `${Math.min(visibleIndex, 8) * 12}ms`,
                 height: itemHeight,
                 top: index * itemHeight,
               }}

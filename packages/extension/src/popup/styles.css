@@ -94,3 +94,7 @@ textarea {
 .animate-page {
   animation: fade-in 160ms ease-out;
 }
+
+.animate-list-item {
+  animation: fade-in 120ms ease-out both;
+}
