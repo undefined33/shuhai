@@ -59,12 +59,12 @@ interface OrganizePageProps {
   onClassifyModeChange(mode: ClassificationMode): void;
   onClearHealthRecords(): void;
   onCreatePlan(mode: ClassificationMode): void;
-  onDeleteHealthRecord(record: UrlHealthRecord): void;
   onDeleteManyHealthRecords(records: UrlHealthRecord[]): void;
   onDownloadBackup(backup: BackupRecord): void;
   onModeChange(mode: OrganizeMode): void;
   onMoveChange(move: MovePlan): void;
   onRefresh(): Promise<void>;
+  onRetryHealthRecord(record: UrlHealthRecord): void;
   onStartHealthCheck(): void;
   onUndo(): void;
   onUpdateManyHealthUrls(records: UrlHealthRecord[]): void;
@@ -104,12 +104,12 @@ export default function OrganizePage({
   onClassifyModeChange,
   onClearHealthRecords,
   onCreatePlan,
-  onDeleteHealthRecord,
   onDeleteManyHealthRecords,
   onDownloadBackup,
   onModeChange,
   onMoveChange,
   onRefresh,
+  onRetryHealthRecord,
   onStartHealthCheck,
   onUndo,
   onUpdateManyHealthUrls,
@@ -304,8 +304,8 @@ export default function OrganizePage({
             checking={healthChecking}
             onCancel={onCancelHealth}
             onClear={onClearHealthRecords}
-            onDelete={onDeleteHealthRecord}
             onDeleteMany={onDeleteManyHealthRecords}
+            onRetry={onRetryHealthRecord}
             onStart={startHealth}
             onUpdateManyUrls={onUpdateManyHealthUrls}
             onUpdateUrl={onUpdateHealthUrl}

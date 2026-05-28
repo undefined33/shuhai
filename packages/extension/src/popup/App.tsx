@@ -164,6 +164,21 @@ function formatDuration(ms: number | undefined): string {
   return `${Math.ceil(seconds / 60)} 分钟`;
 }
 
+function healthStatusLabel(status: UrlHealthRecord['status']): string {
+  switch (status) {
+    case 'alive':
+      return '正常';
+    case 'redirected':
+      return '重定向';
+    case 'dead':
+      return '死链';
+    case 'error':
+      return '检查失败';
+    case 'skipped':
+      return '已跳过';
+  }
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -807,27 +822,6 @@ export default function App({ surface = 'popup' }: AppProps) {
     await loadState();
   };
 
-  const deleteBookmarkFromHealth = async (record: UrlHealthRecord) => {
-    const confirmed = window.confirm(
-      `确定删除这个 Chrome 书签吗？\n\n${record.bookmarkTitle}\n${record.bookmarkUrl}`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await sendMessage<{ deleted: boolean; backupKey: string }>({
-        type: 'bookmark:delete',
-        id: record.bookmarkId,
-      });
-      setNotice({ kind: 'success', message: '已删除书签，并已创建备份。' });
-      await loadState();
-    } catch (deleteError) {
-      showError(deleteError);
-    }
-  };
-
   const deleteBookmarksFromHealth = async (records: UrlHealthRecord[]) => {
     if (records.length === 0) {
       return;
@@ -852,6 +846,37 @@ export default function App({ surface = 'popup' }: AppProps) {
       await loadState();
     } catch (deleteError) {
       showError(deleteError);
+    }
+  };
+
+  const retryHealthRecord = async (record: UrlHealthRecord) => {
+    setNotice(undefined);
+    try {
+      const granted = await requestHealthCheckPermission();
+      if (!granted) {
+        setNotice({
+          kind: 'warning',
+          message: '重试检查需要临时访问该书签地址，未授权时不会发起检测。',
+        });
+        return;
+      }
+
+      setBusyAction('health');
+      setStatus(`正在重新检查：${record.bookmarkTitle}`);
+      const result = await sendMessage<{ record: UrlHealthRecord; records: UrlHealthRecord[] }>({
+        type: 'health:retryOne',
+        bookmarkId: record.bookmarkId,
+      });
+      setHealthRecords(result.records);
+      setNotice({
+        kind: result.record.status === 'alive' ? 'success' : 'warning',
+        message: `已重新检查：${healthStatusLabel(result.record.status)}。`,
+      });
+      setStatus(`已重新检查：${record.bookmarkTitle}`);
+    } catch (retryError) {
+      showError(retryError);
+    } finally {
+      setBusyAction(undefined);
     }
   };
 
@@ -1137,7 +1162,6 @@ export default function App({ surface = 'popup' }: AppProps) {
             onClassifyModeChange={setClassifyMode}
             onClearHealthRecords={clearHealthRecords}
             onCreatePlan={createPlan}
-            onDeleteHealthRecord={deleteBookmarkFromHealth}
             onDeleteManyHealthRecords={deleteBookmarksFromHealth}
             onDownloadBackup={downloadBackup}
             onModeChange={setOrganizeMode}
@@ -1145,6 +1169,7 @@ export default function App({ surface = 'popup' }: AppProps) {
               setPlan((current) => (current ? replaceMove(current, move) : current))
             }
             onRefresh={loadState}
+            onRetryHealthRecord={retryHealthRecord}
             onStartHealthCheck={startHealthCheck}
             onUndo={undoLast}
             onUpdateHealthUrl={updateBookmarkUrlFromHealth}

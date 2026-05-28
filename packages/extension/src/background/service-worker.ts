@@ -41,6 +41,7 @@ import {
   saveUrlHealthRecords,
 } from '../utils/storage.js';
 import {
+  checkBookmarkUrl,
   checkBookmarkUrls,
 } from '../utils/url-health.js';
 
@@ -184,6 +185,50 @@ async function checkBookmarkHealth(options: {
   return { records, progress };
 }
 
+function replaceUrlHealthRecord(
+  records: UrlHealthRecord[],
+  nextRecord: UrlHealthRecord,
+): UrlHealthRecord[] {
+  const nextRecords: UrlHealthRecord[] = [];
+  let inserted = false;
+
+  for (const record of records) {
+    if (record.bookmarkId === nextRecord.bookmarkId) {
+      if (!inserted) {
+        nextRecords.push(nextRecord);
+        inserted = true;
+      }
+      continue;
+    }
+
+    nextRecords.push(record);
+  }
+
+  if (!inserted) {
+    nextRecords.push(nextRecord);
+  }
+
+  return nextRecords;
+}
+
+async function retryBookmarkHealth(
+  bookmarkId: string,
+): Promise<{ record: UrlHealthRecord; records: UrlHealthRecord[] }> {
+  const tree = await getFullTree();
+  const summary = flattenBookmarkTree(tree);
+  const bookmark = summary.bookmarks.find((item) => item.id === bookmarkId);
+
+  if (!bookmark) {
+    throw new Error('书签不存在，可能已经被删除');
+  }
+
+  const record = await checkBookmarkUrl(bookmark);
+  const records = replaceUrlHealthRecord(await getUrlHealthRecords(), record);
+  await saveUrlHealthRecords(records);
+
+  return { record, records };
+}
+
 function openSidePanelForTab(tab: chrome.tabs.Tab | undefined): Promise<void | undefined> {
   const windowId = tab?.windowId;
   if (typeof windowId === 'number' && chrome.sidePanel?.open) {
@@ -309,6 +354,8 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
       case 'health:clearRecords':
         await clearUrlHealthRecords();
         return { ok: true, data: { cleared: true } };
+      case 'health:retryOne':
+        return { ok: true, data: await retryBookmarkHealth(request.bookmarkId) };
       case 'bookmark:delete':
         return { ok: true, data: await removeBookmarkWithBackup(request.id) };
       case 'bookmark:updateUrl':

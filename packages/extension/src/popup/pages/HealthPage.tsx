@@ -2,8 +2,12 @@ import { useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  ArrowRightLeft,
   CheckCircle2,
+  Copy,
+  ExternalLink,
   Pause,
+  Pencil,
   RotateCw,
   ShieldAlert,
   Trash2,
@@ -31,8 +35,8 @@ interface HealthPageProps {
   records: UrlHealthRecord[];
   onCancel(): void;
   onClear(): void;
-  onDelete(record: UrlHealthRecord): void;
   onDeleteMany(records: UrlHealthRecord[]): void;
+  onRetry(record: UrlHealthRecord): void;
   onStart(): void;
   onUpdateManyUrls(records: UrlHealthRecord[]): void;
   onUpdateUrl(record: UrlHealthRecord, url: string): void;
@@ -175,11 +179,14 @@ export default function HealthPage({
   onCancel,
   onClear,
   onDeleteMany,
+  onRetry,
   onStart,
   onUpdateManyUrls,
   onUpdateUrl,
 }: HealthPageProps) {
   const [filter, setFilter] = useState<HealthFilter>('all');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [replacementById, setReplacementById] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const bookmarkById = useMemo(
@@ -251,7 +258,33 @@ export default function HealthPage({
 
   const selectFilter = (nextFilter: HealthFilter) => {
     setFilter(nextFilter);
+    setEditingId(null);
     setSelectedIds(new Set());
+  };
+
+  const copyUrl = (record: UrlHealthRecord) => {
+    if (!navigator.clipboard?.writeText) {
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(record.bookmarkUrl)
+      .then(() => {
+        setCopiedId(record.bookmarkId);
+        window.setTimeout(() => {
+          setCopiedId((current) => (current === record.bookmarkId ? null : current));
+        }, 1500);
+      })
+      .catch(() => undefined);
+  };
+
+  const openUrl = (url: string) => {
+    if (chrome.tabs?.create) {
+      void chrome.tabs.create({ active: false, url });
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const toggleSelected = (id: string, selected: boolean) => {
@@ -413,12 +446,12 @@ export default function HealthPage({
           )
         }
         estimatedHeight={520}
-        itemHeight={156}
+        itemHeight={120}
         items={rows}
         renderItem={(row) => {
           if (row.type === 'group') {
             return (
-              <div className="flex h-[148px] items-start gap-2 pt-2">
+              <div className="flex h-[112px] items-start gap-2 pt-2">
                 <Badge variant="secondary">{row.count}</Badge>
                 <div className="text-sm font-medium">{row.label}</div>
               </div>
@@ -428,9 +461,12 @@ export default function HealthPage({
           const record = row.record;
           const replacement = replacementById[record.bookmarkId] ?? '';
           const replacementValid = replacement === '' || isValidHttpUrl(replacement);
+          const editing = editingId === record.bookmarkId;
+          const canRetry = record.status !== 'alive' && record.status !== 'skipped';
+          const canUpdateToFinalUrl = record.status === 'redirected' && Boolean(record.finalUrl);
 
           return (
-            <div className="h-[148px] space-y-2 rounded-md border border-border p-2">
+            <div className="h-[112px] space-y-1.5 rounded-md border border-border p-2">
               <div className="flex items-center gap-2">
                 <Checkbox
                   checked={selectedIds.has(record.bookmarkId)}
@@ -450,36 +486,90 @@ export default function HealthPage({
               {record.error ? (
                 <div className="flex items-start gap-1.5 text-[11px] text-destructive">
                   <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span>{record.error}</span>
+                  <span className="truncate">{record.error}</span>
                 </div>
               ) : null}
-              <div
-                className={
-                  record.status === 'redirected' && record.finalUrl
-                    ? 'grid grid-cols-[1fr_auto_auto] gap-2'
-                    : 'grid grid-cols-[1fr_auto] gap-2'
-                }
-              >
-                <Input
-                  className={replacementValid ? 'h-8 text-xs' : 'h-8 border-destructive text-xs'}
-                  onChange={(event) => setReplacement(record.bookmarkId, event.target.value)}
-                  placeholder="粘贴新 URL"
-                  value={replacement}
-                />
-                <Button
-                  disabled={!replacement || !replacementValid}
-                  onClick={() => onUpdateUrl(record, replacement)}
-                  size="sm"
-                  variant="outline"
-                >
-                  替换
-                </Button>
-                {record.status === 'redirected' && record.finalUrl ? (
-                  <Button onClick={() => onUpdateUrl(record, record.finalUrl ?? record.bookmarkUrl)} size="sm">
-                    更新
+              {editing ? (
+                <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                  <Input
+                    autoFocus
+                    className={replacementValid ? 'h-8 text-xs' : 'h-8 border-destructive text-xs'}
+                    onChange={(event) => setReplacement(record.bookmarkId, event.target.value)}
+                    placeholder="粘贴新 URL"
+                    value={replacement}
+                  />
+                  <Button
+                    disabled={!replacement || !replacementValid}
+                    onClick={() => {
+                      setEditingId(null);
+                      onUpdateUrl(record, replacement);
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    替换
                   </Button>
-                ) : null}
-              </div>
+                  <Button onClick={() => setEditingId(null)} size="sm" variant="ghost">
+                    取消
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    aria-label="打开链接"
+                    onClick={() => openUrl(record.bookmarkUrl)}
+                    size="icon"
+                    title="打开链接"
+                    variant="ghost"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    aria-label="复制 URL"
+                    onClick={() => copyUrl(record)}
+                    size="icon"
+                    title="复制 URL"
+                    variant="ghost"
+                  >
+                    {copiedId === record.bookmarkId ? (
+                      <CheckCircle2 className="h-4 w-4 text-primary" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    aria-label="修正链接"
+                    onClick={() => setEditingId(record.bookmarkId)}
+                    size="icon"
+                    title="修正链接"
+                    variant="ghost"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {canRetry ? (
+                    <Button
+                      aria-label="重试检查"
+                      onClick={() => onRetry(record)}
+                      size="icon"
+                      title="重试检查"
+                      variant="ghost"
+                    >
+                      <RotateCw className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                  {canUpdateToFinalUrl ? (
+                    <Button
+                      aria-label="更新到跳转"
+                      onClick={() => onUpdateUrl(record, record.finalUrl ?? record.bookmarkUrl)}
+                      size="icon"
+                      title="更新到跳转"
+                      variant="ghost"
+                    >
+                      <ArrowRightLeft className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
+              )}
             </div>
           );
         }}

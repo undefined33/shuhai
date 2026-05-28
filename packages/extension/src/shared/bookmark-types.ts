@@ -313,6 +313,7 @@ export type ExtensionRequest =
   | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
   | { type: 'health:clearRecords' }
+  | { type: 'health:retryOne'; bookmarkId: string }
   | { type: 'bookmark:delete'; id: string }
   | { type: 'bookmark:updateUrl'; id: string; url: string }
   | { type: 'backups:list' };
@@ -329,6 +330,7 @@ export type ExtensionResponse =
   | { ok: true; data: CapturedContent[] }
   | { ok: true; data: { removed: boolean } }
   | { ok: true; data: { cleared: boolean } }
+  | { ok: true; data: { record: UrlHealthRecord; records: UrlHealthRecord[] } }
   | { ok: true; data: { deleted: boolean; backupKey: string } }
   | { ok: true; data: { updated: boolean; backupKey: string } }
   | { ok: false; error: string };
