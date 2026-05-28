@@ -75,6 +75,15 @@ function moveCardClass(move: MovePlan, focused: boolean): string {
   return 'h-[168px] transition hover:border-primary/40';
 }
 
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 interface FolderComboboxProps {
   folders: FolderItem[];
   value: string;
@@ -198,6 +207,10 @@ export default function ClassifyPreview({
   };
 
   const handleKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isTypingTarget(event.target)) {
+      return;
+    }
+
     if (rows.length === 0) {
       return;
     }

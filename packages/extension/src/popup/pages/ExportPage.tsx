@@ -116,6 +116,15 @@ export default function ExportPage({
       .catch(() => setHandle(null));
   }, []);
 
+  useEffect(() => {
+    if (!status || error || busy) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setStatus(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [busy, error, status]);
+
   const selectedCapture = useMemo(
     () => pendingCaptures.find((capture) => capture.id === selectedCaptureId) ?? pendingCaptures[0],
     [pendingCaptures, selectedCaptureId],
