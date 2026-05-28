@@ -18,6 +18,8 @@ AI-driven bookmark knowledge management tool. Collects bookmarks from Chrome/Twi
 ```bash
 pnpm install          # Install all dependencies
 pnpm test             # Run all tests
+pnpm test:coverage    # Run tests with coverage thresholds
+pnpm test:e2e         # Run extension E2E tests after building it
 pnpm lint             # Lint all packages
 pnpm typecheck        # Type-check all packages
 pnpm build            # Build all packages
@@ -35,6 +37,14 @@ All dependency installations MUST follow these rules:
 - Only install from official sources (npmjs.com)
 - Single-maintainer packages created < 6 months ago require human approval
 - Binary downloads must be scanned via VirusTotal first
+
+## Quality Gates
+
+- **Pre-commit**: husky + lint-staged run ESLint and Prettier on staged files.
+- **CI**: GitHub Actions runs lint, typecheck, coverage tests, and build on push/PR.
+- **Coverage**: `pnpm test:coverage` uses Vitest coverage thresholds as the current baseline.
+- **E2E**: run `pnpm --filter @shuhai/extension run build && pnpm test:e2e` locally.
+- **Commit rule**: commits should be made only after `pnpm lint && pnpm typecheck && pnpm test` passes.
 
 ## Code Style
 
