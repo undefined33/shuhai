@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock, Eye, FolderOpen, Inbox, Save, Trash2 } from 'lucide-react';
+import { Clock, Eye, FolderOpen, Inbox, MessageCircle, Save, Trash2 } from 'lucide-react';
 import type {
   AppSettings,
   CapturedContent,
@@ -30,6 +30,7 @@ interface CollectionPageProps {
   pendingCaptures: CapturedContent[];
   settings: AppSettings;
   onClearPendingCapture(): Promise<void>;
+  onCaptureCurrentSocial(source: 'twitter' | 'weibo'): Promise<CapturedContent>;
   onRemovePendingCapture(id: string): Promise<void>;
   onRefresh(): Promise<void>;
 }
@@ -54,14 +55,55 @@ function sourceLabel(source: CapturedContent['source']): string {
   return '微博';
 }
 
+function captureAuthorLine(capture: CapturedContent): string {
+  const parts = [capture.author, capture.handle].filter(Boolean);
+  return parts.join(' ');
+}
+
+function formatCaptureTime(value: string): string {
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function activeSocialSource(url: string): 'twitter' | 'weibo' | undefined {
+  try {
+    const parsed = new URL(url);
+    if (
+      (parsed.hostname === 'x.com' || parsed.hostname.endsWith('.x.com') ||
+        parsed.hostname === 'twitter.com' ||
+        parsed.hostname.endsWith('.twitter.com')) &&
+      /\/[^/]+\/status\/\d+/.test(parsed.pathname)
+    ) {
+      return 'twitter';
+    }
+
+    if (
+      (parsed.hostname === 'weibo.com' || parsed.hostname.endsWith('.weibo.com') ||
+        parsed.hostname === 'm.weibo.cn') &&
+      (/\/detail\/[^/?#]+/.test(parsed.pathname) || /\/status\/[^/?#]+/.test(parsed.pathname))
+    ) {
+      return 'weibo';
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 export default function CollectionPage({
   exportManifests,
   pendingCaptures,
   settings,
   onClearPendingCapture,
+  onCaptureCurrentSocial,
   onRemovePendingCapture,
   onRefresh,
 }: CollectionPageProps) {
+  const [activeSource, setActiveSource] = useState<'twitter' | 'weibo' | undefined>();
   const [handle, setHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [directoryPrefix, setDirectoryPrefix] = useState(settings.exportDirectory);
   const [status, setStatus] = useState('');
@@ -79,6 +121,17 @@ export default function CollectionPage({
     void getVaultHandle()
       .then(setHandle)
       .catch(() => setHandle(null));
+  }, []);
+
+  useEffect(() => {
+    if (!chrome.tabs?.query) {
+      return;
+    }
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tabUrl = tabs[0]?.url ?? '';
+      setActiveSource(activeSocialSource(tabUrl));
+    });
   }, []);
 
   useEffect(() => {
@@ -192,6 +245,21 @@ export default function CollectionPage({
     }
   };
 
+  const captureCurrentSocial = async (source: 'twitter' | 'weibo') => {
+    setBusy(true);
+    setError('');
+    try {
+      const capture = await onCaptureCurrentSocial(source);
+      setSelectedCaptureId(capture.id);
+      setStatus(`${sourceLabel(source)}已加入待保存队列。`);
+      await onRefresh();
+    } catch (captureError) {
+      setError(captureError instanceof Error ? captureError.message : String(captureError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="flex h-full min-h-0 flex-col gap-3">
       {error ? <Alert variant="destructive">{error}</Alert> : null}
@@ -242,6 +310,32 @@ export default function CollectionPage({
           <p className="text-xs text-muted-foreground">
             在网页右键保存文章、推文或微博后，内容会先进入这里。确认后才写入 Vault。
           </p>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              disabled={busy || activeSource !== 'twitter'}
+              onClick={() => captureCurrentSocial('twitter')}
+              size="sm"
+              title={
+                activeSource === 'twitter'
+                  ? '保存当前推文'
+                  : '请先打开一条推文详情页'
+              }
+              variant="outline"
+            >
+              <MessageCircle className="h-4 w-4" />
+              保存当前推文
+            </Button>
+            <Button
+              disabled={busy || activeSource !== 'weibo'}
+              onClick={() => captureCurrentSocial('weibo')}
+              size="sm"
+              title={activeSource === 'weibo' ? '保存当前微博' : '请先打开一条微博详情页'}
+              variant="outline"
+            >
+              <MessageCircle className="h-4 w-4" />
+              保存当前微博
+            </Button>
+          </div>
 
           {pendingCaptures.length === 0 ? (
             <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
@@ -271,8 +365,11 @@ export default function CollectionPage({
                     </div>
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                       <span>{capture.siteName ?? hostFromUrl(capture.url)}</span>
+                      {captureAuthorLine(capture) ? (
+                        <span className="truncate">{captureAuthorLine(capture)}</span>
+                      ) : null}
                       {capture.wordCount ? <span>{capture.wordCount} 字</span> : null}
-                      <span>{capture.media.length} 图</span>
+                      <span>{capture.media.length} 媒体</span>
                     </div>
                   </button>
                 ))}
@@ -305,6 +402,7 @@ export default function CollectionPage({
                     <div className="min-w-0 flex-1 truncate text-sm font-medium">
                       预览：{selectedCapture.title}
                     </div>
+                    <Badge variant="outline">{sourceLabel(selectedCapture.source)}</Badge>
                     <Button
                       onClick={() => setPreviewCaptureOpen(true)}
                       size="sm"
@@ -316,11 +414,34 @@ export default function CollectionPage({
                   </div>
 
                   <div className="max-h-72 overflow-y-auto rounded-md bg-card p-3 text-xs leading-5 text-foreground">
+                    <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                      {captureAuthorLine(selectedCapture) ? (
+                        <span>{captureAuthorLine(selectedCapture)}</span>
+                      ) : null}
+                      {selectedCapture.created ? <span>{selectedCapture.created}</span> : null}
+                      <span>捕获：{formatCaptureTime(selectedCapture.capturedAt)}</span>
+                    </div>
                     <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                       {selectedCapture.text.slice(0, 2400)}
                       {selectedCapture.text.length > 2400 ? '\n\n...' : ''}
                     </div>
                   </div>
+
+                  {selectedCapture.media.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <Label>媒体链接</Label>
+                      <div className="space-y-1 rounded-md bg-card p-2 text-[11px] text-muted-foreground">
+                        {selectedCapture.media.slice(0, 4).map((item, index) => (
+                          <div className="truncate" key={`${item.url}-${index}`}>
+                            {item.type === 'video' ? '视频' : '图片'}：{item.url}
+                          </div>
+                        ))}
+                        {selectedCapture.media.length > 4 ? (
+                          <div>还有 {selectedCapture.media.length - 4} 条，点击放大查看。</div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-1.5">
                     <Label>标签</Label>
@@ -378,14 +499,36 @@ export default function CollectionPage({
               {selectedCapture
                 ? `${selectedCapture.siteName ?? hostFromUrl(selectedCapture.url)} · ${
                     selectedCapture.wordCount ?? 0
-                  } 字 · ${selectedCapture.media.length} 图`
+                  } 字 · ${selectedCapture.media.length} 媒体`
                 : ''}
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border bg-card p-3 text-sm leading-6">
+            {selectedCapture ? (
+              <div className="mb-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">{sourceLabel(selectedCapture.source)}</Badge>
+                {captureAuthorLine(selectedCapture) ? (
+                  <span>{captureAuthorLine(selectedCapture)}</span>
+                ) : null}
+                {selectedCapture.created ? <span>{selectedCapture.created}</span> : null}
+                <span>捕获：{formatCaptureTime(selectedCapture.capturedAt)}</span>
+              </div>
+            ) : null}
             <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
               {selectedCapture?.text}
             </div>
+            {selectedCapture && selectedCapture.media.length > 0 ? (
+              <div className="mt-4 space-y-2 border-t border-border pt-3">
+                <div className="text-xs font-medium">媒体链接</div>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  {selectedCapture.media.map((item, index) => (
+                    <div className="break-all" key={`${item.url}-${index}`}>
+                      {item.type === 'video' ? '视频' : '图片'}：{item.url}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

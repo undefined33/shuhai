@@ -146,11 +146,12 @@ describe('content extractors', () => {
       'Tweet title',
       {
         '[data-testid="User-Name"] a[href^="/"]': new FakeElement('@alice'),
+        '[data-testid="tweetText"]': new FakeElement('hello payload'),
         time: new FakeElement('', { datetime: '2026-05-28T00:00:00Z' }),
       },
       {
         '[data-testid="tweetText"]': [new FakeElement('hello payload')],
-        'img[src*="twimg.com"]': [
+        'article img[src*="twimg.com"], img[src*="twimg.com"]': [
           new FakeElement('', {
             src: 'https://pbs.twimg.com/media/a.jpg',
             alt: 'sample',
@@ -179,7 +180,8 @@ describe('content extractors', () => {
         time: new FakeElement('2026-05-28'),
       },
       {
-        img: [
+        'a, button, span': [],
+        '[class*="pic"] img, [class*="media"] img': [
           new FakeElement('', {
             src: 'https://wx1.sinaimg.cn/large/a.jpg',
             alt: 'sample',

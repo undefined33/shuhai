@@ -262,6 +262,7 @@ export interface ExportPreview {
 }
 
 export interface CapturedMedia {
+  type?: 'image' | 'video';
   url: string;
   alt?: string;
 }
@@ -312,6 +313,7 @@ export type ExtensionRequest =
   | { type: 'capture:getPending' }
   | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
+  | { type: 'capture:currentSocial'; source: 'twitter' | 'weibo' }
   | { type: 'health:clearRecords' }
   | { type: 'health:retryOne'; bookmarkId: string }
   | { type: 'bookmark:delete'; id: string }
@@ -328,6 +330,7 @@ export type ExtensionResponse =
   | { ok: true; data: { undone: number } }
   | { ok: true; data: { onboarded: boolean } }
   | { ok: true; data: CapturedContent[] }
+  | { ok: true; data: { capture: CapturedContent } }
   | { ok: true; data: { removed: boolean } }
   | { ok: true; data: { cleared: boolean } }
   | { ok: true; data: { record: UrlHealthRecord; records: UrlHealthRecord[] } }

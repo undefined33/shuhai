@@ -811,6 +811,16 @@ export default function App({ surface = 'popup' }: AppProps) {
     await loadState();
   };
 
+  const captureCurrentSocial = async (source: 'twitter' | 'weibo') => {
+    const result = await sendMessage<{ capture: CapturedContent }>({
+      type: 'capture:currentSocial',
+      source,
+    });
+    await loadState();
+
+    return result.capture;
+  };
+
   const removePendingCapture = async (id: string) => {
     await sendMessage<{ removed: boolean }>({ type: 'capture:removePending', id });
     await loadState();
@@ -1185,6 +1195,7 @@ export default function App({ surface = 'popup' }: AppProps) {
         <TabsContent className="min-h-0 flex-1" forceMount value="collect">
           <CollectionPage
             exportManifests={state?.exportManifests ?? []}
+            onCaptureCurrentSocial={captureCurrentSocial}
             onClearPendingCapture={clearPendingCapture}
             onRefresh={loadState}
             onRemovePendingCapture={removePendingCapture}

@@ -45,6 +45,14 @@ import {
   checkBookmarkUrls,
 } from '../utils/url-health.js';
 
+type SocialCaptureSource = 'twitter' | 'weibo';
+
+interface SocialExtractResponse {
+  ok?: boolean;
+  data?: CapturedContent;
+  error?: string;
+}
+
 let activeClassification: AbortController | undefined;
 let activeHealthCheck: AbortController | undefined;
 
@@ -241,32 +249,140 @@ function openSidePanelForTab(tab: chrome.tabs.Tab | undefined): Promise<void | u
 async function storeCapture(
   capture: CapturedContent | undefined,
   tab?: chrome.tabs.Tab,
-): Promise<void> {
+): Promise<CapturedContent | undefined> {
   if (!capture) {
-    return;
+    return undefined;
   }
 
   await savePendingCapture(capture);
   await openSidePanelForTab(tab);
+
+  return capture;
 }
 
-function requestCapture(tab: chrome.tabs.Tab | undefined, source: CapturedContent['source']): void {
-  const tabId = tab?.id;
-  if (typeof tabId !== 'number') {
-    return;
+function socialDetailMessage(source: SocialCaptureSource): string {
+  return source === 'twitter'
+    ? '请先打开一条推文的详情页（点击推文进入）'
+    : '请先打开一条微博的详情页';
+}
+
+function matchesSocialSource(tabUrl: string | undefined, source: SocialCaptureSource): boolean {
+  if (!tabUrl) {
+    return false;
   }
 
-  chrome.tabs.sendMessage(
-    tabId,
-    { type: 'social:extract', source },
-    (response: { ok?: boolean; data?: CapturedContent } | undefined) => {
-      if (chrome.runtime.lastError || !response?.ok) {
+  try {
+    const url = new URL(tabUrl);
+    if (source === 'twitter') {
+      return (
+        (url.hostname === 'x.com' || url.hostname.endsWith('.x.com') ||
+          url.hostname === 'twitter.com' ||
+          url.hostname.endsWith('.twitter.com')) &&
+        /\/[^/]+\/status\/\d+/.test(url.pathname)
+      );
+    }
+
+    return (
+      (url.hostname === 'weibo.com' || url.hostname.endsWith('.weibo.com') ||
+        url.hostname === 'm.weibo.cn') &&
+      (/\/detail\/[^/?#]+/.test(url.pathname) || /\/status\/[^/?#]+/.test(url.pathname))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function contentScriptFileForSource(source: SocialCaptureSource): string {
+  return source === 'twitter' ? 'content/twitter.js' : 'content/weibo.js';
+}
+
+function sendSocialExtractMessage(
+  tabId: number,
+  source: SocialCaptureSource,
+): Promise<SocialExtractResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: 'social:extract', source }, (response: SocialExtractResponse | undefined) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) {
+        reject(new Error(error));
         return;
       }
 
-      void storeCapture(response.data, tab);
-    },
-  );
+      resolve(response ?? { ok: false, error: '页面结构可能已更新，提取失败。请反馈此问题。' });
+    });
+  });
+}
+
+async function executeSocialExtractor(tabId: number, source: SocialCaptureSource): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: [contentScriptFileForSource(source)],
+  });
+}
+
+async function extractSocialCapture(
+  tab: chrome.tabs.Tab | undefined,
+  source: SocialCaptureSource,
+): Promise<CapturedContent> {
+  const tabId = tab?.id;
+  if (typeof tabId !== 'number') {
+    throw new Error('无法识别当前标签页');
+  }
+
+  if (!matchesSocialSource(tab?.url, source)) {
+    throw new Error(socialDetailMessage(source));
+  }
+
+  let response: SocialExtractResponse;
+  try {
+    response = await sendSocialExtractMessage(tabId, source);
+  } catch {
+    await executeSocialExtractor(tabId, source);
+    response = await sendSocialExtractMessage(tabId, source);
+  }
+
+  if (!response.ok || !response.data) {
+    throw new Error(response.error ?? '页面结构可能已更新，提取失败。请反馈此问题。');
+  }
+
+  if (!response.data.text.trim()) {
+    throw new Error('页面结构可能已更新，提取失败。请反馈此问题。');
+  }
+
+  return response.data;
+}
+
+async function captureSocialFromTab(
+  tab: chrome.tabs.Tab | undefined,
+  source: SocialCaptureSource,
+): Promise<CapturedContent> {
+  const capture = await extractSocialCapture(tab, source);
+  await storeCapture(capture, tab);
+
+  return capture;
+}
+
+function requestCapture(tab: chrome.tabs.Tab | undefined, source: SocialCaptureSource): void {
+  void captureSocialFromTab(tab, source).catch(() => undefined);
+}
+
+function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) {
+        reject(new Error(error));
+        return;
+      }
+
+      resolve(tabs[0]);
+    });
+  });
+}
+
+async function captureCurrentSocial(source: SocialCaptureSource): Promise<{ capture: CapturedContent }> {
+  const capture = await captureSocialFromTab(await getActiveTab(), source);
+  return { capture };
 }
 
 async function executeArticleExtractor(tabId: number): Promise<CapturedContent> {
@@ -346,6 +462,8 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         return { ok: true, data: { onboarded: request.onboarded } };
       case 'capture:getPending':
         return { ok: true, data: await getPendingCaptures() };
+      case 'capture:currentSocial':
+        return { ok: true, data: await captureCurrentSocial(request.source) };
       case 'capture:removePending':
         return { ok: true, data: { removed: await removePendingCapture(request.id) } };
       case 'capture:clearPending':

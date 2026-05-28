@@ -1,9 +1,20 @@
 import type { CapturedContent, CapturedMedia } from '../shared/bookmark-types.js';
 
-function textFromFirst(documentRef: Document, selectors: string[]): string {
+type QueryRoot = Pick<ParentNode, 'querySelector' | 'querySelectorAll'> & {
+  textContent?: string | null;
+};
+
+const TWITTER_DETAIL_ERROR = '请先打开一条推文的详情页（点击推文进入）';
+const TWITTER_STRUCTURE_ERROR = '页面结构可能已更新，提取失败。请反馈此问题。';
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').replace(/[ \t]+/g, ' ').trim();
+}
+
+function textFromFirst(root: QueryRoot, selectors: string[]): string {
   for (const selector of selectors) {
-    const element = documentRef.querySelector(selector);
-    const text = element?.textContent?.trim();
+    const element = root.querySelector(selector);
+    const text = normalizeText(element?.textContent);
     if (text) {
       return text;
     }
@@ -12,58 +23,169 @@ function textFromFirst(documentRef: Document, selectors: string[]): string {
   return '';
 }
 
-function collectTweetText(documentRef: Document): string {
-  const tweetTexts = Array.from(documentRef.querySelectorAll('[data-testid="tweetText"]'))
-    .map((element) => element.textContent?.trim() ?? '')
+function textFromAll(root: QueryRoot, selector: string): string[] {
+  return Array.from(root.querySelectorAll(selector))
+    .map((element) => normalizeText(element.textContent))
     .filter(Boolean);
+}
 
-  if (tweetTexts.length > 0) {
-    return tweetTexts.join('\n\n');
+function isTwitterStatusUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.hostname === 'x.com' || parsed.hostname.endsWith('.x.com') ||
+        parsed.hostname === 'twitter.com' ||
+        parsed.hostname.endsWith('.twitter.com')) &&
+      /\/[^/]+\/status\/\d+/.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function statusIdFromUrl(url: string): string {
+  const match = url.match(/\/status\/(\d+)/);
+  return match?.[1] ?? crypto.randomUUID();
+}
+
+function handleFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.split('/').filter(Boolean)[0] ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function extractHandle(documentRef: Document, url: string): string {
+  const handles = textFromAll(documentRef, '[data-testid="User-Name"] a[href^="/"]');
+  const explicitHandle = handles.find((line) => line.startsWith('@'));
+  if (explicitHandle) {
+    return explicitHandle;
   }
 
-  return documentRef.body?.textContent?.trim().slice(0, 4000) ?? '';
+  const href = documentRef
+    .querySelector('[data-testid="User-Name"] a[href^="/"]')
+    ?.getAttribute('href');
+  const pathHandle = href?.split('/').filter(Boolean)[0] ?? handleFromUrl(url);
+
+  return pathHandle ? `@${pathHandle}` : '';
+}
+
+function extractDisplayName(documentRef: Document, handle: string): string {
+  const displayName = textFromFirst(documentRef, [
+    '[data-testid="User-Name"] [dir="ltr"] span span',
+    '[data-testid="User-Name"] [dir="ltr"] span',
+    '[data-testid="User-Name"]',
+  ]);
+  const fallback = displayName
+    .split(/\n|(?=@)/)
+    .map((line) => normalizeText(line))
+    .find((line) => line && !line.startsWith('@') && line !== handle);
+
+  return fallback ?? '';
+}
+
+function collectTweetText(documentRef: Document): string {
+  const text = textFromFirst(documentRef, [
+    'article [data-testid="tweetText"]',
+    '[data-testid="tweetText"]',
+  ]);
+
+  if (!text) {
+    throw new Error(TWITTER_STRUCTURE_ERROR);
+  }
+
+  return text;
+}
+
+function appendQuoteTweet(documentRef: Document, text: string): string {
+  const quote = textFromFirst(documentRef, [
+    'article [data-testid="quoteTweet"] [data-testid="tweetText"]',
+    '[data-testid="quoteTweet"] [data-testid="tweetText"]',
+    '[data-testid="quoteTweet"]',
+  ]);
+
+  if (!quote) {
+    return text;
+  }
+
+  return `${text}\n\n---\n引用推文：\n${quote}`;
+}
+
+function numericAttribute(element: Element, name: string): number {
+  const value = Number(element.getAttribute(name) ?? '');
+  return Number.isFinite(value) ? value : 0;
+}
+
+function imageDimension(image: Element, key: 'height' | 'width'): number {
+  const imageElement = image as HTMLImageElement;
+  const natural = key === 'height' ? imageElement.naturalHeight : imageElement.naturalWidth;
+  return natural || numericAttribute(image, key);
+}
+
+function isSmallImage(image: Element): boolean {
+  const width = imageDimension(image, 'width');
+  const height = imageDimension(image, 'height');
+
+  return width > 0 && height > 0 && width < 100 && height < 100;
 }
 
 function collectMedia(documentRef: Document): CapturedMedia[] {
   const seen = new Set<string>();
   const media: CapturedMedia[] = [];
 
-  for (const image of Array.from(documentRef.querySelectorAll('img[src*="twimg.com"]'))) {
+  for (const image of Array.from(
+    documentRef.querySelectorAll('article img[src*="twimg.com"], img[src*="twimg.com"]'),
+  )) {
     const url = image.getAttribute('src') ?? '';
-    if (!url || seen.has(url)) {
+    if (
+      !url ||
+      seen.has(url) ||
+      url.includes('profile_images') ||
+      url.includes('emoji') ||
+      isSmallImage(image)
+    ) {
       continue;
     }
 
     seen.add(url);
     media.push({
+      type: 'image',
       url,
       alt: image.getAttribute('alt') ?? undefined,
+    });
+  }
+
+  if (documentRef.querySelector('[data-testid="videoPlayer"]')) {
+    media.push({
+      type: 'video',
+      url: '(视频无法直接提取)',
+      alt: '视频无法直接提取',
     });
   }
 
   return media.slice(0, 12);
 }
 
-function statusIdFromUrl(url: string): string {
-  const match = url.match(/status\/(\d+)/);
-  return match?.[1] ?? crypto.randomUUID();
-}
-
 export function extractTwitterContent(documentRef: Document, url: string): CapturedContent {
-  const handle = textFromFirst(documentRef, [
-    '[data-testid="User-Name"] a[href^="/"]',
-    'article a[href^="/"]',
-  ]);
+  if (!isTwitterStatusUrl(url)) {
+    throw new Error(TWITTER_DETAIL_ERROR);
+  }
+
+  const handle = extractHandle(documentRef, url);
+  const author = extractDisplayName(documentRef, handle) || handle;
   const created = documentRef.querySelector('time')?.getAttribute('datetime') ?? undefined;
-  const text = collectTweetText(documentRef);
-  const title = handle ? `${handle} - ${text.slice(0, 40) || 'Tweet'}` : documentRef.title;
+  const text = appendQuoteTweet(documentRef, collectTweetText(documentRef));
+  const titleAuthor = author || handle;
+  const title = titleAuthor ? `${titleAuthor} - ${text.slice(0, 40) || 'Tweet'}` : documentRef.title;
 
   return {
     id: `twitter-${statusIdFromUrl(url)}`,
     source: 'twitter',
     title,
     url,
-    author: handle,
+    author,
     handle,
     created,
     text,
@@ -85,10 +207,18 @@ if (twitterWindow && !twitterWindow.__shuhaiTwitterExtractorInstalled) {
       return false;
     }
 
-    sendResponse({
-      ok: true,
-      data: extractTwitterContent(document, location.href),
-    });
+    try {
+      sendResponse({
+        ok: true,
+        data: extractTwitterContent(document, location.href),
+      });
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : TWITTER_STRUCTURE_ERROR,
+      });
+    }
+
     return true;
   });
 }
