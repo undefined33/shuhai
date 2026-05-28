@@ -104,6 +104,10 @@ const storage = {
       callback?.();
     }),
   },
+  onChanged: {
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  },
 };
 
 const chromeMock = {

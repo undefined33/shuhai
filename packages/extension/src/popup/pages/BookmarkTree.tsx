@@ -1,21 +1,17 @@
-import { useMemo, useState } from 'react';
-import { ChevronRight, Folder, HelpCircle, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
+import type { KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronRight, Folder, HelpCircle, Link2, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
 import type {
   BookmarkItem,
   ClassificationMode,
   FolderItem,
 } from '../../shared/bookmark-types.js';
+import { VirtualList } from '../../components/VirtualList.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '../../components/ui/collapsible.js';
 import { Command, CommandInput } from '../../components/ui/command.js';
 import { Label } from '../../components/ui/label.js';
-import { ScrollArea } from '../../components/ui/scroll-area.js';
 import {
   Select,
   SelectContent,
@@ -43,6 +39,19 @@ interface BookmarkTreeProps {
   surface?: 'popup' | 'sidepanel';
 }
 
+type FlatRow =
+  | {
+      type: 'folder';
+      folder: FolderItem;
+      count: number;
+      expanded: boolean;
+    }
+  | {
+      type: 'bookmark';
+      bookmark: BookmarkItem;
+      depth: number;
+    };
+
 function countByFolder(bookmarks: BookmarkItem[]): Map<string, number> {
   const counts = new Map<string, number>();
 
@@ -51,6 +60,96 @@ function countByFolder(bookmarks: BookmarkItem[]): Map<string, number> {
   }
 
   return counts;
+}
+
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+
+  return debounced;
+}
+
+function includesKeyword(value: string, keyword: string): boolean {
+  return value.toLowerCase().includes(keyword);
+}
+
+function highlightedText(value: string, keyword: string) {
+  if (!keyword) {
+    return value;
+  }
+
+  const lowerValue = value.toLowerCase();
+  const index = lowerValue.indexOf(keyword);
+  if (index < 0) {
+    return value;
+  }
+
+  return (
+    <>
+      {value.slice(0, index)}
+      <mark className="rounded bg-amber-200 px-0.5 text-amber-950">
+        {value.slice(index, index + keyword.length)}
+      </mark>
+      {value.slice(index + keyword.length)}
+    </>
+  );
+}
+
+function flattenVisibleRows(
+  folders: FolderItem[],
+  bookmarks: BookmarkItem[],
+  collapsed: Set<string>,
+  keyword: string,
+): FlatRow[] {
+  const rows: FlatRow[] = [];
+  const bookmarksByFolder = new Map<string, BookmarkItem[]>();
+
+  for (const bookmark of bookmarks) {
+    const list = bookmarksByFolder.get(bookmark.parentPath) ?? [];
+    list.push(bookmark);
+    bookmarksByFolder.set(bookmark.parentPath, list);
+  }
+
+  for (const folder of folders.filter((item) => item.path)) {
+    const folderBookmarks = bookmarksByFolder.get(folder.path) ?? [];
+    const matchingBookmarks = keyword
+      ? folderBookmarks.filter(
+          (bookmark) =>
+            includesKeyword(bookmark.title, keyword) ||
+            includesKeyword(bookmark.url, keyword) ||
+            includesKeyword(bookmark.parentPath, keyword),
+        )
+      : folderBookmarks;
+    const folderMatches = keyword ? includesKeyword(folder.path, keyword) : true;
+
+    if (!folderMatches && matchingBookmarks.length === 0) {
+      continue;
+    }
+
+    const expanded = keyword ? true : !collapsed.has(folder.path);
+    rows.push({
+      count: folderBookmarks.length,
+      expanded,
+      folder,
+      type: 'folder',
+    });
+
+    if (expanded) {
+      for (const bookmark of matchingBookmarks) {
+        rows.push({
+          bookmark,
+          depth: 1,
+          type: 'bookmark',
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 export default function BookmarkTree({
@@ -67,35 +166,18 @@ export default function BookmarkTree({
 }: BookmarkTreeProps) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const keyword = debouncedQuery.trim().toLowerCase();
   const counts = useMemo(() => countByFolder(bookmarks), [bookmarks]);
-  const visibleFolders = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    const filtered = folders.filter((folder) => folder.path);
+  const rows = useMemo(
+    () => flattenVisibleRows(folders, bookmarks, collapsed, keyword),
+    [bookmarks, collapsed, folders, keyword],
+  );
 
-    if (!keyword) {
-      return filtered;
-    }
-
-    return filtered.filter((folder) => folder.path.toLowerCase().includes(keyword));
-  }, [folders, query]);
-
-  const visibleBookmarks = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    const limit = surface === 'sidepanel' ? 260 : 120;
-
-    if (!keyword) {
-      return bookmarks.slice(0, limit);
-    }
-
-    return bookmarks
-      .filter(
-        (bookmark) =>
-          bookmark.title.toLowerCase().includes(keyword) ||
-          bookmark.url.toLowerCase().includes(keyword) ||
-          bookmark.parentPath.toLowerCase().includes(keyword),
-      )
-      .slice(0, limit);
-  }, [bookmarks, query, surface]);
+  useEffect(() => {
+    setFocusedIndex((current) => Math.min(current, Math.max(0, rows.length - 1)));
+  }, [rows.length]);
 
   const toggleFolder = (path: string) => {
     setCollapsed((current) => {
@@ -107,6 +189,32 @@ export default function BookmarkTree({
       }
       return next;
     });
+  };
+
+  const handleKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (rows.length === 0) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setFocusedIndex((current) => Math.min(rows.length - 1, current + 1));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setFocusedIndex((current) => Math.max(0, current - 1));
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      const row = rows[focusedIndex];
+      if (row?.type === 'folder') {
+        event.preventDefault();
+        toggleFolder(row.folder.path);
+      }
+    }
   };
 
   return (
@@ -196,63 +304,74 @@ export default function BookmarkTree({
           />
         </Command>
 
-        <ScrollArea className="min-h-0 flex-1 rounded-lg border border-border bg-card">
-          {bookmarks.length === 0 ? (
+        <VirtualList
+          ariaLabel="Chrome 书签树"
+          className="min-h-0 flex-1 rounded-lg border border-border bg-card p-2"
+          emptyState={
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
               <Folder className="mx-auto h-7 w-7" />
-              <p>未检测到 Chrome 书签。</p>
-              <p className="text-xs">请确认当前浏览器中已有书签，然后点击刷新。</p>
+              <p>{bookmarks.length === 0 ? '未检测到 Chrome 书签。' : '没有匹配的书签。'}</p>
+              <p className="text-xs">
+                {bookmarks.length === 0
+                  ? '请确认当前浏览器中已有书签，然后点击刷新。'
+                  : '可以换一个标题、URL 或文件夹关键词。'}
+              </p>
             </div>
-          ) : (
-            <div className="space-y-1 p-2">
-              {visibleFolders.map((folder) => {
-                const isCollapsed = collapsed.has(folder.path);
-                const folderBookmarks = visibleBookmarks.filter(
-                  (bookmark) => bookmark.parentPath === folder.path,
-                );
+          }
+          estimatedHeight={surface === 'sidepanel' ? 520 : 300}
+          itemHeight={52}
+          items={rows}
+          onKeyDown={handleKeyboard}
+          renderItem={(row, index) => {
+            const focused = index === focusedIndex;
+            if (row.type === 'folder') {
+              return (
+                <button
+                  className={
+                    focused
+                      ? 'flex h-12 w-full items-center gap-2 rounded-md border border-primary bg-accent px-2 text-left'
+                      : 'flex h-12 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left transition hover:border-border hover:bg-muted/60'
+                  }
+                  onClick={() => toggleFolder(row.folder.path)}
+                  type="button"
+                >
+                  <ChevronRight
+                    className={
+                      row.expanded
+                        ? 'h-4 w-4 rotate-90 text-muted-foreground transition'
+                        : 'h-4 w-4 text-muted-foreground transition'
+                    }
+                  />
+                  <Folder className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {highlightedText(row.folder.path, keyword)}
+                  </span>
+                  <Badge variant="secondary">{counts.get(row.folder.path) ?? row.count}</Badge>
+                </button>
+              );
+            }
 
-                return (
-                  <Collapsible
-                    key={folder.id}
-                    onOpenChange={() => toggleFolder(folder.path)}
-                    open={!isCollapsed}
-                  >
-                    <div className="rounded-md border border-transparent transition hover:border-border hover:bg-muted/60">
-                      <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-2 text-left">
-                        <ChevronRight
-                          className={
-                            isCollapsed
-                              ? 'h-4 w-4 text-muted-foreground transition'
-                              : 'h-4 w-4 rotate-90 text-muted-foreground transition'
-                          }
-                        />
-                        <Folder className="h-4 w-4 shrink-0 text-primary" />
-                        <span className="min-w-0 flex-1 truncate text-sm">{folder.path}</span>
-                        <Badge variant="secondary">{counts.get(folder.path) ?? 0}</Badge>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none">
-                        {folderBookmarks.length > 0 ? (
-                          <ul className="space-y-1 pb-2 pl-10 pr-2">
-                            {folderBookmarks.map((bookmark) => (
-                              <li className="min-w-0 border-l border-border pl-2" key={bookmark.id}>
-                                <div className="truncate text-xs font-medium">
-                                  {bookmark.title || bookmark.url}
-                                </div>
-                                <div className="truncate text-[11px] text-muted-foreground">
-                                  {bookmark.url}
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </CollapsibleContent>
-                    </div>
-                  </Collapsible>
-                );
-              })}
-            </div>
-          )}
-        </ScrollArea>
+            return (
+              <div
+                className={
+                  focused
+                    ? 'ml-8 flex h-12 min-w-0 flex-col justify-center rounded-md border border-primary bg-accent px-2'
+                    : 'ml-8 flex h-12 min-w-0 flex-col justify-center rounded-md border border-transparent px-2'
+                }
+              >
+                <div className="flex items-center gap-1.5 truncate text-xs font-medium">
+                  <Link2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">
+                    {highlightedText(row.bookmark.title || row.bookmark.url, keyword)}
+                  </span>
+                </div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {highlightedText(row.bookmark.url, keyword)}
+                </div>
+              </div>
+            );
+          }}
+        />
       </section>
     </TooltipProvider>
   );

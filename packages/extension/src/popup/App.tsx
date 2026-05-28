@@ -390,7 +390,7 @@ export default function App({ surface = 'popup' }: AppProps) {
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const healthPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
-  const previousPendingCaptureCountRef = useRef(0);
+  const previousPendingCaptureCountRef = useRef<number | undefined>(undefined);
 
   const busy = Boolean(busyAction) || healthChecking;
 
@@ -430,9 +430,42 @@ export default function App({ surface = 'popup' }: AppProps) {
   }, []);
 
   useEffect(() => {
+    if (!chrome.storage?.onChanged) {
+      return undefined;
+    }
+
+    const listener = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName !== 'local') {
+        return;
+      }
+
+      const relevantKeys = new Set([
+        'exportManifests',
+        'lastMoveRecords',
+        'onboarded',
+        'pendingCapture',
+        'settings',
+        'urlHealthRecords',
+      ]);
+
+      if (Object.keys(changes).some((key) => relevantKeys.has(key))) {
+        void loadState();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
+
+  useEffect(() => {
     const pendingCount = state?.pendingCaptures.length ?? 0;
-    if (pendingCount > previousPendingCaptureCountRef.current) {
+    const previousCount = previousPendingCaptureCountRef.current;
+    if (previousCount !== undefined && pendingCount > previousCount) {
       setView('export');
+      setNotice({ kind: 'success', message: '内容已保存到待写入队列。' });
     }
     previousPendingCaptureCountRef.current = pendingCount;
   }, [state?.pendingCaptures.length]);
@@ -702,6 +735,33 @@ export default function App({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const deleteBookmarksFromHealth = async (records: UrlHealthRecord[]) => {
+    if (records.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确定批量删除 ${records.length} 个 Chrome 书签吗？\n\n删除前会逐条创建备份。`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      for (const record of records) {
+        await sendMessage<{ deleted: boolean; backupKey: string }>({
+          type: 'bookmark:delete',
+          id: record.bookmarkId,
+        });
+      }
+      setNotice({ kind: 'success', message: `已删除 ${records.length} 个书签，并已创建备份。` });
+      await loadState();
+    } catch (deleteError) {
+      showError(deleteError);
+    }
+  };
+
   const updateBookmarkUrlFromHealth = async (record: UrlHealthRecord, url: string) => {
     const confirmed = window.confirm(
       `确定替换这个 Chrome 书签的 URL 吗？\n\n${record.bookmarkTitle}\n${url}`,
@@ -957,6 +1017,7 @@ export default function App({ surface = 'popup' }: AppProps) {
             onCancel={cancelHealthCheck}
             onClear={clearHealthRecords}
             onDelete={deleteBookmarkFromHealth}
+            onDeleteMany={deleteBookmarksFromHealth}
             onStart={startHealthCheck}
             onUpdateUrl={updateBookmarkUrlFromHealth}
             progress={urlHealthProgress}

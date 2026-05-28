@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Database,
   Download,
@@ -25,7 +25,7 @@ import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { Progress } from '../../components/ui/progress.js';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group.js';
-import { ScrollArea } from '../../components/ui/scroll-area.js';
+import { VirtualList } from '../../components/VirtualList.js';
 import {
   Tooltip,
   TooltipContent,
@@ -100,9 +100,11 @@ export default function ExportPage({
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [exportingBookmarks, setExportingBookmarks] = useState(false);
   const [error, setError] = useState('');
   const [selectedCaptureId, setSelectedCaptureId] = useState('');
   const [captureTags, setCaptureTags] = useState('');
+  const exportControllerRef = useRef<AbortController | undefined>(undefined);
 
   useEffect(() => {
     setDirectoryPrefix(settings.exportDirectory);
@@ -166,6 +168,9 @@ export default function ExportPage({
       return;
     }
 
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
+    setExportingBookmarks(true);
     setBusy(true);
     setError('');
     setProgress(0);
@@ -181,22 +186,34 @@ export default function ExportPage({
         {
           directoryPrefix,
           moves: plan?.moves,
+          signal: controller.signal,
         },
         (done, total, path) => {
           setStatus(`正在写入: ${done}/${total}${path ? ` (${path})` : ''}`);
           setProgress(total > 0 ? Math.round((done / total) * 100) : 0);
         },
       );
-      setStatus(
-        `导出完成：新增 ${result.exported}，跳过 ${result.skipped}，失败 ${result.errors.length}`,
-      );
-      setProgress(100);
+      if (controller.signal.aborted) {
+        setStatus(`导出已取消：已处理 ${result.exported + result.skipped} 个书签`);
+      } else {
+        setStatus(
+          `导出完成：新增 ${result.exported}，跳过 ${result.skipped}，失败 ${result.errors.length}`,
+        );
+        setProgress(100);
+      }
       await onRefresh();
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : String(exportError));
     } finally {
       setBusy(false);
+      setExportingBookmarks(false);
+      exportControllerRef.current = undefined;
     }
+  };
+
+  const cancelExport = () => {
+    exportControllerRef.current?.abort();
+    setStatus('正在取消导出...');
   };
 
   const exportCapture = async () => {
@@ -293,6 +310,11 @@ export default function ExportPage({
               </TooltipTrigger>
               <TooltipContent>把书签索引写成 Markdown 文件，不会抓取远程网页内容。</TooltipContent>
             </Tooltip>
+            {exportingBookmarks ? (
+              <Button onClick={cancelExport} variant="outline">
+                取消
+              </Button>
+            ) : null}
           </div>
           {busy || progress > 0 ? <Progress value={progress} /> : null}
           <div className="space-y-1.5">
@@ -434,17 +456,22 @@ export default function ExportPage({
         </CardContent>
       </Card>
 
-      <ScrollArea className="min-h-0 flex-1 rounded-lg border border-border bg-card">
-        <div className="space-y-2 p-3">
+      <div className="min-h-0 flex-1 rounded-lg border border-border bg-card p-3">
           {preview ? (
             <div className="space-y-2">
               <div className="text-sm font-medium">预览：最多 {preview.total} 个 .md 文件</div>
-              {preview.folders.slice(0, surface === 'sidepanel' ? 16 : 8).map((folder) => (
-                <div className="flex items-center gap-2 text-xs" key={folder.path}>
-                  <span className="min-w-0 flex-1 truncate">{folder.path}</span>
-                  <Badge variant="outline">{folder.count}</Badge>
-                </div>
-              ))}
+              <VirtualList
+                className="h-48 rounded-md border border-border"
+                containerHeight={surface === 'sidepanel' ? 260 : 192}
+                itemHeight={32}
+                items={preview.folders}
+                renderItem={(folder) => (
+                  <div className="flex h-8 items-center gap-2 px-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate">{folder.path}</span>
+                    <Badge variant="outline">{folder.count}</Badge>
+                  </div>
+                )}
+              />
             </div>
           ) : (
             <div className="space-y-2 text-center text-sm text-muted-foreground">
@@ -471,8 +498,7 @@ export default function ExportPage({
               </div>
             )}
           </div>
-        </div>
-      </ScrollArea>
+      </div>
     </section>
     </TooltipProvider>
   );

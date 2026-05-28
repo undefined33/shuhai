@@ -38,6 +38,7 @@ interface PermissionedDirectoryHandle extends FileSystemDirectoryHandle {
 export interface ExportOptions {
   directoryPrefix: string;
   moves?: MovePlan[];
+  signal?: AbortSignal;
 }
 
 export interface ExportResult {
@@ -245,6 +246,10 @@ export async function exportBookmarksToVault(
   const moves = moveByBookmarkId(options.moves);
 
   for (const bookmark of bookmarks) {
+    if (options.signal?.aborted) {
+      break;
+    }
+
     const segments = buildBookmarkExportPath(bookmark, options);
     const fileName = segments.at(-1) ?? sanitizeFileName(bookmark.title || bookmark.url);
     const folderSegments = segments.slice(0, -1);

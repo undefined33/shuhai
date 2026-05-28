@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import type { KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, HelpCircle, ShieldAlert } from 'lucide-react';
 import type {
   ClassificationPlan,
@@ -11,7 +12,7 @@ import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
 import { Command, CommandInput, CommandList } from '../../components/ui/command.js';
-import { ScrollArea } from '../../components/ui/scroll-area.js';
+import { VirtualList } from '../../components/VirtualList.js';
 import {
   Tooltip,
   TooltipContent,
@@ -28,6 +29,13 @@ interface ClassifyPreviewProps {
   onApply(): void;
   onCancel(): void;
   surface?: 'popup' | 'sidepanel';
+}
+
+type SortMode = 'default' | 'confidence' | 'folder';
+
+interface MoveRow {
+  groupLabel?: string;
+  move: MovePlan;
 }
 
 function confidenceLabel(confidence: number): string {
@@ -50,6 +58,21 @@ function emptyReason(plan: ClassificationPlan): string {
   return plan.mode === 'safe'
     ? '安全模式下，已有文件夹中的书签不会被重新分类。返回书签页切换为全量模式可以重新审视全部书签。'
     : '全量模式没有发现需要调整的书签。可以回到书签页修改自定义规则后再生成。';
+}
+
+function moveCardClass(move: MovePlan, focused: boolean): string {
+  if (move.confidence < 0.6) {
+    return [
+      'h-[168px] border-amber-300 bg-amber-50/80 transition hover:border-amber-400',
+      'dark:border-amber-800 dark:bg-amber-950/30',
+    ].join(' ');
+  }
+
+  if (focused) {
+    return 'h-[168px] border-primary bg-accent transition hover:border-primary/40';
+  }
+
+  return 'h-[168px] transition hover:border-primary/40';
 }
 
 interface FolderComboboxProps {
@@ -135,10 +158,70 @@ export default function ClassifyPreview({
   onCancel,
   surface = 'popup',
 }: ClassifyPreviewProps) {
+  const [sortMode, setSortMode] = useState<SortMode>('default');
+  const [focusedIndex, setFocusedIndex] = useState(0);
   const moveGridClass =
     surface === 'sidepanel'
       ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.25fr)] items-center gap-2'
       : 'grid grid-cols-[1fr_auto_1fr] items-center gap-2';
+  const rows = useMemo<MoveRow[]>(() => {
+    const moves =
+      sortMode === 'confidence'
+        ? [...plan.moves].sort((a, b) => a.confidence - b.confidence)
+        : sortMode === 'folder'
+          ? [...plan.moves].sort(
+              (a, b) =>
+                a.targetFolder.localeCompare(b.targetFolder, 'zh-CN') ||
+                a.bookmarkTitle.localeCompare(b.bookmarkTitle, 'zh-CN'),
+            )
+          : plan.moves;
+    let lastFolder = '';
+
+    return moves.map((move) => {
+      const groupLabel =
+        sortMode === 'folder' && move.targetFolder !== lastFolder ? move.targetFolder : undefined;
+      lastFolder = move.targetFolder;
+      return { groupLabel, move };
+    });
+  }, [plan.moves, sortMode]);
+
+  useEffect(() => {
+    setFocusedIndex((current) => Math.min(current, Math.max(0, rows.length - 1)));
+  }, [rows.length]);
+
+  const setAllSelected = (selected: boolean) => {
+    for (const move of plan.moves) {
+      if (move.selected !== selected) {
+        onMoveChange({ ...move, selected });
+      }
+    }
+  };
+
+  const handleKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (rows.length === 0) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setFocusedIndex((current) => Math.min(rows.length - 1, current + 1));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setFocusedIndex((current) => Math.max(0, current - 1));
+      return;
+    }
+
+    if (event.key === ' ') {
+      event.preventDefault();
+      const move = rows[focusedIndex]?.move;
+      if (move) {
+        onMoveChange({ ...move, selected: !move.selected });
+      }
+    }
+  };
 
   return (
     <TooltipProvider>
@@ -179,6 +262,43 @@ export default function ClassifyPreview({
         </Button>
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex gap-2">
+          <Button
+            disabled={busy || plan.moves.length === 0}
+            onClick={() => setAllSelected(true)}
+            size="sm"
+            variant="outline"
+          >
+            全选
+          </Button>
+          <Button
+            disabled={busy || plan.moves.length === 0}
+            onClick={() => setAllSelected(false)}
+            size="sm"
+            variant="outline"
+          >
+            全不选
+          </Button>
+        </div>
+        <div className="flex justify-end gap-2">
+          {[
+            ['default', '默认'],
+            ['confidence', '低置信'],
+            ['folder', '按文件夹'],
+          ].map(([value, label]) => (
+            <Button
+              key={value}
+              onClick={() => setSortMode(value as SortMode)}
+              size="sm"
+              variant={sortMode === value ? 'default' : 'outline'}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <Alert variant="warning">
         当前为{plan.mode === 'safe' ? '仅整理未分类' : '重新分类全部'}模式；应用前不会修改 Chrome 书签。
       </Alert>
@@ -199,15 +319,25 @@ export default function ClassifyPreview({
         </Alert>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1 rounded-lg">
-        <div className="space-y-2 pr-2">
-          {plan.moves.map((move, index) => (
+      <VirtualList
+        ariaLabel="分类建议列表"
+        className="min-h-0 flex-1 rounded-lg"
+        estimatedHeight={surface === 'sidepanel' ? 520 : 300}
+        itemHeight={176}
+        items={rows}
+        onKeyDown={handleKeyboard}
+        renderItem={({ groupLabel, move }, index) => (
             <Card
-              className="transition hover:border-primary/40"
+              className={moveCardClass(move, index === focusedIndex)}
               key={move.id}
               style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
             >
               <CardContent className="space-y-2 p-3">
+                {groupLabel ? (
+                  <div className="truncate text-[11px] font-medium text-muted-foreground">
+                    {groupLabel}
+                  </div>
+                ) : null}
                 <div className="flex items-start gap-2">
                   <Checkbox
                     checked={move.selected}
@@ -265,9 +395,8 @@ export default function ClassifyPreview({
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      </ScrollArea>
+        )}
+      />
     </section>
     </TooltipProvider>
   );
