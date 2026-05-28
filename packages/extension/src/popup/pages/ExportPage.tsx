@@ -384,6 +384,33 @@ export default function ExportPage({
 
               {selectedCapture ? (
                 <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+                  <div className="rounded-md border border-primary/40 bg-primary/10 p-2">
+                    <div className="text-xs font-medium">下一步：确认后写入 Vault</div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      会保存到 {directoryPrefix || 'Bookmarks'}/文章/。它和书签索引使用同一个
+                      Vault，但只写入当前选中的正文内容。
+                    </p>
+                    <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
+                      <Button
+                        disabled={busy || !handle}
+                        loading={busy}
+                        onClick={exportCapture}
+                        size="sm"
+                      >
+                        <Save className="h-4 w-4" />
+                        {handle ? '保存选中文章' : '先选择 Vault'}
+                      </Button>
+                      <Button
+                        disabled={busy}
+                        onClick={() => onRemovePendingCapture(selectedCapture.id)}
+                        size="icon"
+                        title="移除这篇待保存内容"
+                        variant="outline"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
                   <div className="text-sm font-medium">预览：{selectedCapture.title}</div>
                   <div className="max-h-40 overflow-auto rounded-md bg-card p-2 font-mono text-[11px] text-muted-foreground">
                     {selectedCapture.text.slice(0, 1200)}
@@ -396,24 +423,6 @@ export default function ExportPage({
                       placeholder="article, security"
                       value={captureTags}
                     />
-                  </div>
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Button
-                      disabled={busy || !handle}
-                      loading={busy}
-                      onClick={exportCapture}
-                    >
-                      <Save className="h-4 w-4" />
-                      写入 Vault
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      onClick={() => onRemovePendingCapture(selectedCapture.id)}
-                      size="icon"
-                      variant="outline"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
                   </div>
                 </div>
               ) : null}
