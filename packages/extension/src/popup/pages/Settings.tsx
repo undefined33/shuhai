@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Eye, EyeOff, HelpCircle, Save } from 'lucide-react';
+import { Download, Eye, EyeOff, FolderOpen, HelpCircle, Info, Save } from 'lucide-react';
 import type {
   AppSettings,
   BackupRecord,
@@ -26,6 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../../components/ui/tooltip.js';
+import { getVaultHandle, requestVaultAccess } from '../../utils/vault-writer.js';
 
 interface SettingsProps {
   backups: BackupRecord[];
@@ -78,11 +79,43 @@ export default function Settings({
   const [rulesText, setRulesText] = useState(stringifyRules(settings.customRules));
   const [showKey, setShowKey] = useState(false);
   const [error, setError] = useState('');
+  const [vaultHandle, setVaultHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [vaultStatus, setVaultStatus] = useState('');
+  const [vaultBusy, setVaultBusy] = useState(false);
 
   useEffect(() => {
     setForm(settings);
     setRulesText(stringifyRules(settings.customRules));
   }, [settings]);
+
+  useEffect(() => {
+    void getVaultHandle()
+      .then(setVaultHandle)
+      .catch(() => setVaultHandle(null));
+  }, []);
+
+  useEffect(() => {
+    if (!vaultStatus) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setVaultStatus(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [vaultStatus]);
+
+  const chooseVault = async () => {
+    setVaultBusy(true);
+    setError('');
+    try {
+      const nextHandle = await requestVaultAccess();
+      setVaultHandle(nextHandle);
+      setVaultStatus(`已选择 Vault：${nextHandle.name}`);
+    } catch (chooseError) {
+      setError(chooseError instanceof Error ? chooseError.message : String(chooseError));
+    } finally {
+      setVaultBusy(false);
+    }
+  };
 
   const submit = () => {
     setError('');
@@ -100,9 +133,56 @@ export default function Settings({
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
       {error ? <Alert variant="destructive">{error}</Alert> : null}
+      {vaultStatus ? <Alert variant="success">{vaultStatus}</Alert> : null}
 
       <ScrollArea className="min-h-0 flex-1 pr-2">
         <div className="space-y-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2">
+                <FolderOpen className="h-4 w-4 text-primary" />
+                知识库
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center gap-2 rounded-md bg-muted px-2 py-2 text-xs">
+                <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">
+                  {vaultHandle?.name ?? '未选择 Obsidian Vault'}
+                </span>
+                <Button
+                  disabled={vaultBusy}
+                  loading={vaultBusy}
+                  onClick={chooseVault}
+                  size="sm"
+                  variant="outline"
+                >
+                  {vaultHandle ? '更换' : '选择'}
+                </Button>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>导出前缀</Label>
+                <Input
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      exportDirectory: event.target.value,
+                    })
+                  }
+                  placeholder="Bookmarks"
+                  value={form.exportDirectory}
+                />
+              </div>
+
+              {!vaultHandle ? (
+                <Alert variant="warning">
+                  收藏内容和书签索引都会写入同一个 Vault。首次使用需要授权目录。
+                </Alert>
+              ) : null}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle>AI 分类</CardTitle>
@@ -206,25 +286,6 @@ export default function Settings({
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>导出</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1.5">
-              <Label>目录前缀</Label>
-              <Input
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    exportDirectory: event.target.value,
-                  })
-                }
-                placeholder="Bookmarks"
-                value={form.exportDirectory}
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
               <CardTitle>自定义规则</CardTitle>
             </CardHeader>
             <CardContent>
@@ -240,12 +301,12 @@ export default function Settings({
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>导出历史</CardTitle>
+              <CardTitle>最近写入</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {exportManifests.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  尚未导出过书签。到导出页选择 Vault 后即可生成历史记录。
+                  尚未写入过 Vault。收藏内容或导出书签索引后会显示在这里。
                 </p>
               ) : null}
               {exportManifests.map((manifest) => (
@@ -280,6 +341,20 @@ export default function Settings({
                   </Button>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-primary" />
+                使用帮助
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>“整理书签”负责浏览、AI 分类、确认移动和链接体检。</p>
+              <p>“收藏内容”负责处理右键保存进来的文章、推文和微博。</p>
+              <p>ShuHai 不会批量抓取远程网页，写入 Markdown 前会做安全清洗。</p>
             </CardContent>
           </Card>
         </div>

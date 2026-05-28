@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
-  Bookmark,
-  CircleHelp,
-  Download,
-  GitBranch,
+  BookOpen,
   Loader2,
   PanelRightOpen,
   Settings as SettingsIcon,
@@ -47,17 +44,16 @@ import { Progress } from '../components/ui/progress.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs.js';
 import { Alert } from '../components/ui/alert.js';
 import { DEFAULT_SETTINGS } from '../utils/storage.js';
-import BookmarkTree from './pages/BookmarkTree.js';
-import ClassifyPreview from './pages/ClassifyPreview.js';
-import ExportPage from './pages/ExportPage.js';
-import HealthPage from './pages/HealthPage.js';
-import HelpPage from './pages/HelpPage.js';
+import CollectionPage from './pages/CollectionPage.js';
+import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
 
 type Surface = 'popup' | 'sidepanel';
-type ViewName = 'tree' | 'preview' | 'health' | 'export' | 'settings' | 'help';
+type ViewName = 'organize' | 'collect' | 'settings';
 type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'health' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
+
+const PREFERRED_VIEW_KEY = 'shuhaiPreferredView';
 
 function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -245,97 +241,133 @@ function requestHealthCheckPermission(): Promise<boolean> {
   });
 }
 
+function isViewName(value: unknown): value is ViewName {
+  return value === 'organize' || value === 'collect' || value === 'settings';
+}
+
+function storePreferredView(view: ViewName): Promise<void> {
+  if (!chrome.storage?.local) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [PREFERRED_VIEW_KEY]: view }, () => resolve());
+  });
+}
+
+function takePreferredView(): Promise<ViewName | undefined> {
+  if (!chrome.storage?.local) {
+    return Promise.resolve(undefined);
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get(PREFERRED_VIEW_KEY, (items) => {
+      const preferredView = items[PREFERRED_VIEW_KEY];
+      if (isViewName(preferredView)) {
+        void chrome.storage.local.remove(PREFERRED_VIEW_KEY);
+        resolve(preferredView);
+        return;
+      }
+
+      resolve(undefined);
+    });
+  });
+}
+
 interface PopupLauncherProps {
   busy: boolean;
   state?: ExtensionState;
-  onOpenSidePanel(): void;
-  onUsePopup(): void;
-  onShowHelp(): void;
+  onOpenSidePanel(view: ViewName): void;
+  onQuickClassify(): void;
+  onQuickHealth(): void;
+  onUsePopup(view: ViewName): void;
 }
 
 function PopupLauncher({
   busy,
   state,
   onOpenSidePanel,
+  onQuickClassify,
+  onQuickHealth,
   onUsePopup,
-  onShowHelp,
 }: PopupLauncherProps) {
   const bookmarkCount = state?.bookmarks?.length ?? 0;
   const folderCount = state?.folders?.length ?? 0;
-  const hasVaultHistory = (state?.exportManifests?.length ?? 0) > 0;
+  const pendingCaptureCount = state?.pendingCaptures?.length ?? 0;
 
   return (
     <main className="flex h-[600px] flex-col gap-3 bg-background p-3 text-foreground">
       <header className="space-y-1">
         <h1 className="text-base font-semibold tracking-tight">ShuHai</h1>
         <p className="text-xs text-muted-foreground">
-          侧边栏空间更适合整理大量书签；弹窗保留为快速入口。
+          {bookmarkCount} 书签 · {folderCount} 文件夹
         </p>
       </header>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-2xl font-semibold leading-none">{bookmarkCount}</div>
-            <div className="mt-1 text-xs text-muted-foreground">书签</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-2xl font-semibold leading-none">{folderCount}</div>
-            <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
-          </CardContent>
-        </Card>
-      </div>
 
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <PanelRightOpen className="h-4 w-4 text-primary" />
-            推荐工作区
+            打开工作区
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
-          <Button className="w-full" disabled={busy} loading={busy} onClick={onOpenSidePanel}>
-            <PanelRightOpen className="h-4 w-4" />
-            打开侧边栏
+        <CardContent className="grid gap-2">
+          <Button disabled={busy} onClick={() => onOpenSidePanel('organize')} variant="outline">
+            <Sparkles className="h-4 w-4" />
+            整理书签
           </Button>
-          <div className="grid grid-cols-2 gap-2">
-            <Button disabled={busy} onClick={onOpenSidePanel} variant="secondary">
-              <Sparkles className="h-4 w-4" />
-              整理书签
-            </Button>
-            <Button disabled={busy} onClick={onOpenSidePanel} variant="secondary">
-              <Download className="h-4 w-4" />
-              导出
-            </Button>
-          </div>
+          <Button disabled={busy} onClick={() => onOpenSidePanel('collect')} variant="outline">
+            <BookOpen className="h-4 w-4" />
+            收藏内容
+            {pendingCaptureCount > 0 ? <Badge variant="success">{pendingCaptureCount}</Badge> : null}
+          </Button>
+          <Button disabled={busy} onClick={() => onOpenSidePanel('settings')} variant="outline">
+            <SettingsIcon className="h-4 w-4" />
+            设置
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle>快捷操作</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-2">
+          <Button disabled={busy || bookmarkCount === 0} onClick={onQuickClassify} variant="secondary">
+            <Sparkles className="h-4 w-4" />
+            AI 分类
+          </Button>
+          <Button disabled={busy || bookmarkCount === 0} onClick={onQuickHealth} variant="secondary">
+            <Activity className="h-4 w-4" />
+            体检链接
+          </Button>
         </CardContent>
       </Card>
 
       <Card>
         <CardContent className="space-y-2 p-3 text-sm">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">DeepSeek AI</span>
+            <span className="text-muted-foreground">AI 分类</span>
             <Badge variant={state?.settings?.useAi ? 'success' : 'warning'}>
               {state?.settings?.useAi ? '已启用' : '规则模式'}
             </Badge>
           </div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">Vault 导出</span>
-            <Badge variant={hasVaultHistory ? 'success' : 'outline'}>
-              {hasVaultHistory ? '有历史记录' : '待配置'}
+            <span className="text-muted-foreground">待保存内容</span>
+            <Badge variant={pendingCaptureCount > 0 ? 'success' : 'outline'}>
+              {pendingCaptureCount}
             </Badge>
           </div>
         </CardContent>
       </Card>
 
-      <div className="mt-auto grid grid-cols-2 gap-2">
-        <Button disabled={busy} onClick={onShowHelp} variant="outline">
-          <CircleHelp className="h-4 w-4" />
-          帮助
-        </Button>
-        <Button disabled={busy} onClick={onUsePopup} variant="ghost">
+      <div className="mt-auto">
+        <Button
+          className="w-full"
+          disabled={busy}
+          onClick={() => onUsePopup('organize')}
+          variant="ghost"
+        >
           继续用弹窗
         </Button>
       </div>
@@ -399,24 +431,24 @@ function WelcomeGuide({ open, onStart, onOpenHelp }: WelcomeGuideProps) {
           </Card>
           <Card>
             <CardContent className="p-3">
-              <div className="font-medium">2. 导出到 Obsidian</div>
+              <div className="font-medium">2. 收藏内容</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                首次选择 Vault 目录后，浏览器会记住授权并写入 Markdown。
+                在网页右键保存文章、推文或微博，到“收藏内容”确认后写入 Vault。
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3">
-              <div className="font-medium">3. 保存社交内容</div>
+              <div className="font-medium">3. 设置知识库</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                在 Twitter/X 或微博页面右键保存当前内容，再到导出页确认写入。
+                首次选择 Obsidian Vault 目录后，浏览器会记住授权并写入 Markdown。
               </p>
             </CardContent>
           </Card>
         </div>
         <DialogFooter>
           <Button onClick={onOpenHelp} variant="ghost">
-            查看完整帮助
+            打开设置
           </Button>
           <Button onClick={onStart}>开始使用</Button>
         </DialogFooter>
@@ -430,7 +462,8 @@ interface AppProps {
 }
 
 export default function App({ surface = 'popup' }: AppProps) {
-  const [view, setView] = useState<ViewName>('tree');
+  const [view, setView] = useState<ViewName>('organize');
+  const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('browse');
   const [state, setState] = useState<ExtensionState | undefined>();
   const [plan, setPlan] = useState<ClassificationPlan | undefined>();
   const [classifyMode, setClassifyMode] = useState<ClassificationMode>('safe');
@@ -489,6 +522,14 @@ export default function App({ surface = 'popup' }: AppProps) {
   }, []);
 
   useEffect(() => {
+    void takePreferredView().then((preferredView) => {
+      if (preferredView) {
+        setView(preferredView);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     if (!chrome.storage?.onChanged) {
       return undefined;
     }
@@ -523,7 +564,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     const pendingCount = state?.pendingCaptures?.length ?? 0;
     const previousCount = previousPendingCaptureCountRef.current;
     if (previousCount !== undefined && pendingCount > previousCount) {
-      setView('export');
+      setView('collect');
       setNotice({ kind: 'success', message: '内容已保存到待写入队列。' });
     }
     previousPendingCaptureCountRef.current = pendingCount;
@@ -532,6 +573,8 @@ export default function App({ surface = 'popup' }: AppProps) {
   const createPlan = async (mode: ClassificationMode) => {
     setBusyAction('plan');
     setNotice(undefined);
+    setView('organize');
+    setOrganizeMode('plan');
     setClassifyMode(mode);
     setClassificationProgress({
       done: 0,
@@ -544,7 +587,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     try {
       const nextPlan = await createPlanWithProgress(mode);
       setPlan(nextPlan);
-      setView('preview');
+      setOrganizeMode('plan');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
       setNotice({
         kind: nextPlan.moves.length > 0 ? 'success' : 'warning',
@@ -618,6 +661,8 @@ export default function App({ surface = 'popup' }: AppProps) {
   const startHealthCheck = async () => {
     setNotice(undefined);
     setUrlHealthProgress(undefined);
+    setView('organize');
+    setOrganizeMode('health');
 
     try {
       const granted = await requestHealthCheckPermission();
@@ -712,7 +757,8 @@ export default function App({ surface = 'popup' }: AppProps) {
         message: `已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个。`,
       });
       setPlan(undefined);
-      setView('tree');
+      setView('organize');
+      setOrganizeMode('browse');
       await loadState();
     } catch (applyError) {
       showError(applyError);
@@ -894,18 +940,36 @@ export default function App({ surface = 'popup' }: AppProps) {
   };
 
   const openHelpFromWelcome = () => {
-    setView('help');
+    setView('settings');
     void completeOnboarding();
   };
 
-  const handleOpenSidePanel = () => {
-    void openSidePanel()
+  const handleOpenSidePanel = (nextView: ViewName) => {
+    void storePreferredView(nextView)
+      .then(openSidePanel)
       .then(() => {
         setNotice({ kind: 'success', message: '侧边栏已打开。' });
       })
       .catch((error) => {
         showError(error);
       });
+  };
+
+  const usePopupWorkspace = (nextView: ViewName) => {
+    setView(nextView);
+    setForcePopupWorkspace(true);
+  };
+
+  const quickClassifyFromPopup = () => {
+    usePopupWorkspace('organize');
+    setOrganizeMode('plan');
+    void createPlan(classifyMode);
+  };
+
+  const quickHealthFromPopup = () => {
+    usePopupWorkspace('organize');
+    setOrganizeMode('health');
+    void startHealthCheck();
   };
 
   const folders = state?.folders ?? [];
@@ -935,7 +999,13 @@ export default function App({ surface = 'popup' }: AppProps) {
       }
 
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        if (view === 'preview' && plan && selectedCount > 0 && !busy) {
+        if (
+          view === 'organize' &&
+          organizeMode === 'plan' &&
+          plan &&
+          selectedCount > 0 &&
+          !busy
+        ) {
           event.preventDefault();
           setConfirmApplyOpen(true);
         }
@@ -955,16 +1025,17 @@ export default function App({ surface = 'popup' }: AppProps) {
           return;
         }
 
-        if (view === 'preview') {
+        if (view === 'organize' && organizeMode !== 'browse') {
           event.preventDefault();
-          setView('tree');
+          setOrganizeMode('browse');
         }
         return;
       }
 
       if (event.key === '/') {
         event.preventDefault();
-        setView('tree');
+        setView('organize');
+        setOrganizeMode('browse');
         window.setTimeout(() => {
           const search = document.querySelector<HTMLInputElement>('[data-shuhai-search]');
           search?.focus();
@@ -974,7 +1045,16 @@ export default function App({ surface = 'popup' }: AppProps) {
 
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [busy, busyAction, confirmApplyOpen, plan, selectedCount, showWorkspace, view]);
+  }, [
+    busy,
+    busyAction,
+    confirmApplyOpen,
+    organizeMode,
+    plan,
+    selectedCount,
+    showWorkspace,
+    view,
+  ]);
 
   if (!showWorkspace) {
     return (
@@ -982,11 +1062,9 @@ export default function App({ surface = 'popup' }: AppProps) {
         <PopupLauncher
           busy={busy}
           onOpenSidePanel={handleOpenSidePanel}
-          onShowHelp={() => {
-            setForcePopupWorkspace(true);
-            setView('help');
-          }}
-          onUsePopup={() => setForcePopupWorkspace(true)}
+          onQuickClassify={quickClassifyFromPopup}
+          onQuickHealth={quickHealthFromPopup}
+          onUsePopup={usePopupWorkspace}
           state={state}
         />
         <WelcomeGuide
@@ -1026,30 +1104,21 @@ export default function App({ surface = 'popup' }: AppProps) {
         onValueChange={(next) => setView(next as ViewName)}
         value={view}
       >
-        <TabsList className="grid-cols-6">
-          <TabsTrigger value="tree">
-            <Bookmark className="h-3.5 w-3.5" />
-            书签
+        <TabsList className="grid-cols-3">
+          <TabsTrigger value="organize">
+            <Sparkles className="h-3.5 w-3.5" />
+            整理书签
           </TabsTrigger>
-          <TabsTrigger disabled={!plan} value="preview">
-            <GitBranch className="h-3.5 w-3.5" />
-            方案
-          </TabsTrigger>
-          <TabsTrigger value="export">
-            <Download className="h-3.5 w-3.5" />
-            导出
-          </TabsTrigger>
-          <TabsTrigger value="health">
-            <Activity className="h-3.5 w-3.5" />
-            体检
+          <TabsTrigger value="collect">
+            <BookOpen className="h-3.5 w-3.5" />
+            收藏内容
+            {(state?.pendingCaptures?.length ?? 0) > 0 ? (
+              <Badge variant="success">{state?.pendingCaptures.length}</Badge>
+            ) : null}
           </TabsTrigger>
           <TabsTrigger value="settings">
             <SettingsIcon className="h-3.5 w-3.5" />
             设置
-          </TabsTrigger>
-          <TabsTrigger value="help">
-            <CircleHelp className="h-3.5 w-3.5" />
-            帮助
           </TabsTrigger>
         </TabsList>
 
@@ -1063,66 +1132,55 @@ export default function App({ surface = 'popup' }: AppProps) {
           </Alert>
         ) : null}
 
-        <TabsContent className="min-h-0 flex-1" value="tree">
-          <BookmarkTree
+        <TabsContent className="min-h-0 flex-1" forceMount value="organize">
+          <OrganizePage
+            backups={backups}
             bookmarks={bookmarks}
             busy={busy}
             canUndo={canUndo}
+            classifying={busyAction === 'plan'}
             classifyMode={classifyMode}
-            folders={folders}
-            onClassifyModeChange={setClassifyMode}
-            onCreatePlan={createPlan}
-            onRefresh={loadState}
-            onUndo={undoLast}
-            surface={surface}
-          />
-        </TabsContent>
-
-        <TabsContent className="min-h-0 flex-1" value="preview">
-          {plan ? (
-            <ClassifyPreview
-              busy={busy}
-              folders={folders}
-              onApply={() => setConfirmApplyOpen(true)}
-              onCancel={() => setView('tree')}
-              onMoveChange={(move) =>
-                setPlan((current) => (current ? replaceMove(current, move) : current))
-              }
-              plan={plan}
-              selectedCount={selectedCount}
-              surface={surface}
-            />
-          ) : null}
-        </TabsContent>
-
-        <TabsContent className="min-h-0 flex-1" forceMount value="export">
-          <ExportPage
-            bookmarks={exportBookmarks}
+            exportBookmarks={exportBookmarks}
             exportManifests={state?.exportManifests ?? []}
-            onClearPendingCapture={clearPendingCapture}
-            onRemovePendingCapture={removePendingCapture}
+            folders={folders}
+            healthChecking={healthChecking}
+            healthProgress={urlHealthProgress}
+            healthRecords={state?.urlHealthRecords ?? []}
+            mode={organizeMode}
+            onApplyPlan={() => setConfirmApplyOpen(true)}
+            onCancelHealth={cancelHealthCheck}
+            onCancelPlan={() => setOrganizeMode('browse')}
+            onClassifyModeChange={setClassifyMode}
+            onClearHealthRecords={clearHealthRecords}
+            onCreatePlan={createPlan}
+            onDeleteHealthRecord={deleteBookmarkFromHealth}
+            onDeleteManyHealthRecords={deleteBookmarksFromHealth}
+            onDownloadBackup={downloadBackup}
+            onModeChange={setOrganizeMode}
+            onMoveChange={(move) =>
+              setPlan((current) => (current ? replaceMove(current, move) : current))
+            }
             onRefresh={loadState}
-            pendingCaptures={state?.pendingCaptures ?? []}
+            onStartHealthCheck={startHealthCheck}
+            onUndo={undoLast}
+            onUpdateHealthUrl={updateBookmarkUrlFromHealth}
+            onUpdateManyHealthUrls={updateBookmarkUrlsFromHealth}
             plan={plan}
+            selectedCount={selectedCount}
             selectedMoveIds={plan ? selectedMoveIds(plan) : []}
             settings={settings}
             surface={surface}
           />
         </TabsContent>
 
-        <TabsContent className="min-h-0 flex-1" value="health">
-          <HealthPage
-            bookmarks={bookmarks}
-            checking={healthChecking}
-            onCancel={cancelHealthCheck}
-            onClear={clearHealthRecords}
-            onDelete={deleteBookmarkFromHealth}
-            onDeleteMany={deleteBookmarksFromHealth}
-            onStart={startHealthCheck}
-            onUpdateManyUrls={updateBookmarkUrlsFromHealth}
-            onUpdateUrl={updateBookmarkUrlFromHealth}
-            progress={urlHealthProgress}
-            records={state?.urlHealthRecords ?? []}
+        <TabsContent className="min-h-0 flex-1" forceMount value="collect">
+          <CollectionPage
+            exportManifests={state?.exportManifests ?? []}
+            onClearPendingCapture={clearPendingCapture}
+            onRefresh={loadState}
+            onRemovePendingCapture={removePendingCapture}
+            pendingCaptures={state?.pendingCaptures ?? []}
+            settings={settings}
           />
         </TabsContent>
 
@@ -1135,10 +1193,6 @@ export default function App({ surface = 'popup' }: AppProps) {
             onSave={saveSettings}
             settings={settings}
           />
-        </TabsContent>
-
-        <TabsContent className="min-h-0 flex-1" value="help">
-          <HelpPage />
         </TabsContent>
       </Tabs>
 

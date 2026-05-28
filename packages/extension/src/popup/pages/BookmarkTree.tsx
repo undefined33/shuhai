@@ -36,6 +36,7 @@ interface BookmarkTreeProps {
   onCreatePlan(mode: ClassificationMode): void;
   onRefresh(): void;
   onUndo(): void;
+  showSummary?: boolean;
   surface?: 'popup' | 'sidepanel';
 }
 
@@ -162,6 +163,7 @@ export default function BookmarkTree({
   onCreatePlan,
   onRefresh,
   onUndo,
+  showSummary = true,
   surface = 'popup',
 }: BookmarkTreeProps) {
   const [query, setQuery] = useState('');
@@ -220,20 +222,22 @@ export default function BookmarkTree({
   return (
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
-        <div className="grid grid-cols-2 gap-2">
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-2xl font-semibold leading-none">{bookmarks.length}</div>
-              <div className="mt-1 text-xs text-muted-foreground">书签</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-2xl font-semibold leading-none">{folders.length}</div>
-              <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
-            </CardContent>
-          </Card>
-        </div>
+        {showSummary ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-2xl font-semibold leading-none">{bookmarks.length}</div>
+                <div className="mt-1 text-xs text-muted-foreground">书签</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <div className="text-2xl font-semibold leading-none">{folders.length}</div>
+                <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
 
         <Card>
           <CardContent className="space-y-3 p-3">
