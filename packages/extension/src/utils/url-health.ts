@@ -21,10 +21,16 @@ export interface UrlHealthCheckOptions {
 
 export interface UrlHealthBatchCheckOptions extends UrlHealthCheckOptions {
   concurrency?: number;
-  onProgress?: (progress: UrlHealthProgress) => void;
+  hostIntervalMs?: number;
+  initialRecords?: UrlHealthRecord[];
+  onProgress?: (progress: UrlHealthProgress, records: UrlHealthRecord[]) => void;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  nowMs?: () => number;
+  totalCount?: number;
 }
 
 export const DEFAULT_HEALTH_CONCURRENCY = 8;
+export const DEFAULT_HEALTH_HOST_INTERVAL_MS = 2000;
 
 export const EMPTY_HEALTH_SUMMARY: UrlHealthSummary = {
   alive: 0,
@@ -106,6 +112,23 @@ function normalizeForCompare(rawUrl: string): string {
   }
 }
 
+function hostKeyForRateLimit(rawUrl: string): string | undefined {
+  if (skipReasonForUrl(rawUrl)) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return undefined;
+    }
+
+    return url.hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 function classifyStatus(response: HealthFetchResponse, originalUrl: string): UrlHealthStatus {
   const status = response.status;
 
@@ -134,6 +157,32 @@ function classifyStatus(response: HealthFetchResponse, originalUrl: string): Url
 
 function abortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+
+  return new Promise((resolve, reject) => {
+    let cleanup = () => {};
+    const abort = () => {
+      globalThis.clearTimeout(timer);
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = globalThis.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    cleanup = () => signal?.removeEventListener('abort', abort);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 async function fetchWithTimeout(
@@ -255,19 +304,25 @@ export async function checkBookmarkUrls(
   options: UrlHealthBatchCheckOptions = {},
 ): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
   const startedAt = Date.now();
-  const completedRecords: UrlHealthRecord[] = [];
+  const initialRecords = options.initialRecords ?? [];
+  const completedRecords: UrlHealthRecord[] = [...initialRecords];
   const orderedRecords: Array<UrlHealthRecord | undefined> = new Array(bookmarks.length);
+  const total = options.totalCount ?? bookmarks.length + initialRecords.length;
+  const hostIntervalMs = Math.max(0, options.hostIntervalMs ?? DEFAULT_HEALTH_HOST_INTERVAL_MS);
+  const nextAllowedByHost = new Map<string, number>();
+  const nowMs = options.nowMs ?? Date.now;
+  const sleep = options.sleep ?? sleepWithAbort;
   let nextIndex = 0;
 
   const buildProgress = (currentUrl?: string): UrlHealthProgress => {
     const elapsedMs = Date.now() - startedAt;
     const done = completedRecords.length;
     const averageMs = done > 0 ? elapsedMs / done : 0;
-    const remainingMs = Math.round(Math.max(0, bookmarks.length - done) * averageMs);
+    const remainingMs = Math.round(Math.max(0, total - done) * averageMs);
 
     return {
       done,
-      total: bookmarks.length,
+      total,
       elapsedMs,
       remainingMs,
       currentUrl,
@@ -292,6 +347,26 @@ export async function checkBookmarkUrls(
     }
   };
 
+  const waitForHostSlot = async (url: string): Promise<void> => {
+    if (hostIntervalMs <= 0) {
+      return;
+    }
+
+    const host = hostKeyForRateLimit(url);
+    if (!host) {
+      return;
+    }
+
+    const now = nowMs();
+    const nextAllowed = nextAllowedByHost.get(host) ?? now;
+    const waitMs = Math.max(0, nextAllowed - now);
+    nextAllowedByHost.set(host, Math.max(now, nextAllowed) + hostIntervalMs);
+
+    if (waitMs > 0) {
+      await sleep(waitMs, options.signal);
+    }
+  };
+
   const worker = async (): Promise<void> => {
     while (!options.signal?.aborted) {
       const index = nextIndex;
@@ -306,13 +381,14 @@ export async function checkBookmarkUrls(
         return;
       }
 
-      options.onProgress?.(buildProgress(bookmark.url));
+      options.onProgress?.(buildProgress(bookmark.url), completedRecords);
 
       try {
+        await waitForHostSlot(bookmark.url);
         const record = await checkOne(bookmark);
         orderedRecords[index] = record;
         completedRecords.push(record);
-        options.onProgress?.(buildProgress());
+        options.onProgress?.(buildProgress(), completedRecords);
       } catch (error) {
         if (abortError(error) && options.signal?.aborted) {
           return;
@@ -323,7 +399,7 @@ export async function checkBookmarkUrls(
     }
   };
 
-  options.onProgress?.(buildProgress());
+  options.onProgress?.(buildProgress(), completedRecords);
 
   const workerCount = Math.min(
     bookmarks.length,
@@ -335,7 +411,8 @@ export async function checkBookmarkUrls(
   const records = orderedRecords.filter(
     (record): record is UrlHealthRecord => record !== undefined,
   );
+  const allRecords = [...initialRecords, ...records];
   const progress = buildProgress();
 
-  return { records, progress };
+  return { records: allRecords, progress };
 }

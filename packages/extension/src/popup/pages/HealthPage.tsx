@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Pause,
   RotateCw,
   ShieldAlert,
   Trash2,
@@ -101,6 +102,14 @@ function hostFromUrl(url: string): string {
   }
 }
 
+function localDateKey(value: string | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 function isValidHttpUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -169,20 +178,37 @@ export default function HealthPage({
   onStart,
   onUpdateUrl,
 }: HealthPageProps) {
-  const [filter, setFilter] = useState<HealthFilter>('actionable');
+  const [filter, setFilter] = useState<HealthFilter>('all');
   const [replacementById, setReplacementById] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const summary = useMemo(() => summarizeHealthRecords(records), [records]);
+  const bookmarkById = useMemo(
+    () => new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark])),
+    [bookmarks],
+  );
+  const activeRecords = useMemo(() => {
+    const today = localDateKey(new Date());
+    return records.filter((record) => {
+      const bookmark = bookmarkById.get(record.bookmarkId);
+      return (
+        Boolean(bookmark) &&
+        bookmark?.url === record.bookmarkUrl &&
+        localDateKey(record.checkedAt) === today
+      );
+    });
+  }, [bookmarkById, records]);
+  const summary = useMemo(() => summarizeHealthRecords(activeRecords), [activeRecords]);
+  const remainingTodayCount = Math.max(0, bookmarks.length - activeRecords.length);
+  const startLabel = activeRecords.length > 0 ? '继续体检' : '开始体检';
   const visibleRecords = useMemo(() => {
     const filtered =
       filter === 'all'
-        ? records
+        ? activeRecords
         : filter === 'actionable'
-          ? records.filter((record) => ACTIONABLE_STATUSES.has(record.status))
-          : records.filter((record) => record.status === filter);
+          ? activeRecords.filter((record) => ACTIONABLE_STATUSES.has(record.status))
+          : activeRecords.filter((record) => record.status === filter);
 
     return [...filtered].sort((a, b) => failureGroup(a).localeCompare(failureGroup(b), 'zh-CN'));
-  }, [filter, records]);
+  }, [activeRecords, filter]);
   const rows = useMemo(() => buildRows(visibleRecords), [visibleRecords]);
   const selectedRecords = visibleRecords.filter((record) => selectedIds.has(record.bookmarkId));
   const deadRecords = visibleRecords.filter((record) => record.status === 'dead');
@@ -220,8 +246,8 @@ export default function HealthPage({
           </Alert>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{bookmarks.length}</div>
-              <div className="text-[11px] text-muted-foreground">待检查</div>
+              <div className="text-lg font-semibold">{remainingTodayCount}</div>
+              <div className="text-[11px] text-muted-foreground">今日未检</div>
             </div>
             <div className="rounded-md border border-border p-2">
               <div className="text-lg font-semibold">{summary.dead + summary.error}</div>
@@ -252,13 +278,18 @@ export default function HealthPage({
           ) : null}
 
           <div className="grid grid-cols-[1fr_auto] gap-2">
-            <Button disabled={checking || bookmarks.length === 0} loading={checking} onClick={onStart}>
+            <Button
+              disabled={checking || bookmarks.length === 0 || remainingTodayCount === 0}
+              loading={checking}
+              onClick={onStart}
+            >
               <RotateCw className="h-4 w-4" />
-              开始体检
+              {startLabel}
             </Button>
             {checking ? (
               <Button onClick={onCancel} variant="outline">
-                取消
+                <Pause className="h-4 w-4" />
+                暂停
               </Button>
             ) : (
               <Button disabled={records.length === 0} onClick={onClear} variant="outline">
@@ -318,11 +349,11 @@ export default function HealthPage({
         ariaLabel="链接体检结果"
         className="min-h-0 flex-1 rounded-lg border border-border bg-card p-2"
         emptyState={
-          records.length === 0 ? (
+          activeRecords.length === 0 ? (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
               <ShieldAlert className="mx-auto h-7 w-7" />
-              <p>还没有体检结果。</p>
-              <p className="text-xs">点击“开始体检”后，死链、错误和重定向会集中显示在这里。</p>
+              <p>今天还没有体检结果。</p>
+              <p className="text-xs">点击“开始体检”后，已完成的链接会陆续显示在这里。</p>
             </div>
           ) : (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">

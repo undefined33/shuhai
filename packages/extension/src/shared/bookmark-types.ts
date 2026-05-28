@@ -116,10 +116,11 @@ export interface UrlHealthProgress {
 
 export type UrlHealthPortRequest =
   | { type: 'health:check'; bookmarkIds?: string[] }
+  | { type: 'pause' }
   | { type: 'cancel' };
 
 export type UrlHealthPortMessage =
-  | { type: 'progress'; progress: UrlHealthProgress }
+  | { type: 'progress'; progress: UrlHealthProgress; records: UrlHealthRecord[] }
   | {
       type: 'complete';
       progress: UrlHealthProgress;

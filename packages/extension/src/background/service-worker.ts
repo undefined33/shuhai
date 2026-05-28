@@ -1,6 +1,7 @@
 import { AI_BATCH_SIZE } from '@shuhai/shared';
 import { classifyAllWithDeepSeek } from '../shared/ai-classifier.js';
 import type {
+  BookmarkItem,
   CapturedContent,
   ClassificationPortMessage,
   ClassificationPortRequest,
@@ -123,10 +124,43 @@ async function createPlan(
   return plan;
 }
 
+function localDateKey(value: string | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function getReusableTodayHealthRecords(
+  records: UrlHealthRecord[],
+  bookmarks: BookmarkItem[],
+): UrlHealthRecord[] {
+  const today = localDateKey(new Date());
+  const bookmarkById = new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark]));
+  const recordById = new Map<string, UrlHealthRecord>();
+
+  for (const record of records) {
+    const bookmark = bookmarkById.get(record.bookmarkId);
+    if (!bookmark) {
+      continue;
+    }
+
+    if (localDateKey(record.checkedAt) === today && record.bookmarkUrl === bookmark.url) {
+      recordById.set(record.bookmarkId, record);
+    }
+  }
+
+  return bookmarks.flatMap((bookmark) => {
+    const record = recordById.get(bookmark.id);
+    return record ? [record] : [];
+  });
+}
+
 async function checkBookmarkHealth(options: {
   bookmarkIds?: string[];
   signal?: AbortSignal;
-  onProgress?: (progress: UrlHealthProgress) => void;
+  onProgress?: (progress: UrlHealthProgress, records: UrlHealthRecord[]) => void;
 } = {}): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
@@ -134,9 +168,14 @@ async function checkBookmarkHealth(options: {
   const bookmarks = selectedIds
     ? summary.bookmarks.filter((bookmark) => selectedIds.has(bookmark.id))
     : summary.bookmarks;
-  const { records, progress } = await checkBookmarkUrls(bookmarks, {
+  const reusableRecords = getReusableTodayHealthRecords(await getUrlHealthRecords(), bookmarks);
+  const reusableIds = new Set(reusableRecords.map((record) => record.bookmarkId));
+  const uncheckedBookmarks = bookmarks.filter((bookmark) => !reusableIds.has(bookmark.id));
+  const { records, progress } = await checkBookmarkUrls(uncheckedBookmarks, {
+    initialRecords: reusableRecords,
     signal: options.signal,
     onProgress: options.onProgress,
+    totalCount: bookmarks.length,
   });
 
   await saveUrlHealthRecords(records);
@@ -372,7 +411,7 @@ function handleHealthPort(port: chrome.runtime.Port): void {
   });
 
   port.onMessage.addListener((message: UrlHealthPortRequest) => {
-    if (message.type === 'cancel') {
+    if (message.type === 'cancel' || message.type === 'pause') {
       controller?.abort();
       return;
     }
@@ -388,8 +427,8 @@ function handleHealthPort(port: chrome.runtime.Port): void {
     void checkBookmarkHealth({
       bookmarkIds: message.bookmarkIds,
       signal: controller.signal,
-      onProgress: (progress) => {
-        postHealthMessage(port, { type: 'progress', progress });
+      onProgress: (progress, records) => {
+        postHealthMessage(port, { type: 'progress', progress, records });
       },
     })
       .then(({ records, progress }) => {

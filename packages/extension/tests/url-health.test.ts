@@ -133,6 +133,7 @@ describe('URL health checker', () => {
     const result = await checkBookmarkUrls(bookmarks, {
       concurrency: 3,
       fetchImpl,
+      hostIntervalMs: 0,
       onProgress: (progress) => progressDone.push(progress.done),
     });
 
@@ -143,6 +144,28 @@ describe('URL health checker', () => {
     );
     expect(progressDone[0]).toBe(0);
     expect(progressDone[progressDone.length - 1]).toBe(7);
+  });
+
+  it('spaces requests to the same host', async () => {
+    const waits: number[] = [];
+    const fetchImpl = vi.fn<HealthFetch>(async (input) =>
+      response(200, String(input)),
+    );
+    const bookmarks = Array.from({ length: 3 }, (_, index) =>
+      bookmark(`https://github.com/project/${index}`, `b${index}`, index),
+    );
+
+    await checkBookmarkUrls(bookmarks, {
+      concurrency: 3,
+      fetchImpl,
+      hostIntervalMs: 2000,
+      nowMs: () => 0,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+
+    expect(waits).toEqual([2000, 4000]);
   });
 
   it('summarizes health records for the review UI', () => {

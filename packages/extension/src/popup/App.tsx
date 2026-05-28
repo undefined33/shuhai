@@ -465,6 +465,10 @@ export default function App({ surface = 'popup' }: AppProps) {
     });
   };
 
+  const setHealthRecords = (records: UrlHealthRecord[]) => {
+    setState((current) => (current ? { ...current, urlHealthRecords: records } : current));
+  };
+
   const loadState = async () => {
     setBusyAction('load');
     setNotice(undefined);
@@ -639,6 +643,7 @@ export default function App({ surface = 'popup' }: AppProps) {
       port.onMessage.addListener((message: UrlHealthPortMessage) => {
         if (message.type === 'progress') {
           setUrlHealthProgress(message.progress);
+          setHealthRecords(message.records);
           setStatus(`链接体检 ${message.progress.done}/${message.progress.total}`);
           return;
         }
@@ -646,14 +651,17 @@ export default function App({ surface = 'popup' }: AppProps) {
         if (message.type === 'complete') {
           settled = true;
           setUrlHealthProgress(message.progress);
+          setHealthRecords(message.records);
           setHealthChecking(false);
           healthPortRef.current = undefined;
           void loadState();
           setNotice({
             kind: message.progress.summary.dead + message.progress.summary.error > 0 ? 'warning' : 'success',
-            message: `体检完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
+            message: message.cancelled
+              ? `已暂停：本次已保留 ${message.progress.done} 条体检结果。`
+              : `体检完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
           });
-          setStatus('链接体检完成');
+          setStatus(message.cancelled ? '链接体检已暂停' : '链接体检完成');
           return;
         }
 
@@ -680,8 +688,8 @@ export default function App({ surface = 'popup' }: AppProps) {
   };
 
   const cancelHealthCheck = () => {
-    healthPortRef.current?.postMessage({ type: 'cancel' } satisfies UrlHealthPortRequest);
-    setStatus('正在取消链接体检...');
+    healthPortRef.current?.postMessage({ type: 'pause' } satisfies UrlHealthPortRequest);
+    setStatus('正在暂停链接体检，已完成结果会保留...');
   };
 
   const applyPlan = async () => {
