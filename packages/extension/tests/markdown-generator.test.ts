@@ -72,4 +72,44 @@ describe('markdown sanitization', () => {
     expect(markdown).not.toContain('![图片');
     expect(markdown).not.toContain('![');
   });
+
+  it('generates article markdown with article frontmatter and hardened body', () => {
+    const capture: CapturedContent = {
+      id: 'article-1',
+      source: 'article',
+      title: 'Article <% bad %>',
+      url: 'https://example.com/article',
+      author: 'Alice',
+      siteName: 'Example Blog',
+      description: 'Research {{query}}',
+      created: '2026-05-28',
+      text: [
+        '# Heading',
+        '',
+        'Body ![remote](https://example.com/a.png)',
+        '',
+        '```dataview',
+        'TABLE file.mtime',
+        '```',
+        '',
+        'obsidian://open',
+      ].join('\n'),
+      media: [],
+      tags: ['article'],
+      capturedAt: new Date(0).toISOString(),
+      wordCount: 42,
+    };
+    const markdown = generateCapturedContentMarkdown(capture, new Date('2026-05-28T00:00:00Z'));
+
+    expect(markdown).toContain('source: article');
+    expect(markdown).toContain('site: "Example Blog"');
+    expect(markdown).toContain('saved: 2026-05-28');
+    expect(markdown).toContain('word_count: 42');
+    expect(markdown).toContain('[图片: remote](https://example.com/a.png)');
+    expect(markdown).toContain('```text');
+    expect(markdown).toContain('obsidian-disabled://open');
+    expect(markdown).not.toContain('![');
+    expect(markdown).not.toContain('<% bad %>');
+    expect(markdown).not.toContain('{{query}}');
+  });
 });

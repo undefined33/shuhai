@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { BookmarkItem } from '../src/shared/bookmark-types.js';
+import type { BookmarkItem, CapturedContent } from '../src/shared/bookmark-types.js';
 import {
   buildBookmarkExportPath,
+  buildCaptureExportPath,
   checkVaultPermission,
   exportBookmarksToVault,
+  exportCaptureToVault,
   previewBookmarkExport,
 } from '../src/utils/vault-writer.js';
 import { getStorageSnapshot } from './setup.js';
@@ -83,6 +85,17 @@ const bookmark: BookmarkItem = {
   index: 0,
 };
 
+const articleCapture: CapturedContent = {
+  id: 'article-1',
+  source: 'article',
+  title: '深入理解 eBPF',
+  url: 'https://example.com/ebpf',
+  text: '# eBPF',
+  media: [],
+  tags: ['article'],
+  capturedAt: new Date(0).toISOString(),
+};
+
 describe('vault writer', () => {
   it('builds safe bookmark export paths', () => {
     expect(
@@ -116,5 +129,18 @@ describe('vault writer', () => {
     expect(first.exported).toBe(1);
     expect(second.skipped).toBe(1);
     expect(snapshot.exportManifests).toHaveLength(2);
+  });
+
+  it('writes captured articles under the article folder', async () => {
+    const root = new FakeDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
+    const result = await exportCaptureToVault(root, articleCapture, 'Bookmarks');
+
+    expect(buildCaptureExportPath(articleCapture, 'Bookmarks')).toEqual([
+      'Bookmarks',
+      '文章',
+      '深入理解 eBPF.md',
+    ]);
+    expect(result.exported).toBe(1);
+    expect(result.files).toEqual(['Bookmarks/文章/深入理解 eBPF.md']);
   });
 });

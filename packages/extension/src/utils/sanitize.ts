@@ -28,6 +28,22 @@ function limitLength(value: string, limit: number): string {
   return Array.from(value).slice(0, limit).join('');
 }
 
+function closeUnclosedCodeFence(value: string): string {
+  const fences = value.match(/^```/gm) ?? [];
+  return fences.length % 2 === 0 ? value : `${value}\n\`\`\``;
+}
+
+function truncateLongLines(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) =>
+      Array.from(line).length > 10000
+        ? `${limitLength(line, 10000)}\n\n[超长单行已截断]`
+        : line,
+    )
+    .join('\n');
+}
+
 export function sanitizeText(value: string): string {
   return Array.from(value.normalize('NFC'))
     .filter((character) => {
@@ -104,6 +120,20 @@ export function neutralizeObsidianSyntax(value: string): string {
     .replace(/obsidian:\/\//gi, 'obsidian-disabled://')
     .replace(/!\[\[/g, '\\!\\[\\[')
     .replace(/!\[([^\]]*)\]\((https?:\/\/[^)]+)\)/gi, '[图片: $1]($2)');
+}
+
+export function sanitizeArticleMarkdown(value: string): string {
+  const neutralized = neutralizeObsidianSyntax(value)
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '[图片: $1]($2)')
+    .replace(/```(?:dataviewjs|dataview|templater)\b/gi, '```text');
+  const limitedLines = truncateLongLines(neutralized);
+  const maxLength = 500_000;
+  const truncated =
+    Array.from(limitedLines).length > maxLength
+      ? `${limitLength(limitedLines, maxLength)}\n\n[内容已截断，超过 500KB 限制]`
+      : limitedLines;
+
+  return closeUnclosedCodeFence(truncated).trim();
 }
 
 export function assertSafeRelativePath(segments: string[]): void {

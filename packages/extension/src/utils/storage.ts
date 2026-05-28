@@ -104,8 +104,32 @@ export function getPendingCapture(): Promise<CapturedContent | undefined> {
   return getLocalValue<CapturedContent | undefined>(PENDING_CAPTURE_KEY, undefined);
 }
 
-export function savePendingCapture(capture: CapturedContent): Promise<void> {
-  return setLocalValues({ [PENDING_CAPTURE_KEY]: capture });
+export async function getPendingCaptures(): Promise<CapturedContent[]> {
+  const value = await getLocalValue<CapturedContent[] | CapturedContent | undefined>(
+    PENDING_CAPTURE_KEY,
+    undefined,
+  );
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  return value ? [value] : [];
+}
+
+export async function savePendingCapture(capture: CapturedContent): Promise<void> {
+  const captures = await getPendingCaptures();
+  const withoutDuplicate = captures.filter((item) => item.id !== capture.id);
+
+  return setLocalValues({ [PENDING_CAPTURE_KEY]: [capture, ...withoutDuplicate].slice(0, 20) });
+}
+
+export async function removePendingCapture(id: string): Promise<boolean> {
+  const captures = await getPendingCaptures();
+  const nextCaptures = captures.filter((capture) => capture.id !== id);
+  await setLocalValues({ [PENDING_CAPTURE_KEY]: nextCaptures });
+
+  return nextCaptures.length !== captures.length;
 }
 
 export function clearPendingCapture(): Promise<void> {

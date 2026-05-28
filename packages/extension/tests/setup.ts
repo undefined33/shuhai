@@ -98,8 +98,12 @@ const chromeMock = {
   bookmarks,
   contextMenus: {
     create: vi.fn(),
+    removeAll: vi.fn((callback?: () => void) => callback?.()),
   },
   runtime,
+  scripting: {
+    executeScript: vi.fn(),
+  },
   storage,
 } as unknown as typeof chrome;
 

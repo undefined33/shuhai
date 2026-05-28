@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getOnboarded, saveOnboarded } from '../src/utils/storage.js';
+import {
+  getOnboarded,
+  getPendingCaptures,
+  removePendingCapture,
+  saveOnboarded,
+  savePendingCapture,
+} from '../src/utils/storage.js';
 import { getStorageSnapshot } from './setup.js';
 
 describe('storage helpers', () => {
@@ -14,5 +20,34 @@ describe('storage helpers', () => {
       onboarded: true,
     });
     await expect(getOnboarded()).resolves.toBe(true);
+  });
+
+  it('stores captured content as a queue and removes one item by id', async () => {
+    await savePendingCapture({
+      id: 'article-1',
+      source: 'article',
+      title: 'Article',
+      url: 'https://example.com/a',
+      text: 'body',
+      media: [],
+      tags: ['article'],
+      capturedAt: new Date(0).toISOString(),
+    });
+    await savePendingCapture({
+      id: 'tweet-1',
+      source: 'twitter',
+      title: 'Tweet',
+      url: 'https://x.com/a/status/1',
+      text: 'tweet',
+      media: [],
+      tags: ['twitter'],
+      capturedAt: new Date(0).toISOString(),
+    });
+
+    await expect(getPendingCaptures()).resolves.toHaveLength(2);
+    await expect(removePendingCapture('article-1')).resolves.toBe(true);
+    await expect(getPendingCaptures()).resolves.toEqual([
+      expect.objectContaining({ id: 'tweet-1' }),
+    ]);
   });
 });

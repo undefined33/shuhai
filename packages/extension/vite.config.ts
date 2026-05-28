@@ -40,6 +40,7 @@ export default defineConfig({
           __dirname,
           'src/background/service-worker.ts',
         ),
+        'content/article': resolve(__dirname, 'src/content/article.ts'),
         'content/twitter': resolve(__dirname, 'src/content/twitter.ts'),
         'content/weibo': resolve(__dirname, 'src/content/weibo.ts'),
       },

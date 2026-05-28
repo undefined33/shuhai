@@ -366,6 +366,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     useState<ClassificationProgress>();
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
+  const previousPendingCaptureCountRef = useRef(0);
 
   const busy = Boolean(busyAction);
 
@@ -403,6 +404,14 @@ export default function App({ surface = 'popup' }: AppProps) {
   useEffect(() => {
     void loadState();
   }, []);
+
+  useEffect(() => {
+    const pendingCount = state?.pendingCaptures.length ?? 0;
+    if (pendingCount > previousPendingCaptureCountRef.current) {
+      setView('export');
+    }
+    previousPendingCaptureCountRef.current = pendingCount;
+  }, [state?.pendingCaptures.length]);
 
   const createPlan = async (mode: ClassificationMode) => {
     setBusyAction('plan');
@@ -561,6 +570,11 @@ export default function App({ surface = 'popup' }: AppProps) {
 
   const clearPendingCapture = async () => {
     await sendMessage<{ cleared: boolean }>({ type: 'capture:clearPending' });
+    await loadState();
+  };
+
+  const removePendingCapture = async (id: string) => {
+    await sendMessage<{ removed: boolean }>({ type: 'capture:removePending', id });
     await loadState();
   };
 
@@ -776,8 +790,9 @@ export default function App({ surface = 'popup' }: AppProps) {
             bookmarks={exportBookmarks}
             exportManifests={state?.exportManifests ?? []}
             onClearPendingCapture={clearPendingCapture}
+            onRemovePendingCapture={removePendingCapture}
             onRefresh={loadState}
-            pendingCapture={state?.pendingCapture}
+            pendingCaptures={state?.pendingCaptures ?? []}
             plan={plan}
             selectedMoveIds={plan ? selectedMoveIds(plan) : []}
             settings={settings}

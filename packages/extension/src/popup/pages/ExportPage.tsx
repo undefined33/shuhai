@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, Download, FolderOpen, HelpCircle, Save } from 'lucide-react';
+import {
+  Database,
+  Download,
+  FileText,
+  FolderOpen,
+  HelpCircle,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import type {
   AppSettings,
   BookmarkItem,
@@ -36,12 +44,13 @@ import {
 interface ExportPageProps {
   bookmarks: BookmarkItem[];
   exportManifests: ExportManifest[];
-  pendingCapture?: CapturedContent;
+  pendingCaptures: CapturedContent[];
   plan?: ClassificationPlan;
   selectedMoveIds: string[];
   settings: AppSettings;
   surface?: 'popup' | 'sidepanel';
   onClearPendingCapture(): Promise<void>;
+  onRemovePendingCapture(id: string): Promise<void>;
   onRefresh(): Promise<void>;
 }
 
@@ -64,15 +73,24 @@ function bookmarksForScope(
   return bookmarks.filter((bookmark) => bookmarkIds.has(bookmark.id));
 }
 
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 export default function ExportPage({
   bookmarks,
   exportManifests,
-  pendingCapture,
+  pendingCaptures,
   plan,
   selectedMoveIds,
   settings,
   surface = 'popup',
   onClearPendingCapture,
+  onRemovePendingCapture,
   onRefresh,
 }: ExportPageProps) {
   const [handle, setHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -83,6 +101,8 @@ export default function ExportPage({
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [selectedCaptureId, setSelectedCaptureId] = useState('');
+  const [captureTags, setCaptureTags] = useState('');
 
   useEffect(() => {
     setDirectoryPrefix(settings.exportDirectory);
@@ -93,6 +113,22 @@ export default function ExportPage({
       .then(setHandle)
       .catch(() => setHandle(null));
   }, []);
+
+  const selectedCapture = useMemo(
+    () => pendingCaptures.find((capture) => capture.id === selectedCaptureId) ?? pendingCaptures[0],
+    [pendingCaptures, selectedCaptureId],
+  );
+
+  useEffect(() => {
+    if (!selectedCapture) {
+      setSelectedCaptureId('');
+      setCaptureTags('');
+      return;
+    }
+
+    setSelectedCaptureId(selectedCapture.id);
+    setCaptureTags(selectedCapture.tags.join(', '));
+  }, [selectedCapture]);
 
   const scopedBookmarks = useMemo(
     () => bookmarksForScope(bookmarks, plan, scope, selectedMoveIds),
@@ -164,7 +200,7 @@ export default function ExportPage({
   };
 
   const exportCapture = async () => {
-    if (!handle || !pendingCapture) {
+    if (!handle || !selectedCapture) {
       return;
     }
 
@@ -176,12 +212,19 @@ export default function ExportPage({
         throw new Error('没有 Vault 写入权限，请重新选择目录');
       }
 
-      const result = await exportCaptureToVault(handle, pendingCapture, directoryPrefix);
+      const capture: CapturedContent = {
+        ...selectedCapture,
+        tags: captureTags
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      };
+      const result = await exportCaptureToVault(handle, capture, directoryPrefix);
       setStatus(
         `内容保存完成：新增 ${result.exported}，跳过 ${result.skipped}，失败 ${result.errors.length}`,
       );
       setProgress(100);
-      await onClearPendingCapture();
+      await onRemovePendingCapture(selectedCapture.id);
     } catch (captureError) {
       setError(captureError instanceof Error ? captureError.message : String(captureError));
     } finally {
@@ -199,7 +242,7 @@ export default function ExportPage({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Database className="h-4 w-4 text-primary" />
-            Obsidian Vault
+            知识库管理
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -211,8 +254,28 @@ export default function ExportPage({
             <Button disabled={busy} onClick={chooseVault} variant="outline">
               {handle ? '更换目录' : '选择 Vault'}
             </Button>
-            <Button disabled={busy || scopedBookmarks.length === 0} onClick={buildPreview} variant="secondary">
-              预览
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-primary" />
+            导出书签索引
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 p-3">
+          <p className="text-xs text-muted-foreground">
+            为每个书签生成一个 .md 索引文件：标题、链接、分类、标签。不抓取网页正文。
+          </p>
+          <div className="flex gap-2">
+            <Button
+              disabled={busy || scopedBookmarks.length === 0}
+              onClick={buildPreview}
+              variant="secondary"
+            >
+              预览索引
             </Button>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -224,7 +287,7 @@ export default function ExportPage({
                     onClick={exportBookmarks}
                   >
                     <Download className="h-4 w-4" />
-                    导出
+                    导出索引
                   </Button>
                 </span>
               </TooltipTrigger>
@@ -232,11 +295,6 @@ export default function ExportPage({
             </Tooltip>
           </div>
           {busy || progress > 0 ? <Progress value={progress} /> : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="space-y-3 p-3">
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <Label>导出范围</Label>
@@ -245,7 +303,7 @@ export default function ExportPage({
                   <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  选择全部书签、当前整理方案涉及的书签，或仅导出你勾选的移动项。
+                  只导出书签元数据，不访问网页内容。
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -279,28 +337,93 @@ export default function ExportPage({
         </CardContent>
       </Card>
 
-      {pendingCapture ? (
-        <Card>
-          <CardContent className="space-y-2 p-3">
-            <div className="text-sm font-medium">待保存内容</div>
-            <div className="truncate text-xs text-muted-foreground">{pendingCapture.title}</div>
-            <div className="flex gap-2">
-              <Button
-                className="flex-1"
-                disabled={busy || !handle}
-                loading={busy}
-                onClick={exportCapture}
-              >
-                <Save className="h-4 w-4" />
-                保存
-              </Button>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2">
+            <Save className="h-4 w-4 text-primary" />
+            保存文章内容
+            <Badge variant={pendingCaptures.length > 0 ? 'success' : 'secondary'}>
+              {pendingCaptures.length}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            在任意网页右键“保存此文章到知识库”，正文会进入这里。确认后才写入 Vault。
+          </p>
+          {pendingCaptures.length === 0 ? (
+            <Alert variant="warning">
+              当前没有待保存文章。请到正在阅读的网页右键选择“保存此文章到知识库”。
+            </Alert>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {pendingCaptures.slice(0, surface === 'sidepanel' ? 8 : 4).map((capture) => (
+                  <button
+                    className={
+                      capture.id === selectedCapture?.id
+                        ? 'w-full rounded-md border border-primary bg-accent px-2 py-2 text-left'
+                        : 'w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted'
+                    }
+                    key={capture.id}
+                    onClick={() => setSelectedCaptureId(capture.id)}
+                    type="button"
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <span className="min-w-0 flex-1 truncate">{capture.title}</span>
+                      <Badge variant="outline">{capture.source}</Badge>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{capture.siteName ?? hostFromUrl(capture.url)}</span>
+                      {capture.wordCount ? <span>{capture.wordCount} 字</span> : null}
+                      <span>{capture.media.length} 图</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {selectedCapture ? (
+                <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+                  <div className="text-sm font-medium">预览：{selectedCapture.title}</div>
+                  <div className="max-h-40 overflow-auto rounded-md bg-card p-2 font-mono text-[11px] text-muted-foreground">
+                    {selectedCapture.text.slice(0, 1200)}
+                    {selectedCapture.text.length > 1200 ? '\n...' : ''}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>标签</Label>
+                    <Input
+                      onChange={(event) => setCaptureTags(event.target.value)}
+                      placeholder="article, security"
+                      value={captureTags}
+                    />
+                  </div>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <Button
+                      disabled={busy || !handle}
+                      loading={busy}
+                      onClick={exportCapture}
+                    >
+                      <Save className="h-4 w-4" />
+                      写入 Vault
+                    </Button>
+                    <Button
+                      disabled={busy}
+                      onClick={() => onRemovePendingCapture(selectedCapture.id)}
+                      size="icon"
+                      variant="outline"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               <Button disabled={busy} onClick={onClearPendingCapture} variant="ghost">
-                忽略
+                清空待保存队列
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      ) : null}
+          )}
+        </CardContent>
+      </Card>
 
       <ScrollArea className="min-h-0 flex-1 rounded-lg border border-border bg-card">
         <div className="space-y-2 p-3">

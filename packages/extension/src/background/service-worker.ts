@@ -21,9 +21,10 @@ import {
 import {
   clearPendingCapture,
   getExportManifests,
-  getPendingCapture,
+  getPendingCaptures,
   getSettings,
   getOnboarded,
+  removePendingCapture,
   savePendingCapture,
   saveOnboarded,
   saveSettings,
@@ -38,7 +39,7 @@ async function getState(): Promise<ExtensionState> {
   const exportManifests = await getExportManifests();
   const lastMoveRecords = await getLastMoveRecords();
   const settings = await getSettings();
-  const pendingCapture = await getPendingCapture();
+  const pendingCaptures = await getPendingCaptures();
   const onboarded = await getOnboarded();
 
   return {
@@ -47,7 +48,7 @@ async function getState(): Promise<ExtensionState> {
     folders: summary.folders,
     backups,
     exportManifests,
-    pendingCapture,
+    pendingCaptures,
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
@@ -133,6 +134,53 @@ function requestCapture(tabId: number | undefined, source: CapturedContent['sour
   );
 }
 
+async function executeArticleExtractor(tabId: number): Promise<CapturedContent> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content/article.js'],
+  });
+
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'article:extract' },
+      (response: { ok?: boolean; data?: CapturedContent; error?: string } | undefined) => {
+        const runtimeError = chrome.runtime.lastError?.message;
+        if (runtimeError) {
+          reject(new Error(runtimeError));
+          return;
+        }
+
+        if (!response?.ok || !response.data) {
+          reject(new Error(response?.error ?? '无法提取当前页面正文'));
+          return;
+        }
+
+        resolve(response.data);
+      },
+    );
+  });
+}
+
+function requestArticleCapture(tab: chrome.tabs.Tab | undefined): void {
+  const tabId = tab?.id;
+  if (typeof tabId !== 'number') {
+    return;
+  }
+
+  void executeArticleExtractor(tabId)
+    .then((capture) => savePendingCapture(capture))
+    .then(() => {
+      const windowId = tab?.windowId;
+      if (typeof windowId === 'number' && chrome.sidePanel?.open) {
+        return chrome.sidePanel.open({ windowId }).catch(() => undefined);
+      }
+
+      return undefined;
+    })
+    .catch(() => undefined);
+}
+
 async function handleRequest(request: ExtensionRequest): Promise<ExtensionResponse> {
   try {
     switch (request.type) {
@@ -158,7 +206,9 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         await saveOnboarded(request.onboarded);
         return { ok: true, data: { onboarded: request.onboarded } };
       case 'capture:getPending':
-        return { ok: true, data: await getPendingCapture() };
+        return { ok: true, data: await getPendingCaptures() };
+      case 'capture:removePending':
+        return { ok: true, data: { removed: await removePendingCapture(request.id) } };
       case 'capture:clearPending':
         await clearPendingCapture();
         return { ok: true, data: { cleared: true } };
@@ -250,27 +300,30 @@ chrome.runtime.onInstalled.addListener(() => {
   if (chrome.sidePanel?.setPanelBehavior) {
     void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
   }
-  chrome.contextMenus.create({
-    id: 'shuhai-open',
-    title: '打开 ShuHai 侧边栏',
-    contexts: ['action'],
-  });
-  chrome.contextMenus.create({
-    id: 'shuhai-save-page',
-    title: '保存到 ShuHai 知识库',
-    contexts: ['page'],
-  });
-  chrome.contextMenus.create({
-    id: 'shuhai-save-tweet',
-    title: '保存此推文',
-    contexts: ['page'],
-    documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
-  });
-  chrome.contextMenus.create({
-    id: 'shuhai-save-weibo',
-    title: '保存此微博',
-    contexts: ['page'],
-    documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
+
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'shuhai-open',
+      title: '打开 ShuHai 侧边栏',
+      contexts: ['action'],
+    });
+    chrome.contextMenus.create({
+      id: 'shuhai-save-article',
+      title: '保存此文章到知识库',
+      contexts: ['page', 'selection'],
+    });
+    chrome.contextMenus.create({
+      id: 'shuhai-save-tweet',
+      title: '保存此推文',
+      contexts: ['page'],
+      documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
+    });
+    chrome.contextMenus.create({
+      id: 'shuhai-save-weibo',
+      title: '保存此微博',
+      contexts: ['page'],
+      documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
+    });
   });
 });
 
@@ -304,16 +357,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     return;
   }
 
-  if (info.menuItemId === 'shuhai-save-page' && info.pageUrl) {
-    storeCapture({
-      id: crypto.randomUUID(),
-      source: 'page',
-      title: info.pageUrl,
-      url: info.pageUrl,
-      text: '',
-      media: [],
-      tags: [],
-      capturedAt: new Date().toISOString(),
-    });
+  if (info.menuItemId === 'shuhai-save-article') {
+    requestArticleCapture(tab);
   }
 });

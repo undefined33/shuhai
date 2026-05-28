@@ -48,6 +48,14 @@ export interface ExportResult {
   manifest: ExportManifest;
 }
 
+function captureSourceFolder(source: CapturedContent['source']): string {
+  if (source === 'article') {
+    return '文章';
+  }
+
+  return source;
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -149,7 +157,7 @@ export function buildCaptureExportPath(
   directoryPrefix: string,
 ): string[] {
   const prefix = sanitizeRelativePath(directoryPrefix || 'Bookmarks');
-  const source = sanitizePathSegment(capture.source);
+  const source = sanitizePathSegment(captureSourceFolder(capture.source));
   const fileName = sanitizeFileName(capture.title || capture.url);
   const segments = [...prefix, source, fileName];
 

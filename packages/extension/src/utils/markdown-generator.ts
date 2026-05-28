@@ -5,6 +5,7 @@ import type {
 } from '../shared/bookmark-types.js';
 import {
   neutralizeObsidianSyntax,
+  sanitizeArticleMarkdown,
   sanitizeText,
   sanitizeUrl,
   sanitizeYamlList,
@@ -34,6 +35,14 @@ function markdownLink(label: string, url: string): string {
   }
 
   return `[${neutralizeObsidianSyntax(label)}](${safeUrl})`;
+}
+
+function sourceLabel(source: CapturedContent['source']): string {
+  if (source === 'article') {
+    return 'article';
+  }
+
+  return source;
 }
 
 export function generateBookmarkMarkdown(
@@ -81,10 +90,51 @@ export function generateCapturedContentMarkdown(
   const title = sanitizeText(capture.title || capture.url);
   const url = sanitizeUrl(capture.url);
   const author = sanitizeText(capture.author ?? capture.handle ?? '');
+  const savedDate = exportedAt.toISOString().slice(0, 10);
+
+  if (capture.source === 'article') {
+    const yaml = frontmatter({
+      title: sanitizeYamlString(title),
+      url: sanitizeYamlString(url),
+      source: 'article',
+      site: sanitizeYamlString(capture.siteName ?? ''),
+      author: sanitizeYamlString(author),
+      created: capture.created ? sanitizeYamlString(capture.created) : '',
+      saved: savedDate,
+      tags: sanitizeYamlList(capture.tags),
+      word_count: capture.wordCount ? String(capture.wordCount) : '',
+      shuhai_format: '2',
+    });
+    const source = capture.siteName
+      ? markdownLink(capture.siteName, capture.url)
+      : markdownLink('原文', capture.url);
+
+    return [
+      yaml,
+      '',
+      `# ${neutralizeObsidianSyntax(title)}`,
+      '',
+      `> 来源: ${source}`,
+      author ? `> 作者: ${neutralizeObsidianSyntax(author)} · 保存时间: ${savedDate}` : `> 保存时间: ${savedDate}`,
+      capture.description ? `> 摘要: ${neutralizeObsidianSyntax(capture.description)}` : '',
+      '',
+      '---',
+      '',
+      sanitizeArticleMarkdown(capture.text),
+      '',
+      '---',
+      '',
+      '## 笔记',
+      '',
+    ]
+      .filter((line) => line !== '')
+      .join('\n');
+  }
+
   const yaml = frontmatter({
     title: sanitizeYamlString(title),
     url: sanitizeYamlString(url),
-    source: capture.source,
+    source: sourceLabel(capture.source),
     author: sanitizeYamlString(author),
     created: capture.created ? sanitizeYamlString(capture.created) : '',
     exported: exportedAt.toISOString().slice(0, 10),

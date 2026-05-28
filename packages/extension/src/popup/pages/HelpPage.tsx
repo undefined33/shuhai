@@ -85,6 +85,25 @@ export default function HelpPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
+              保存当前文章
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StepList
+              items={[
+                '在正在阅读的网页中右键，选择“保存此文章到知识库”。',
+                'ShuHai 只读取当前页面已经加载的 DOM，不访问任何外部 URL。',
+                '导出页会显示标题、来源、字数、图片链接数量和正文预览。',
+                '确认标签后点击写入 Vault，文章正文会保存为 Markdown。',
+              ]}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-primary" />
               保存 Twitter/X 或微博内容
             </CardTitle>
           </CardHeader>

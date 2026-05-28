@@ -1,7 +1,7 @@
 export type ClassificationReason = 'folder' | 'rule' | 'ai' | 'manual';
 export type ClassificationMode = 'safe' | 'full';
 export type ExportScope = 'all' | 'plan' | 'selected';
-export type CaptureSource = 'page' | 'twitter' | 'weibo';
+export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
 
 export interface BookmarkNode {
   id: string;
@@ -169,6 +169,9 @@ export interface CapturedContent {
   media: CapturedMedia[];
   tags: string[];
   capturedAt: string;
+  siteName?: string;
+  description?: string;
+  wordCount?: number;
 }
 
 export interface ExtensionState {
@@ -177,7 +180,7 @@ export interface ExtensionState {
   folders: FolderItem[];
   backups: BackupRecord[];
   exportManifests: ExportManifest[];
-  pendingCapture?: CapturedContent;
+  pendingCaptures: CapturedContent[];
   lastMoveRecordCount: number;
   onboarded: boolean;
   settings: AppSettings;
@@ -196,6 +199,7 @@ export type ExtensionRequest =
   | { type: 'settings:set'; settings: AppSettings }
   | { type: 'onboarding:set'; onboarded: boolean }
   | { type: 'capture:getPending' }
+  | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
   | { type: 'backups:list' };
 
@@ -207,6 +211,7 @@ export type ExtensionResponse =
   | { ok: true; data: AppSettings }
   | { ok: true; data: { undone: number } }
   | { ok: true; data: { onboarded: boolean } }
-  | { ok: true; data: CapturedContent | undefined }
+  | { ok: true; data: CapturedContent[] }
+  | { ok: true; data: { removed: boolean } }
   | { ok: true; data: { cleared: boolean } }
   | { ok: false; error: string };
