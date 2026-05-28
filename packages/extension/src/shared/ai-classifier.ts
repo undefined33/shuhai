@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BookmarkItem,
   ClassificationMode,
+  ClassificationProgress,
   ClassificationSuggestion,
   FolderItem,
 } from './bookmark-types.js';
@@ -33,6 +34,7 @@ export interface FetchLike {
       method: string;
       headers: Record<string, string>;
       body: string;
+      signal?: AbortSignal;
     },
   ): Promise<{
     ok: boolean;
@@ -51,7 +53,14 @@ interface ClassifyAllOptions {
   mode?: ClassificationMode;
   folders?: FolderItem[];
   fetchImpl?: FetchLike;
-  onProgress?: (done: number, total: number) => void;
+  signal?: AbortSignal;
+  onProgress?: (
+    done: number,
+    total: number,
+    batch: number,
+    totalBatches: number,
+    progress: ClassificationProgress,
+  ) => void;
 }
 
 function clampConfidence(value: unknown): number {
@@ -147,7 +156,7 @@ function chunkBookmarks(bookmarks: BookmarkItem[]): BookmarkItem[][] {
 function optionsFromFetch(
   fetchImplOrOptions?: FetchLike | ClassifyAllOptions,
 ): Required<Pick<ClassifyAllOptions, 'mode' | 'folders' | 'fetchImpl'>> &
-  Pick<ClassifyAllOptions, 'onProgress'> {
+  Pick<ClassifyAllOptions, 'onProgress' | 'signal'> {
   if (typeof fetchImplOrOptions === 'function') {
     return {
       mode: 'safe',
@@ -161,6 +170,7 @@ function optionsFromFetch(
     folders: fetchImplOrOptions?.folders ?? [],
     fetchImpl: fetchImplOrOptions?.fetchImpl ?? fetch,
     onProgress: fetchImplOrOptions?.onProgress,
+    signal: fetchImplOrOptions?.signal,
   };
 }
 
@@ -199,6 +209,7 @@ export async function classifyWithDeepSeek(
       ],
       temperature: 0.1,
     }),
+    signal: options.signal,
   });
 
   if (!response.ok) {
@@ -221,12 +232,49 @@ export async function classifyAllWithDeepSeek(
   const batches = chunkBookmarks(bookmarks);
   const results: ClassificationSuggestion[] = [];
   let processed = 0;
+  const startedAt = Date.now();
 
-  for (const batch of batches) {
-    const suggestions = await classifyWithDeepSeek(batch, settings, options);
-    results.push(...suggestions);
+  if (batches.length === 0 || !settings.useAi || !settings.deepSeekApiKey.trim()) {
+    return [];
+  }
+
+  for (const [index, batch] of batches.entries()) {
+    if (options.signal?.aborted) {
+      break;
+    }
+
+    try {
+      const suggestions = await classifyWithDeepSeek(batch, settings, options);
+      results.push(...suggestions);
+    } catch (error) {
+      if (options.signal?.aborted) {
+        break;
+      }
+
+      throw error;
+    }
+
     processed += batch.length;
-    options.onProgress?.(processed, bookmarks.length);
+    const elapsedMs = Date.now() - startedAt;
+    const completedBatches = index + 1;
+    const averageBatchMs = completedBatches > 0 ? elapsedMs / completedBatches : 0;
+    const remainingMs = Math.max(0, Math.round((batches.length - completedBatches) * averageBatchMs));
+    const progress: ClassificationProgress = {
+      done: processed,
+      total: bookmarks.length,
+      batch: completedBatches,
+      totalBatches: batches.length,
+      elapsedMs,
+      remainingMs,
+    };
+
+    options.onProgress?.(
+      processed,
+      bookmarks.length,
+      completedBatches,
+      batches.length,
+      progress,
+    );
   }
 
   return results;

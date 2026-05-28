@@ -73,6 +73,30 @@ export interface ClassificationPlan {
   generatedAt: string;
 }
 
+export interface ClassificationProgress {
+  done: number;
+  total: number;
+  batch: number;
+  totalBatches: number;
+  elapsedMs: number;
+  remainingMs?: number;
+  cancelled?: boolean;
+}
+
+export type ClassificationPortRequest =
+  | { type: 'plan:create'; mode: ClassificationMode }
+  | { type: 'cancel' };
+
+export type ClassificationPortMessage =
+  | { type: 'progress'; progress: ClassificationProgress }
+  | {
+      type: 'complete';
+      plan: ClassificationPlan;
+      progress: ClassificationProgress;
+      cancelled: boolean;
+    }
+  | { type: 'error'; error: string };
+
 export interface MoveRecord {
   bookmarkId: string;
   bookmarkTitle: string;
@@ -155,6 +179,7 @@ export interface ExtensionState {
   exportManifests: ExportManifest[];
   pendingCapture?: CapturedContent;
   lastMoveRecordCount: number;
+  onboarded: boolean;
   settings: AppSettings;
 }
 
@@ -169,6 +194,7 @@ export type ExtensionRequest =
   | { type: 'plan:undoLast' }
   | { type: 'settings:get' }
   | { type: 'settings:set'; settings: AppSettings }
+  | { type: 'onboarding:set'; onboarded: boolean }
   | { type: 'capture:getPending' }
   | { type: 'capture:clearPending' }
   | { type: 'backups:list' };
@@ -180,6 +206,7 @@ export type ExtensionResponse =
   | { ok: true; data: BackupRecord[] }
   | { ok: true; data: AppSettings }
   | { ok: true; data: { undone: number } }
+  | { ok: true; data: { onboarded: boolean } }
   | { ok: true; data: CapturedContent | undefined }
   | { ok: true; data: { cleared: boolean } }
   | { ok: false; error: string };

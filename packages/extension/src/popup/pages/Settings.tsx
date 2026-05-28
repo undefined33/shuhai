@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, Eye, EyeOff, Save } from 'lucide-react';
+import { Download, Eye, EyeOff, HelpCircle, Save } from 'lucide-react';
 import type {
   AppSettings,
   BackupRecord,
@@ -20,6 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../components/ui/select.js';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip.js';
 
 interface SettingsProps {
   backups: BackupRecord[];
@@ -91,7 +97,8 @@ export default function Settings({
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-3">
+    <TooltipProvider>
+      <section className="flex h-full min-h-0 flex-col gap-3">
       {error ? <Alert variant="destructive">{error}</Alert> : null}
 
       <ScrollArea className="min-h-0 flex-1 pr-2">
@@ -102,7 +109,17 @@ export default function Settings({
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-1.5">
-                <Label>DeepSeek API Key</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label>DeepSeek API Key</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      在 platform.deepseek.com 获取；Key 只保存在浏览器本地。
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <div className="flex gap-2">
                   <Input
                     onChange={(event) =>
@@ -179,6 +196,11 @@ export default function Settings({
                 />
                 <span>使用 AI 辅助分类</span>
               </label>
+              {!form.deepSeekApiKey.trim() ? (
+                <Alert variant="warning">
+                  未配置 API Key 时，ShuHai 会使用内置规则分类；配置后能获得更精确的 AI 建议。
+                </Alert>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -222,7 +244,9 @@ export default function Settings({
             </CardHeader>
             <CardContent className="space-y-2">
               {exportManifests.length === 0 ? (
-                <p className="text-xs text-muted-foreground">尚未导出过书签</p>
+                <p className="text-xs text-muted-foreground">
+                  尚未导出过书签。到导出页选择 Vault 后即可生成历史记录。
+                </p>
               ) : null}
               {exportManifests.map((manifest) => (
                 <div className="flex items-center gap-2 text-xs" key={manifest.id}>
@@ -240,7 +264,11 @@ export default function Settings({
               <CardTitle>书签备份</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {backups.length === 0 ? <p className="text-xs text-muted-foreground">暂无备份</p> : null}
+              {backups.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  暂无备份。每次应用整理方案前会自动备份，便于撤销。
+                </p>
+              ) : null}
               {backups.map((backup) => (
                 <div className="flex items-center gap-2 text-xs" key={backup.key}>
                   <span className="min-w-0 flex-1 truncate">
@@ -262,5 +290,6 @@ export default function Settings({
         保存设置
       </Button>
     </section>
+    </TooltipProvider>
   );
 }

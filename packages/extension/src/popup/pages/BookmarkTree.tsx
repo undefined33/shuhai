@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, Folder, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
+import { ChevronRight, Folder, HelpCircle, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
 import type {
   BookmarkItem,
   ClassificationMode,
@@ -40,6 +40,7 @@ interface BookmarkTreeProps {
   onCreatePlan(mode: ClassificationMode): void;
   onRefresh(): void;
   onUndo(): void;
+  surface?: 'popup' | 'sidepanel';
 }
 
 function countByFolder(bookmarks: BookmarkItem[]): Map<string, number> {
@@ -62,6 +63,7 @@ export default function BookmarkTree({
   onCreatePlan,
   onRefresh,
   onUndo,
+  surface = 'popup',
 }: BookmarkTreeProps) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -79,9 +81,10 @@ export default function BookmarkTree({
 
   const visibleBookmarks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
+    const limit = surface === 'sidepanel' ? 260 : 120;
 
     if (!keyword) {
-      return bookmarks.slice(0, 120);
+      return bookmarks.slice(0, limit);
     }
 
     return bookmarks
@@ -91,8 +94,8 @@ export default function BookmarkTree({
           bookmark.url.toLowerCase().includes(keyword) ||
           bookmark.parentPath.toLowerCase().includes(keyword),
       )
-      .slice(0, 120);
-  }, [bookmarks, query]);
+      .slice(0, limit);
+  }, [bookmarks, query, surface]);
 
   const toggleFolder = (path: string) => {
     setCollapsed((current) => {
@@ -128,7 +131,17 @@ export default function BookmarkTree({
           <CardContent className="space-y-3 p-3">
             <div className="grid grid-cols-[1fr_auto] items-end gap-2">
               <div className="space-y-1.5">
-                <Label>整理模式</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label>整理模式</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      安全模式只整理根目录或未分类书签；全量模式会重新审视所有书签。
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <Select
                   onValueChange={(value) => onClassifyModeChange(value as ClassificationMode)}
                   value={classifyMode}
@@ -176,6 +189,7 @@ export default function BookmarkTree({
 
         <Command>
           <CommandInput
+            data-shuhai-search
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索标题、URL 或文件夹"
             value={query}
@@ -184,7 +198,11 @@ export default function BookmarkTree({
 
         <ScrollArea className="min-h-0 flex-1 rounded-lg border border-border bg-card">
           {bookmarks.length === 0 ? (
-            <div className="p-6 text-center text-sm text-muted-foreground">未检测到书签</div>
+            <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
+              <Folder className="mx-auto h-7 w-7" />
+              <p>未检测到 Chrome 书签。</p>
+              <p className="text-xs">请确认当前浏览器中已有书签，然后点击刷新。</p>
+            </div>
           ) : (
             <div className="space-y-1 p-2">
               {visibleFolders.map((folder) => {

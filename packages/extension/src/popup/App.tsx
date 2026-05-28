@@ -1,23 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bookmark,
+  CircleHelp,
   Download,
   GitBranch,
   Loader2,
+  PanelRightOpen,
   Settings as SettingsIcon,
+  Sparkles,
 } from 'lucide-react';
 import type {
   AppSettings,
   BackupRecord,
   BookmarkItem,
+  ClassificationPortMessage,
+  ClassificationPortRequest,
   ClassificationMode,
   ClassificationPlan,
+  ClassificationProgress,
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
   MovePlan,
 } from '../shared/bookmark-types.js';
+import { Badge } from '../components/ui/badge.js';
 import { Button } from '../components/ui/button.js';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import {
   Dialog,
   DialogContent,
@@ -33,9 +41,11 @@ import { DEFAULT_SETTINGS } from '../utils/storage.js';
 import BookmarkTree from './pages/BookmarkTree.js';
 import ClassifyPreview from './pages/ClassifyPreview.js';
 import ExportPage from './pages/ExportPage.js';
+import HelpPage from './pages/HelpPage.js';
 import Settings from './pages/Settings.js';
 
-type ViewName = 'tree' | 'preview' | 'export' | 'settings';
+type Surface = 'popup' | 'sidepanel';
+type ViewName = 'tree' | 'preview' | 'export' | 'settings' | 'help';
 type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
@@ -105,7 +115,245 @@ function applyPlanFolders(bookmarks: BookmarkItem[], plan: ClassificationPlan): 
   });
 }
 
-export default function App() {
+function formatDuration(ms: number | undefined): string {
+  if (!ms || ms <= 0) {
+    return '估算中';
+  }
+
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds} 秒`;
+  }
+
+  return `${Math.ceil(seconds / 60)} 分钟`;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+  );
+}
+
+function getCurrentWindowId(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    chrome.windows.getCurrent((currentWindow) => {
+      const error = chrome.runtime.lastError?.message;
+      if (error) {
+        reject(new Error(error));
+        return;
+      }
+
+      if (typeof currentWindow.id !== 'number') {
+        reject(new Error('无法识别当前 Chrome 窗口'));
+        return;
+      }
+
+      resolve(currentWindow.id);
+    });
+  });
+}
+
+async function openSidePanel(): Promise<void> {
+  if (!chrome.sidePanel?.open) {
+    throw new Error('当前 Chrome 版本不支持侧边栏，请先使用弹窗模式。');
+  }
+
+  const windowId = await getCurrentWindowId();
+  await chrome.sidePanel.open({ windowId });
+}
+
+interface PopupLauncherProps {
+  busy: boolean;
+  state?: ExtensionState;
+  onOpenSidePanel(): void;
+  onUsePopup(): void;
+  onShowHelp(): void;
+}
+
+function PopupLauncher({
+  busy,
+  state,
+  onOpenSidePanel,
+  onUsePopup,
+  onShowHelp,
+}: PopupLauncherProps) {
+  const bookmarkCount = state?.bookmarks.length ?? 0;
+  const folderCount = state?.folders.length ?? 0;
+  const hasVaultHistory = (state?.exportManifests.length ?? 0) > 0;
+
+  return (
+    <main className="flex h-[600px] flex-col gap-3 bg-background p-3 text-foreground">
+      <header className="space-y-1">
+        <h1 className="text-base font-semibold tracking-tight">ShuHai</h1>
+        <p className="text-xs text-muted-foreground">
+          侧边栏空间更适合整理大量书签；弹窗保留为快速入口。
+        </p>
+      </header>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Card>
+          <CardContent className="p-3">
+            <div className="text-2xl font-semibold leading-none">{bookmarkCount}</div>
+            <div className="mt-1 text-xs text-muted-foreground">书签</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3">
+            <div className="text-2xl font-semibold leading-none">{folderCount}</div>
+            <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2">
+            <PanelRightOpen className="h-4 w-4 text-primary" />
+            推荐工作区
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Button className="w-full" disabled={busy} loading={busy} onClick={onOpenSidePanel}>
+            <PanelRightOpen className="h-4 w-4" />
+            打开侧边栏
+          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button disabled={busy} onClick={onOpenSidePanel} variant="secondary">
+              <Sparkles className="h-4 w-4" />
+              整理书签
+            </Button>
+            <Button disabled={busy} onClick={onOpenSidePanel} variant="secondary">
+              <Download className="h-4 w-4" />
+              导出
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-2 p-3 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">DeepSeek AI</span>
+            <Badge variant={state?.settings.useAi ? 'success' : 'warning'}>
+              {state?.settings.useAi ? '已启用' : '规则模式'}
+            </Badge>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Vault 导出</span>
+            <Badge variant={hasVaultHistory ? 'success' : 'outline'}>
+              {hasVaultHistory ? '有历史记录' : '待配置'}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="mt-auto grid grid-cols-2 gap-2">
+        <Button disabled={busy} onClick={onShowHelp} variant="outline">
+          <CircleHelp className="h-4 w-4" />
+          帮助
+        </Button>
+        <Button disabled={busy} onClick={onUsePopup} variant="ghost">
+          继续用弹窗
+        </Button>
+      </div>
+    </main>
+  );
+}
+
+interface ProgressPanelProps {
+  progress?: ClassificationProgress;
+  onCancel(): void;
+}
+
+function ProgressPanel({ progress, onCancel }: ProgressPanelProps) {
+  const total = progress?.total ?? 0;
+  const done = progress?.done ?? 0;
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-card p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium">AI 正在分析你的书签</p>
+          <p className="text-[11px] text-muted-foreground">
+            {done}/{total} ({percent}%) · 批次 {progress?.batch ?? 0}/
+            {progress?.totalBatches ?? 0} · 预计剩余 {formatDuration(progress?.remainingMs)}
+          </p>
+        </div>
+        <Button onClick={onCancel} size="sm" variant="outline">
+          取消
+        </Button>
+      </div>
+      <Progress value={percent} />
+    </div>
+  );
+}
+
+interface WelcomeGuideProps {
+  open: boolean;
+  onStart(): void;
+  onOpenHelp(): void;
+}
+
+function WelcomeGuide({ open, onStart, onOpenHelp }: WelcomeGuideProps) {
+  return (
+    <Dialog open={open}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>欢迎使用 ShuHai</DialogTitle>
+          <DialogDescription>
+            ShuHai 帮你整理 Chrome 书签，并把值得沉淀的内容写入 Obsidian。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 text-sm">
+          <Card>
+            <CardContent className="p-3">
+              <div className="font-medium">1. 整理书签</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                AI 或内置规则会先生成移动方案，确认前不会修改真实书签。
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="font-medium">2. 导出到 Obsidian</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                首次选择 Vault 目录后，浏览器会记住授权并写入 Markdown。
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="font-medium">3. 保存社交内容</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                在 Twitter/X 或微博页面右键保存当前内容，再到导出页确认写入。
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+        <DialogFooter>
+          <Button onClick={onOpenHelp} variant="ghost">
+            查看完整帮助
+          </Button>
+          <Button onClick={onStart}>开始使用</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface AppProps {
+  surface?: Surface;
+}
+
+export default function App({ surface = 'popup' }: AppProps) {
   const [view, setView] = useState<ViewName>('tree');
   const [state, setState] = useState<ExtensionState | undefined>();
   const [plan, setPlan] = useState<ClassificationPlan | undefined>();
@@ -114,6 +362,10 @@ export default function App() {
   const [status, setStatus] = useState('正在读取书签...');
   const [notice, setNotice] = useState<Notice>();
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
+  const [classificationProgress, setClassificationProgress] =
+    useState<ClassificationProgress>();
+  const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
+  const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
 
   const busy = Boolean(busyAction);
 
@@ -156,9 +408,16 @@ export default function App() {
     setBusyAction('plan');
     setNotice(undefined);
     setClassifyMode(mode);
+    setClassificationProgress({
+      done: 0,
+      total: bookmarks.length,
+      batch: 0,
+      totalBatches: 0,
+      elapsedMs: 0,
+    });
     setStatus(mode === 'full' ? '正在重新审视全部书签...' : '正在生成安全整理方案...');
     try {
-      const nextPlan = await sendMessage<ClassificationPlan>({ type: 'plan:create', mode });
+      const nextPlan = await createPlanWithProgress(mode);
       setPlan(nextPlan);
       setView('preview');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
@@ -172,8 +431,63 @@ export default function App() {
     } catch (planError) {
       showError(planError);
     } finally {
+      classificationPortRef.current?.disconnect();
+      classificationPortRef.current = undefined;
+      setClassificationProgress(undefined);
       setBusyAction(undefined);
     }
+  };
+
+  const createPlanWithProgress = (mode: ClassificationMode): Promise<ClassificationPlan> =>
+    new Promise((resolve, reject) => {
+      if (!chrome.runtime.connect) {
+        void sendMessage<ClassificationPlan>({ type: 'plan:create', mode }).then(resolve, reject);
+        return;
+      }
+
+      const port = chrome.runtime.connect({ name: 'classify' });
+      let settled = false;
+      classificationPortRef.current = port;
+
+      port.onMessage.addListener((message: ClassificationPortMessage) => {
+        if (message.type === 'progress') {
+          setClassificationProgress(message.progress);
+          setStatus(
+            `已分类 ${message.progress.done}/${message.progress.total}，批次 ${message.progress.batch}/${message.progress.totalBatches}`,
+          );
+          return;
+        }
+
+        if (message.type === 'complete') {
+          settled = true;
+          if (message.cancelled) {
+            setNotice({
+              kind: 'warning',
+              message: `已取消，基于已分析的 ${message.progress.done} 个书签生成部分方案。`,
+            });
+          }
+          resolve(message.plan);
+          return;
+        }
+
+        if (message.type === 'error') {
+          settled = true;
+          reject(new Error(message.error));
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (!settled && chrome.runtime.lastError?.message) {
+          reject(new Error(chrome.runtime.lastError.message));
+        }
+      });
+
+      port.postMessage({ type: 'plan:create', mode } satisfies ClassificationPortRequest);
+    });
+
+  const cancelClassification = () => {
+    classificationPortRef.current?.postMessage({ type: 'cancel' } satisfies ClassificationPortRequest);
+    setStatus('正在取消，本批次结束后会生成部分方案...');
   };
 
   const applyPlan = async () => {
@@ -250,6 +564,30 @@ export default function App() {
     await loadState();
   };
 
+  const completeOnboarding = async () => {
+    try {
+      await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+      setState((current) => (current ? { ...current, onboarded: true } : current));
+    } catch (onboardingError) {
+      showError(onboardingError);
+    }
+  };
+
+  const openHelpFromWelcome = () => {
+    setView('help');
+    void completeOnboarding();
+  };
+
+  const handleOpenSidePanel = () => {
+    void openSidePanel()
+      .then(() => {
+        setNotice({ kind: 'success', message: '侧边栏已打开。' });
+      })
+      .catch((error) => {
+        showError(error);
+      });
+  };
+
   const folders = state?.folders ?? [];
   const backups = state?.backups ?? [];
   const settings = state?.settings ?? DEFAULT_SETTINGS;
@@ -262,9 +600,89 @@ export default function App() {
   );
   const alertVariant =
     notice?.kind === 'error' ? 'destructive' : notice?.kind === 'warning' ? 'warning' : 'success';
+  const workspaceClass =
+    surface === 'sidepanel' ? 'h-screen' : 'h-[600px]';
+  const showWorkspace = surface === 'sidepanel' || forcePopupWorkspace;
+
+  useEffect(() => {
+    if (!showWorkspace) {
+      return undefined;
+    }
+
+    const listener = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        if (view === 'preview' && plan && selectedCount > 0 && !busy) {
+          event.preventDefault();
+          setConfirmApplyOpen(true);
+        }
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        if (busyAction === 'plan') {
+          event.preventDefault();
+          cancelClassification();
+          return;
+        }
+
+        if (confirmApplyOpen) {
+          event.preventDefault();
+          setConfirmApplyOpen(false);
+          return;
+        }
+
+        if (view === 'preview') {
+          event.preventDefault();
+          setView('tree');
+        }
+        return;
+      }
+
+      if (event.key === '/') {
+        event.preventDefault();
+        setView('tree');
+        window.setTimeout(() => {
+          const search = document.querySelector<HTMLInputElement>('[data-shuhai-search]');
+          search?.focus();
+        }, 0);
+      }
+    };
+
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, [busy, busyAction, confirmApplyOpen, plan, selectedCount, showWorkspace, view]);
+
+  if (!showWorkspace) {
+    return (
+      <>
+        <PopupLauncher
+          busy={busy}
+          onOpenSidePanel={handleOpenSidePanel}
+          onShowHelp={() => {
+            setForcePopupWorkspace(true);
+            setView('help');
+          }}
+          onUsePopup={() => setForcePopupWorkspace(true)}
+          state={state}
+        />
+        <WelcomeGuide
+          onOpenHelp={() => {
+            setForcePopupWorkspace(true);
+            openHelpFromWelcome();
+          }}
+          onStart={completeOnboarding}
+          open={Boolean(state && !state.onboarded)}
+        />
+      </>
+    );
+  }
 
   return (
-    <main className="flex h-[600px] flex-col bg-background text-foreground">
+    <main className={`flex ${workspaceClass} flex-col bg-background text-foreground`}>
       <header className="border-b border-border px-3 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -279,10 +697,7 @@ export default function App() {
           ) : null}
         </div>
         {busyAction === 'plan' ? (
-          <div className="mt-3 space-y-1">
-            <Progress value={68} />
-            <p className="text-[11px] text-muted-foreground">正在分批分类，请保持弹窗打开。</p>
-          </div>
+          <ProgressPanel onCancel={cancelClassification} progress={classificationProgress} />
         ) : null}
       </header>
 
@@ -291,7 +706,7 @@ export default function App() {
         onValueChange={(next) => setView(next as ViewName)}
         value={view}
       >
-        <TabsList className="grid-cols-4">
+        <TabsList className="grid-cols-5">
           <TabsTrigger value="tree">
             <Bookmark className="h-3.5 w-3.5" />
             书签
@@ -307,6 +722,10 @@ export default function App() {
           <TabsTrigger value="settings">
             <SettingsIcon className="h-3.5 w-3.5" />
             设置
+          </TabsTrigger>
+          <TabsTrigger value="help">
+            <CircleHelp className="h-3.5 w-3.5" />
+            帮助
           </TabsTrigger>
         </TabsList>
 
@@ -331,6 +750,7 @@ export default function App() {
             onCreatePlan={createPlan}
             onRefresh={loadState}
             onUndo={undoLast}
+            surface={surface}
           />
         </TabsContent>
 
@@ -346,6 +766,7 @@ export default function App() {
               }
               plan={plan}
               selectedCount={selectedCount}
+              surface={surface}
             />
           ) : null}
         </TabsContent>
@@ -360,6 +781,7 @@ export default function App() {
             plan={plan}
             selectedMoveIds={plan ? selectedMoveIds(plan) : []}
             settings={settings}
+            surface={surface}
           />
         </TabsContent>
 
@@ -372,6 +794,10 @@ export default function App() {
             onSave={saveSettings}
             settings={settings}
           />
+        </TabsContent>
+
+        <TabsContent className="min-h-0 flex-1" value="help">
+          <HelpPage />
         </TabsContent>
       </Tabs>
 
@@ -393,6 +819,11 @@ export default function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <WelcomeGuide
+        onOpenHelp={openHelpFromWelcome}
+        onStart={completeOnboarding}
+        open={Boolean(state && !state.onboarded)}
+      />
     </main>
   );
 }

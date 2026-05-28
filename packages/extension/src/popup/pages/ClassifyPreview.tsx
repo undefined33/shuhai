@@ -1,4 +1,5 @@
-import { ArrowRight, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowRight, CheckCircle2, HelpCircle, ShieldAlert } from 'lucide-react';
 import type {
   ClassificationPlan,
   FolderItem,
@@ -9,8 +10,14 @@ import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
-import { Input } from '../../components/ui/input.js';
+import { Command, CommandInput, CommandList } from '../../components/ui/command.js';
 import { ScrollArea } from '../../components/ui/scroll-area.js';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip.js';
 
 interface ClassifyPreviewProps {
   plan: ClassificationPlan;
@@ -20,6 +27,7 @@ interface ClassifyPreviewProps {
   onMoveChange(move: MovePlan): void;
   onApply(): void;
   onCancel(): void;
+  surface?: 'popup' | 'sidepanel';
 }
 
 function confidenceLabel(confidence: number): string {
@@ -40,8 +48,81 @@ function confidenceVariant(confidence: number): 'success' | 'warning' | 'danger'
 
 function emptyReason(plan: ClassificationPlan): string {
   return plan.mode === 'safe'
-    ? '安全模式下，已有文件夹中的书签不会被重新分类。'
-    : '全量模式没有发现需要调整的书签。';
+    ? '安全模式下，已有文件夹中的书签不会被重新分类。返回书签页切换为全量模式可以重新审视全部书签。'
+    : '全量模式没有发现需要调整的书签。可以回到书签页修改自定义规则后再生成。';
+}
+
+interface FolderComboboxProps {
+  folders: FolderItem[];
+  value: string;
+  onChange(value: string): void;
+}
+
+function FolderCombobox({ folders, value, onChange }: FolderComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const keyword = value.trim().toLowerCase();
+  const filteredFolders = useMemo(
+    () =>
+      folders
+        .filter((folder) => folder.path)
+        .filter((folder) => !keyword || folder.path.toLowerCase().includes(keyword))
+        .sort((a, b) => b.bookmarkCount - a.bookmarkCount || a.path.localeCompare(b.path))
+        .slice(0, 8),
+    [folders, keyword],
+  );
+  const hasExactMatch = filteredFolders.some((folder) => folder.path === value);
+
+  return (
+    <Command className="relative overflow-visible">
+      <CommandInput
+        className="text-xs"
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder="搜索或输入新文件夹"
+        value={value}
+      />
+      {open ? (
+        <CommandList className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 rounded-lg border border-border bg-popover shadow-lg">
+          {value.trim() && !hasExactMatch ? (
+            <button
+              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(value);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 truncate">创建：{value}</span>
+              <Badge variant="outline">新分类</Badge>
+            </button>
+          ) : null}
+          {filteredFolders.map((folder) => (
+            <button
+              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted"
+              key={folder.id}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(folder.path);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span className="min-w-0 flex-1 truncate">{folder.path}</span>
+              <Badge variant="secondary">{folder.bookmarkCount}</Badge>
+            </button>
+          ))}
+          {filteredFolders.length === 0 && !value.trim() ? (
+            <div className="px-2 py-2 text-xs text-muted-foreground">输入文件夹路径开始创建。</div>
+          ) : null}
+        </CommandList>
+      ) : null}
+    </Command>
+  );
 }
 
 export default function ClassifyPreview({
@@ -52,11 +133,16 @@ export default function ClassifyPreview({
   onMoveChange,
   onApply,
   onCancel,
+  surface = 'popup',
 }: ClassifyPreviewProps) {
-  const folderPaths = folders.map((folder) => folder.path).filter(Boolean);
+  const moveGridClass =
+    surface === 'sidepanel'
+      ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.25fr)] items-center gap-2'
+      : 'grid grid-cols-[1fr_auto_1fr] items-center gap-2';
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-3">
+    <TooltipProvider>
+      <section className="flex h-full min-h-0 flex-col gap-3">
       <div className="grid grid-cols-3 gap-2">
         <Card>
           <CardContent className="p-3">
@@ -101,9 +187,9 @@ export default function ClassifyPreview({
         <Card>
           <CardContent className="flex flex-col items-center gap-2 p-6 text-center">
             <ShieldAlert className="h-7 w-7 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">{emptyReason(plan)}</p>
-          </CardContent>
-        </Card>
+              <p className="text-sm text-muted-foreground">{emptyReason(plan)}</p>
+            </CardContent>
+          </Card>
       ) : null}
 
       {plan.newFolders.length > 0 ? (
@@ -140,18 +226,17 @@ export default function ClassifyPreview({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <div className={moveGridClass}>
                   <span className="truncate rounded-md bg-muted px-2 py-1 text-[11px]">
                     {move.currentFolder || '根目录'}
                   </span>
                   <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    className="h-8 text-xs"
-                    list="folder-paths"
-                    onChange={(event) =>
+                  <FolderCombobox
+                    folders={folders}
+                    onChange={(targetFolder) =>
                       onMoveChange({
                         ...move,
-                        targetFolder: event.target.value,
+                        targetFolder,
                       })
                     }
                     value={move.targetFolder}
@@ -162,9 +247,17 @@ export default function ClassifyPreview({
                   <Badge variant={move.reason === 'ai' ? 'default' : 'outline'}>
                     {move.reason === 'ai' ? 'AI' : move.ruleName ?? '规则'}
                   </Badge>
-                  <Badge variant={confidenceVariant(move.confidence)}>
-                    {confidenceLabel(move.confidence)}
-                  </Badge>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Badge variant={confidenceVariant(move.confidence)}>
+                          {confidenceLabel(move.confidence)}
+                        </Badge>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>置信度越高，表示 AI 或规则越确定这个分类。</TooltipContent>
+                  </Tooltip>
+                  <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
                   {move.confidence < 0.6 ? <Badge variant="danger">需确认</Badge> : null}
                   {plan.mode === 'full' && !move.selected ? (
                     <Badge variant="warning">默认未选</Badge>
@@ -175,12 +268,7 @@ export default function ClassifyPreview({
           ))}
         </div>
       </ScrollArea>
-
-      <datalist id="folder-paths">
-        {folderPaths.map((path) => (
-          <option key={path} value={path} />
-        ))}
-      </datalist>
     </section>
+    </TooltipProvider>
   );
 }

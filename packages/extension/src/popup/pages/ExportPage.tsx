@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Database, Download, FolderOpen, Save } from 'lucide-react';
+import { Database, Download, FolderOpen, HelpCircle, Save } from 'lucide-react';
 import type {
   AppSettings,
   BookmarkItem,
@@ -19,6 +19,12 @@ import { Progress } from '../../components/ui/progress.js';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group.js';
 import { ScrollArea } from '../../components/ui/scroll-area.js';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip.js';
+import {
   checkVaultPermission,
   exportBookmarksToVault,
   exportCaptureToVault,
@@ -34,6 +40,7 @@ interface ExportPageProps {
   plan?: ClassificationPlan;
   selectedMoveIds: string[];
   settings: AppSettings;
+  surface?: 'popup' | 'sidepanel';
   onClearPendingCapture(): Promise<void>;
   onRefresh(): Promise<void>;
 }
@@ -64,6 +71,7 @@ export default function ExportPage({
   plan,
   selectedMoveIds,
   settings,
+  surface = 'popup',
   onClearPendingCapture,
   onRefresh,
 }: ExportPageProps) {
@@ -138,8 +146,8 @@ export default function ExportPage({
           directoryPrefix,
           moves: plan?.moves,
         },
-        (done, total) => {
-          setStatus(`正在导出 ${done}/${total}`);
+        (done, total, path) => {
+          setStatus(`正在写入: ${done}/${total}${path ? ` (${path})` : ''}`);
           setProgress(total > 0 ? Math.round((done / total) * 100) : 0);
         },
       );
@@ -182,7 +190,8 @@ export default function ExportPage({
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-3">
+    <TooltipProvider>
+      <section className="flex h-full min-h-0 flex-col gap-3">
       {error ? <Alert variant="destructive">{error}</Alert> : null}
       {status ? <Alert variant={error ? 'destructive' : 'success'}>{status}</Alert> : null}
 
@@ -205,15 +214,22 @@ export default function ExportPage({
             <Button disabled={busy || scopedBookmarks.length === 0} onClick={buildPreview} variant="secondary">
               预览
             </Button>
-            <Button
-              className="flex-1"
-              disabled={busy || scopedBookmarks.length === 0}
-              loading={busy}
-              onClick={exportBookmarks}
-            >
-              <Download className="h-4 w-4" />
-              导出
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="flex flex-1">
+                  <Button
+                    className="flex-1"
+                    disabled={busy || scopedBookmarks.length === 0}
+                    loading={busy}
+                    onClick={exportBookmarks}
+                  >
+                    <Download className="h-4 w-4" />
+                    导出
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>把书签索引写成 Markdown 文件，不会抓取远程网页内容。</TooltipContent>
+            </Tooltip>
           </div>
           {busy || progress > 0 ? <Progress value={progress} /> : null}
         </CardContent>
@@ -222,7 +238,17 @@ export default function ExportPage({
       <Card>
         <CardContent className="space-y-3 p-3">
           <div className="space-y-1.5">
-            <Label>导出范围</Label>
+            <div className="flex items-center gap-1.5">
+              <Label>导出范围</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  选择全部书签、当前整理方案涉及的书签，或仅导出你勾选的移动项。
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <RadioGroup onValueChange={(value) => setScope(value as ExportScope)} value={scope}>
               <label className="flex items-center gap-2 rounded-md border border-border px-2 py-2 text-sm">
                 <RadioGroupItem value="all" />
@@ -281,7 +307,7 @@ export default function ExportPage({
           {preview ? (
             <div className="space-y-2">
               <div className="text-sm font-medium">预览：最多 {preview.total} 个 .md 文件</div>
-              {preview.folders.slice(0, 8).map((folder) => (
+              {preview.folders.slice(0, surface === 'sidepanel' ? 16 : 8).map((folder) => (
                 <div className="flex items-center gap-2 text-xs" key={folder.path}>
                   <span className="min-w-0 flex-1 truncate">{folder.path}</span>
                   <Badge variant="outline">{folder.count}</Badge>
@@ -289,7 +315,11 @@ export default function ExportPage({
               ))}
             </div>
           ) : (
-            <div className="text-center text-sm text-muted-foreground">尚未生成导出预览</div>
+            <div className="space-y-2 text-center text-sm text-muted-foreground">
+              <FolderOpen className="mx-auto h-7 w-7" />
+              <p>尚未生成导出预览。</p>
+              <p className="text-xs">先选择 Vault 目录，再点击预览确认将写入哪些文件。</p>
+            </div>
           )}
 
           <div className="border-t border-border pt-3">
@@ -312,5 +342,6 @@ export default function ExportPage({
         </div>
       </ScrollArea>
     </section>
+    </TooltipProvider>
   );
 }

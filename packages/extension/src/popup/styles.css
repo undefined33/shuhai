@@ -54,11 +54,23 @@
 body {
   min-width: 420px;
   width: 420px;
+  min-height: 600px;
   margin: 0;
   overflow: hidden;
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+}
+
+body.shuhai-sidepanel {
+  min-width: 360px;
+  width: auto;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+body.shuhai-sidepanel #root {
+  min-height: 100vh;
 }
 
 button,

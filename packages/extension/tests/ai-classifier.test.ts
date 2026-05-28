@@ -116,6 +116,7 @@ describe('ai classifier', () => {
       bookmark(`b${index}`),
     );
     const progress: Array<[number, number]> = [];
+    const detailedProgress: Array<[number, number, number, number]> = [];
     const fetchImpl = vi.fn<FetchLike>().mockImplementation(async (_input, init) => {
       const body = JSON.parse(init.body) as { messages: Array<{ content: string }> };
       const ids = Array.from(body.messages[0]?.content.matchAll(/"bookmarkId":"([^"]+)"/g) ?? [])
@@ -150,7 +151,10 @@ describe('ai classifier', () => {
       fetchImpl,
       folders,
       mode: 'full',
-      onProgress: (done, total) => progress.push([done, total]),
+      onProgress: (done, total, batch, totalBatches) => {
+        progress.push([done, total]);
+        detailedProgress.push([done, total, batch, totalBatches]);
+      },
     });
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -159,5 +163,56 @@ describe('ai classifier', () => {
       [AI_BATCH_SIZE, AI_BATCH_SIZE + 1],
       [AI_BATCH_SIZE + 1, AI_BATCH_SIZE + 1],
     ]);
+    expect(detailedProgress).toEqual([
+      [AI_BATCH_SIZE, AI_BATCH_SIZE + 1, 1, 2],
+      [AI_BATCH_SIZE + 1, AI_BATCH_SIZE + 1, 2, 2],
+    ]);
+  });
+
+  it('returns completed AI batches when cancellation is requested', async () => {
+    const bookmarks = Array.from({ length: AI_BATCH_SIZE + 1 }, (_, index) =>
+      bookmark(`cancel-${index}`),
+    );
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<FetchLike>().mockImplementation(async (_input, init) => {
+      const body = JSON.parse(init.body) as { messages: Array<{ content: string }> };
+      const ids = Array.from(body.messages[0]?.content.matchAll(/"bookmarkId":"([^"]+)"/g) ?? [])
+        .map((match) => match[1])
+        .filter((id): id is string => Boolean(id) && id !== '...');
+
+      return {
+        ok: true,
+        status: 200,
+        text: async () => '',
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(
+                  ids.map((id) => ({
+                    bookmarkId: id,
+                    targetFolder: '安全/漏洞研究',
+                    confidence: 0.9,
+                    reason: 'batch',
+                    tags: ['安全'],
+                  })),
+                ),
+              },
+            },
+          ],
+        }),
+      };
+    });
+
+    const result = await classifyAllWithDeepSeek(bookmarks, settings, {
+      fetchImpl,
+      folders,
+      mode: 'full',
+      signal: controller.signal,
+      onProgress: () => controller.abort(),
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(AI_BATCH_SIZE);
   });
 });

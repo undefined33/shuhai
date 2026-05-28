@@ -9,6 +9,7 @@ export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
 export const EXPORT_MANIFESTS_KEY = 'exportManifests';
 export const PENDING_CAPTURE_KEY = 'pendingCapture';
+export const ONBOARDED_KEY = 'onboarded';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   deepSeekApiKey: '',
@@ -109,4 +110,12 @@ export function savePendingCapture(capture: CapturedContent): Promise<void> {
 
 export function clearPendingCapture(): Promise<void> {
   return removeLocalValues([PENDING_CAPTURE_KEY]);
+}
+
+export function getOnboarded(): Promise<boolean> {
+  return getLocalValue<boolean>(ONBOARDED_KEY, false);
+}
+
+export function saveOnboarded(onboarded: boolean): Promise<void> {
+  return setLocalValues({ [ONBOARDED_KEY]: onboarded });
 }

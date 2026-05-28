@@ -218,7 +218,7 @@ export async function exportBookmarksToVault(
   handle: FileSystemDirectoryHandle,
   bookmarks: BookmarkItem[],
   options: ExportOptions,
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: (done: number, total: number, path?: string) => void,
 ): Promise<ExportResult> {
   const manifest: ExportManifest = {
     id: crypto.randomUUID(),
@@ -262,7 +262,11 @@ export async function exportBookmarksToVault(
       });
     }
 
-    onProgress?.(result.exported + result.skipped + result.errors.length, bookmarks.length);
+    onProgress?.(
+      result.exported + result.skipped + result.errors.length,
+      bookmarks.length,
+      relativePath,
+    );
   }
 
   await saveExportManifest(manifest);

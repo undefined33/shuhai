@@ -3,7 +3,7 @@
   "name": "ShuHai Bookmark Organizer",
   "version": "0.1.0",
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
-  "permissions": ["bookmarks", "storage", "contextMenus"],
+  "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel"],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
@@ -13,6 +13,9 @@
   "action": {
     "default_popup": "popup/index.html",
     "default_title": "ShuHai"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
   },
   "background": {
     "service_worker": "background/service-worker.js",
