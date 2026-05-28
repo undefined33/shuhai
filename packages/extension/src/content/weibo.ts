@@ -67,14 +67,22 @@ export function extractWeiboContent(documentRef: Document, url: string): Capture
   };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== 'social:extract') {
-    return false;
-  }
+const weiboWindow =
+  typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { __shuhaiWeiboExtractorInstalled?: boolean });
 
-  sendResponse({
-    ok: true,
-    data: extractWeiboContent(document, location.href),
+if (weiboWindow && !weiboWindow.__shuhaiWeiboExtractorInstalled) {
+  weiboWindow.__shuhaiWeiboExtractorInstalled = true;
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'social:extract') {
+      return false;
+    }
+
+    sendResponse({
+      ok: true,
+      data: extractWeiboContent(document, location.href),
+    });
+    return true;
   });
-  return true;
-});
+}

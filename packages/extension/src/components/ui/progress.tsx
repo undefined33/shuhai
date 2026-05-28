@@ -12,8 +12,8 @@ export function Progress({
   const safeValue =
     typeof value === 'number' && Number.isFinite(value)
       ? Math.min(Math.max(value, 0), safeMax)
-      : undefined;
-  const percent = safeValue === undefined ? 0 : (safeValue / safeMax) * 100;
+      : null;
+  const percent = safeValue === null ? 0 : (safeValue / safeMax) * 100;
 
   return (
     <ProgressPrimitive.Root

@@ -14,14 +14,18 @@ import type {
   AppSettings,
   BackupRecord,
   BookmarkItem,
+  BookmarkNode,
+  CapturedContent,
   ClassificationPortMessage,
   ClassificationPortRequest,
   ClassificationMode,
   ClassificationPlan,
   ClassificationProgress,
+  ExportManifest,
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
+  FolderItem,
   MovePlan,
   UrlHealthPortMessage,
   UrlHealthPortRequest,
@@ -54,6 +58,57 @@ type Surface = 'popup' | 'sidepanel';
 type ViewName = 'tree' | 'preview' | 'health' | 'export' | 'settings' | 'help';
 type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function arrayOrEmpty<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+export function normalizeExtensionState(value: unknown): ExtensionState {
+  const state = objectRecord(value);
+  const settings = objectRecord(state.settings);
+  const defaultClassifyMode =
+    settings.defaultClassifyMode === 'full' || settings.defaultClassifyMode === 'safe'
+      ? settings.defaultClassifyMode
+      : DEFAULT_SETTINGS.defaultClassifyMode;
+  const deepSeekModel =
+    settings.deepSeekModel === 'deepseek-chat' || settings.deepSeekModel === 'deepseek-reasoner'
+      ? settings.deepSeekModel
+      : DEFAULT_SETTINGS.deepSeekModel;
+
+  return {
+    tree: arrayOrEmpty<BookmarkNode>(state.tree),
+    bookmarks: arrayOrEmpty<BookmarkItem>(state.bookmarks),
+    folders: arrayOrEmpty<FolderItem>(state.folders),
+    backups: arrayOrEmpty<BackupRecord>(state.backups),
+    exportManifests: arrayOrEmpty<ExportManifest>(state.exportManifests),
+    pendingCaptures: arrayOrEmpty<CapturedContent>(state.pendingCaptures),
+    urlHealthRecords: arrayOrEmpty<UrlHealthRecord>(state.urlHealthRecords),
+    lastMoveRecordCount:
+      typeof state.lastMoveRecordCount === 'number' && Number.isFinite(state.lastMoveRecordCount)
+        ? state.lastMoveRecordCount
+        : 0,
+    onboarded: state.onboarded === true,
+    settings: {
+      ...DEFAULT_SETTINGS,
+      deepSeekApiKey:
+        typeof settings.deepSeekApiKey === 'string'
+          ? settings.deepSeekApiKey
+          : DEFAULT_SETTINGS.deepSeekApiKey,
+      deepSeekModel,
+      useAi: settings.useAi === true,
+      customRules: arrayOrEmpty<AppSettings['customRules'][number]>(settings.customRules),
+      defaultClassifyMode,
+      exportDirectory:
+        typeof settings.exportDirectory === 'string'
+          ? settings.exportDirectory
+          : DEFAULT_SETTINGS.exportDirectory,
+    },
+  };
+}
 
 function sendMessage<T>(request: ExtensionRequest): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -205,9 +260,9 @@ function PopupLauncher({
   onUsePopup,
   onShowHelp,
 }: PopupLauncherProps) {
-  const bookmarkCount = state?.bookmarks.length ?? 0;
-  const folderCount = state?.folders.length ?? 0;
-  const hasVaultHistory = (state?.exportManifests.length ?? 0) > 0;
+  const bookmarkCount = state?.bookmarks?.length ?? 0;
+  const folderCount = state?.folders?.length ?? 0;
+  const hasVaultHistory = (state?.exportManifests?.length ?? 0) > 0;
 
   return (
     <main className="flex h-[600px] flex-col gap-3 bg-background p-3 text-foreground">
@@ -262,8 +317,8 @@ function PopupLauncher({
         <CardContent className="space-y-2 p-3 text-sm">
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">DeepSeek AI</span>
-            <Badge variant={state?.settings.useAi ? 'success' : 'warning'}>
-              {state?.settings.useAi ? '已启用' : '规则模式'}
+            <Badge variant={state?.settings?.useAi ? 'success' : 'warning'}>
+              {state?.settings?.useAi ? '已启用' : '规则模式'}
             </Badge>
           </div>
           <div className="flex items-center justify-between gap-2">
@@ -414,7 +469,7 @@ export default function App({ surface = 'popup' }: AppProps) {
     setBusyAction('load');
     setNotice(undefined);
     try {
-      const nextState = await sendMessage<ExtensionState>({ type: 'state:get' });
+      const nextState = normalizeExtensionState(await sendMessage<unknown>({ type: 'state:get' }));
       setState(nextState);
       setClassifyMode(nextState.settings.defaultClassifyMode);
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
@@ -461,14 +516,14 @@ export default function App({ surface = 'popup' }: AppProps) {
   }, []);
 
   useEffect(() => {
-    const pendingCount = state?.pendingCaptures.length ?? 0;
+    const pendingCount = state?.pendingCaptures?.length ?? 0;
     const previousCount = previousPendingCaptureCountRef.current;
     if (previousCount !== undefined && pendingCount > previousCount) {
       setView('export');
       setNotice({ kind: 'success', message: '内容已保存到待写入队列。' });
     }
     previousPendingCaptureCountRef.current = pendingCount;
-  }, [state?.pendingCaptures.length]);
+  }, [state?.pendingCaptures?.length]);
 
   const createPlan = async (mode: ClassificationMode) => {
     setBusyAction('plan');

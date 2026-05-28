@@ -73,14 +73,22 @@ export function extractTwitterContent(documentRef: Document, url: string): Captu
   };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== 'social:extract') {
-    return false;
-  }
+const twitterWindow =
+  typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { __shuhaiTwitterExtractorInstalled?: boolean });
 
-  sendResponse({
-    ok: true,
-    data: extractTwitterContent(document, location.href),
+if (twitterWindow && !twitterWindow.__shuhaiTwitterExtractorInstalled) {
+  twitterWindow.__shuhaiTwitterExtractorInstalled = true;
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'social:extract') {
+      return false;
+    }
+
+    sendResponse({
+      ok: true,
+      data: extractTwitterContent(document, location.href),
+    });
+    return true;
   });
-  return true;
-});
+}
