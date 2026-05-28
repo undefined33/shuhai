@@ -1,9 +1,34 @@
 import { useMemo, useState } from 'react';
+import { ChevronRight, Folder, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
 import type {
   BookmarkItem,
   ClassificationMode,
   FolderItem,
 } from '../../shared/bookmark-types.js';
+import { Badge } from '../../components/ui/badge.js';
+import { Button } from '../../components/ui/button.js';
+import { Card, CardContent } from '../../components/ui/card.js';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../../components/ui/collapsible.js';
+import { Command, CommandInput } from '../../components/ui/command.js';
+import { Label } from '../../components/ui/label.js';
+import { ScrollArea } from '../../components/ui/scroll-area.js';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select.js';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip.js';
 
 interface BookmarkTreeProps {
   bookmarks: BookmarkItem[];
@@ -56,7 +81,7 @@ export default function BookmarkTree({
     const keyword = query.trim().toLowerCase();
 
     if (!keyword) {
-      return bookmarks.slice(0, 80);
+      return bookmarks.slice(0, 120);
     }
 
     return bookmarks
@@ -66,7 +91,7 @@ export default function BookmarkTree({
           bookmark.url.toLowerCase().includes(keyword) ||
           bookmark.parentPath.toLowerCase().includes(keyword),
       )
-      .slice(0, 80);
+      .slice(0, 120);
   }, [bookmarks, query]);
 
   const toggleFolder = (path: string) => {
@@ -82,102 +107,135 @@ export default function BookmarkTree({
   };
 
   return (
-    <section className="panel">
-      <div className="actions">
-        <button onClick={onRefresh} disabled={busy}>
-          刷新
-        </button>
-        <button
-          className="primary"
-          onClick={() => onCreatePlan(classifyMode)}
-          disabled={busy || bookmarks.length === 0}
-        >
-          生成整理方案
-        </button>
-        <button onClick={onUndo} disabled={busy || !canUndo}>
-          撤销上次整理
-        </button>
-      </div>
-
-      <fieldset className="mode-box">
-        <legend>整理模式</legend>
-        <label className="inline-check">
-          <input
-            checked={classifyMode === 'safe'}
-            name="classify-mode"
-            onChange={() => onClassifyModeChange('safe')}
-            type="radio"
-          />
-          <span>仅整理未分类书签</span>
-        </label>
-        <label className="inline-check">
-          <input
-            checked={classifyMode === 'full'}
-            name="classify-mode"
-            onChange={() => onClassifyModeChange('full')}
-            type="radio"
-          />
-          <span>重新分类全部书签</span>
-        </label>
-        <p>
-          {classifyMode === 'safe'
-            ? '安全模式不会移动已经在文件夹里的书签。'
-            : '全量模式会重新审视所有文件夹，生成的跨文件夹移动默认不勾选。'}
-        </p>
-      </fieldset>
-
-      <label className="search">
-        <span>搜索</span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="标题、URL 或文件夹"
-        />
-      </label>
-
-      <div className="summary-grid">
-        <div>
-          <strong>{bookmarks.length}</strong>
-          <span>书签</span>
+    <TooltipProvider>
+      <section className="flex h-full min-h-0 flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2">
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-2xl font-semibold leading-none">{bookmarks.length}</div>
+              <div className="mt-1 text-xs text-muted-foreground">书签</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-2xl font-semibold leading-none">{folders.length}</div>
+              <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
+            </CardContent>
+          </Card>
         </div>
-        <div>
-          <strong>{folders.length}</strong>
-          <span>文件夹</span>
-        </div>
-      </div>
 
-      <div className="tree-list">
-        {visibleFolders.map((folder) => {
-          const isCollapsed = collapsed.has(folder.path);
-          const folderBookmarks = visibleBookmarks.filter(
-            (bookmark) => bookmark.parentPath === folder.path,
-          );
-
-          return (
-            <div className="folder-row" key={folder.id}>
-              <button className="folder-toggle" onClick={() => toggleFolder(folder.path)}>
-                {isCollapsed ? '+' : '-'}
-              </button>
-              <div className="folder-body">
-                <div className="folder-title">
-                  <span>{folder.path}</span>
-                  <em>{counts.get(folder.path) ?? 0}</em>
-                </div>
-                {!isCollapsed && folderBookmarks.length > 0 ? (
-                  <ul>
-                    {folderBookmarks.map((bookmark) => (
-                      <li key={bookmark.id}>
-                        <span>{bookmark.title || bookmark.url}</span>
-                        <small>{bookmark.url}</small>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
+        <Card>
+          <CardContent className="space-y-3 p-3">
+            <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+              <div className="space-y-1.5">
+                <Label>整理模式</Label>
+                <Select
+                  onValueChange={(value) => onClassifyModeChange(value as ClassificationMode)}
+                  value={classifyMode}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="safe">仅整理未分类</SelectItem>
+                    <SelectItem value="full">重新分类全部</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
+              <Button
+                disabled={busy || bookmarks.length === 0}
+                loading={busy}
+                onClick={() => onCreatePlan(classifyMode)}
+              >
+                <Sparkles className="h-4 w-4" />
+                生成
+              </Button>
             </div>
-          );
-        })}
-      </div>
-    </section>
+
+            <div className="flex gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button disabled={busy} onClick={onRefresh} size="icon" variant="outline">
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>刷新书签</TooltipContent>
+              </Tooltip>
+              <Button
+                className="flex-1"
+                disabled={busy || !canUndo}
+                onClick={onUndo}
+                variant="outline"
+              >
+                <Undo2 className="h-4 w-4" />
+                撤销上次整理
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Command>
+          <CommandInput
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索标题、URL 或文件夹"
+            value={query}
+          />
+        </Command>
+
+        <ScrollArea className="min-h-0 flex-1 rounded-lg border border-border bg-card">
+          {bookmarks.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">未检测到书签</div>
+          ) : (
+            <div className="space-y-1 p-2">
+              {visibleFolders.map((folder) => {
+                const isCollapsed = collapsed.has(folder.path);
+                const folderBookmarks = visibleBookmarks.filter(
+                  (bookmark) => bookmark.parentPath === folder.path,
+                );
+
+                return (
+                  <Collapsible
+                    key={folder.id}
+                    onOpenChange={() => toggleFolder(folder.path)}
+                    open={!isCollapsed}
+                  >
+                    <div className="rounded-md border border-transparent transition hover:border-border hover:bg-muted/60">
+                      <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-2 text-left">
+                        <ChevronRight
+                          className={
+                            isCollapsed
+                              ? 'h-4 w-4 text-muted-foreground transition'
+                              : 'h-4 w-4 rotate-90 text-muted-foreground transition'
+                          }
+                        />
+                        <Folder className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="min-w-0 flex-1 truncate text-sm">{folder.path}</span>
+                        <Badge variant="secondary">{counts.get(folder.path) ?? 0}</Badge>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none">
+                        {folderBookmarks.length > 0 ? (
+                          <ul className="space-y-1 pb-2 pl-10 pr-2">
+                            {folderBookmarks.map((bookmark) => (
+                              <li className="min-w-0 border-l border-border pl-2" key={bookmark.id}>
+                                <div className="truncate text-xs font-medium">
+                                  {bookmark.title || bookmark.url}
+                                </div>
+                                <div className="truncate text-[11px] text-muted-foreground">
+                                  {bookmark.url}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                );
+              })}
+            </div>
+          )}
+        </ScrollArea>
+      </section>
+    </TooltipProvider>
   );
 }

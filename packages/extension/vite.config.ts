@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { defineConfig, type PluginOption } from 'vite';
@@ -22,7 +23,7 @@ function copyExtensionManifest(): PluginOption {
 
 export default defineConfig({
   root: resolve(__dirname, 'src'),
-  plugins: [react(), copyExtensionManifest()],
+  plugins: [react(), tailwindcss(), copyExtensionManifest()],
   resolve: {
     alias: {
       '@shuhai/shared': resolve(__dirname, '../shared/src/index.ts'),
