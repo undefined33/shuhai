@@ -219,10 +219,18 @@ function requestCapture(tabId: number | undefined, source: CapturedContent['sour
 }
 
 async function executeArticleExtractor(tabId: number): Promise<CapturedContent> {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['content/article.js'],
+  const injected = await new Promise<boolean>((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: 'article:ping' }, (response: { ok?: boolean } | undefined) => {
+      resolve(!chrome.runtime.lastError && response?.ok === true);
+    });
   });
+
+  if (!injected) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/article.js'],
+    });
+  }
 
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(

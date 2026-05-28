@@ -21,9 +21,24 @@ function copyExtensionManifest(): PluginOption {
   };
 }
 
+function wrapContentScripts(): PluginOption {
+  return {
+    name: 'wrap-content-scripts',
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== 'chunk' || !chunk.fileName.startsWith('content/')) {
+          continue;
+        }
+
+        chunk.code = `(() => {\n${chunk.code}\n})();\n`;
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: resolve(__dirname, 'src'),
-  plugins: [react(), tailwindcss(), copyExtensionManifest()],
+  plugins: [react(), tailwindcss(), copyExtensionManifest(), wrapContentScripts()],
   resolve: {
     alias: {
       '@shuhai/shared': resolve(__dirname, '../shared/src/index.ts'),

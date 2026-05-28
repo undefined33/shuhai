@@ -451,6 +451,11 @@ const articleWindow =
 if (articleWindow && !articleWindow.__shuhaiArticleExtractorInstalled) {
   articleWindow.__shuhaiArticleExtractorInstalled = true;
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === 'article:ping') {
+      sendResponse({ ok: true });
+      return true;
+    }
+
     if (message?.type !== 'article:extract') {
       return false;
     }
