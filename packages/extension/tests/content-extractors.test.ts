@@ -137,7 +137,10 @@ class FakeArticleDocument {
 }
 
 function elementMatches(element: FakeDomElement, selector: string): boolean {
-  return selector.split(',').map((item) => item.trim()).some((item) => element.matches(item));
+  return selector
+    .split(',')
+    .map((item) => item.trim())
+    .some((item) => element.matches(item));
 }
 
 describe('content extractors', () => {
@@ -145,8 +148,10 @@ describe('content extractors', () => {
     const documentRef = new FakeDocument(
       'Tweet title',
       {
+        '[data-testid="User-Name"]': new FakeElement('Alice @alice'),
         '[data-testid="User-Name"] a[href^="/"]': new FakeElement('@alice'),
         '[data-testid="tweetText"]': new FakeElement('hello payload'),
+        article: new FakeElement('hello payload'),
         time: new FakeElement('', { datetime: '2026-05-28T00:00:00Z' }),
       },
       {
@@ -175,6 +180,8 @@ describe('content extractors', () => {
     const documentRef = new FakeDocument(
       'Weibo title',
       {
+        '[class*="detail_wbtext"], [class*="weibo-text"]': new FakeElement('微博正文'),
+        '[class*="head_name"], [class*="username"]': new FakeElement('研究员'),
         '[class*="head_name"]': new FakeElement('研究员'),
         '[class*="detail_wbtext"]': new FakeElement('微博正文'),
         time: new FakeElement('2026-05-28'),

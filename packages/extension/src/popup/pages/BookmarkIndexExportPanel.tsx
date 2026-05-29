@@ -154,6 +154,7 @@ export default function BookmarkIndexExportPanel({
           directoryPrefix,
           moves: plan?.moves,
           signal: controller.signal,
+          settings,
         },
         (done, total, path) => {
           setStatus(`正在写入: ${done}/${total}${path ? ` (${path})` : ''}`);

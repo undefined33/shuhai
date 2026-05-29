@@ -4,6 +4,7 @@ import {
   generateBookmarkMarkdown,
   generateCapturedContentMarkdown,
 } from '../src/utils/markdown-generator.js';
+import { getDefaultTemplate, renderTemplate } from '../src/utils/markdown-templates.js';
 import {
   neutralizeObsidianSyntax,
   sanitizeFileName,
@@ -49,6 +50,7 @@ describe('markdown sanitization', () => {
     const markdown = generateBookmarkMarkdown(bookmark);
 
     expect(markdown).toContain('source: chrome');
+    expect(markdown).toContain('shuhai_format: 3');
     expect(markdown).toContain('已过滤不安全 URL');
     expect(markdown).not.toContain('javascript:alert');
     expect(markdown).not.toContain('<% tp.system');
@@ -104,12 +106,53 @@ describe('markdown sanitization', () => {
     expect(markdown).toContain('source: article');
     expect(markdown).toContain('site: "Example Blog"');
     expect(markdown).toContain('saved: 2026-05-28');
+    expect(markdown).toContain('shuhai_format: 3');
     expect(markdown).toContain('word_count: 42');
     expect(markdown).toContain('[图片: remote](https://example.com/a.png)');
     expect(markdown).toContain('```text');
     expect(markdown).toContain('obsidian-disabled://open');
     expect(markdown).not.toContain('![');
     expect(markdown).not.toContain('<% bad %>');
+    expect(markdown).not.toContain('{{query}}');
+  });
+
+  it('renders custom templates and removes unknown variables', () => {
+    const markdown = renderTemplate(getDefaultTemplate('bookmark'), {
+      title: 'A',
+      title_yaml: '"A"',
+      url: 'https://example.com',
+      url_yaml: '"https://example.com"',
+      url_link: '[打开](https://example.com)',
+      folder: '研究',
+      folder_yaml: '"研究"',
+      confidence: '',
+      date: '2026-05-29',
+      created: '',
+      tags: '["tag"]',
+    });
+
+    expect(markdown).toContain('# A');
+    expect(markdown).not.toContain('{{');
+  });
+
+  it('keeps sanitization effective after template rendering', () => {
+    const markdown = renderTemplate(
+      {
+        id: 'custom',
+        name: 'Custom',
+        scope: 'article',
+        frontmatter: 'title: {{title_yaml}}\nrun: <% tp.system.exec("calc") %>',
+        body: '![remote](https://example.com/x.png)\n```dataview\nTABLE\n```',
+      },
+      {
+        title_yaml: '"Research {{query}}"',
+      },
+    );
+
+    expect(markdown).toContain('<\\%');
+    expect(markdown).toContain('[图片: remote](https://example.com/x.png)');
+    expect(markdown).toContain('```text');
+    expect(markdown).not.toContain('![');
     expect(markdown).not.toContain('{{query}}');
   });
 });

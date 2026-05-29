@@ -7,6 +7,7 @@ import type {
   ClassificationPortRequest,
   ClassificationProgress,
   ClassificationMode,
+  DiagnosticReport,
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
@@ -48,6 +49,7 @@ import {
   summarizeClassifyUndo,
 } from '../utils/activity-log.js';
 import { inferErrorCode } from '../utils/error-messages.js';
+import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
 
 type SocialCaptureSource = 'twitter' | 'weibo';
 
@@ -55,6 +57,7 @@ interface SocialExtractResponse {
   ok?: boolean;
   data?: CapturedContent;
   error?: string;
+  diagnostic?: DiagnosticReport;
 }
 
 let activeClassification: AbortController | undefined;
@@ -390,11 +393,24 @@ async function extractSocialCapture(
   }
 
   if (!response.ok || !response.data) {
+    if (response.diagnostic) {
+      await saveExtractorDiagnostic(response.diagnostic);
+    }
     throw new Error(response.error ?? '页面结构可能已更新，提取失败。请反馈此问题。');
   }
 
   if (!response.data.text.trim()) {
+    if (response.diagnostic) {
+      await saveExtractorDiagnostic({
+        ...response.diagnostic,
+        error: '页面可能未完全加载，请等待内容显示后重试。',
+      });
+    }
     throw new Error('页面结构可能已更新，提取失败。请反馈此问题。');
+  }
+
+  if (response.diagnostic) {
+    await saveExtractorDiagnostic(response.diagnostic);
   }
 
   return response.data;

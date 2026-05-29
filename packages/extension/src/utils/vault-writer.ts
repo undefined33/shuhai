@@ -1,5 +1,6 @@
 import type {
   BookmarkItem,
+  AppSettings,
   CapturedContent,
   ExportManifest,
   ExportPreview,
@@ -13,7 +14,12 @@ import {
   sanitizePathSegment,
   sanitizeRelativePath,
 } from './sanitize.js';
-import { addActivityEntry, summarizeVaultExport } from './activity-log.js';
+import {
+  addActivityEntry,
+  generateActivityMarkdown,
+  summarizeVaultExport,
+  type ActivityEntry,
+} from './activity-log.js';
 import { saveExportManifest } from './storage.js';
 
 const DB_NAME = 'shuhai-vault';
@@ -37,6 +43,7 @@ export interface ExportOptions {
   directoryPrefix: string;
   moves?: MovePlan[];
   signal?: AbortSignal;
+  settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>;
 }
 
 export interface ExportResult {
@@ -257,7 +264,7 @@ export async function exportBookmarksToVault(
         await writeTextFile(
           directory,
           fileName,
-          generateBookmarkMarkdown(bookmark, moves.get(bookmark.id)),
+          generateBookmarkMarkdown(bookmark, moves.get(bookmark.id), new Date(), options.settings),
         );
         result.exported += 1;
         result.files.push(relativePath);
@@ -291,6 +298,7 @@ export async function exportCaptureToVault(
   handle: FileSystemDirectoryHandle,
   capture: CapturedContent,
   directoryPrefix: string,
+  settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>,
 ): Promise<ExportResult> {
   const segments = buildCaptureExportPath(capture, directoryPrefix);
   const fileName = segments.at(-1) ?? sanitizeFileName(capture.title || capture.url);
@@ -316,7 +324,11 @@ export async function exportCaptureToVault(
     if (await fileExists(directory, fileName)) {
       result.skipped = 1;
     } else {
-      await writeTextFile(directory, fileName, generateCapturedContentMarkdown(capture));
+      await writeTextFile(
+        directory,
+        fileName,
+        generateCapturedContentMarkdown(capture, new Date(), settings),
+      );
       result.exported = 1;
       result.files.push(relativePath);
     }
@@ -336,4 +348,20 @@ export async function exportCaptureToVault(
     });
   }
   return result;
+}
+
+export async function exportActivityLogToVault(
+  handle: FileSystemDirectoryHandle,
+  entries: ActivityEntry[],
+  directoryPrefix: string,
+): Promise<string> {
+  const prefix = sanitizeRelativePath(directoryPrefix || 'Bookmarks');
+  const segments = [...prefix, '_activity'];
+  assertSafeRelativePath(segments);
+
+  const directory = await ensureDirectory(handle, segments);
+  const content = generateActivityMarkdown(entries);
+  await writeTextFile(directory, 'activity-log.md', content);
+
+  return [...segments, 'activity-log.md'].join('/');
 }

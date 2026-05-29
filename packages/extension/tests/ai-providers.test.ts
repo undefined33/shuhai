@@ -8,16 +8,13 @@ import {
   upsertProvider,
 } from '../src/shared/ai-providers.js';
 import type { AppSettings } from '../src/shared/bookmark-types.js';
+import { DEFAULT_SETTINGS } from '../src/utils/storage.js';
 
 describe('AI providers', () => {
   it('creates the built-in providers from templates', () => {
     const providers = createDefaultAiProviders();
 
-    expect(providers.map((provider) => provider.provider)).toEqual([
-      'deepseek',
-      'kimi',
-      'glm',
-    ]);
+    expect(providers.map((provider) => provider.provider)).toEqual(['deepseek', 'kimi', 'glm']);
     expect(providers[0]).toMatchObject({
       id: 'deepseek-default',
       baseUrl: 'https://api.deepseek.com',
@@ -30,6 +27,7 @@ describe('AI providers', () => {
       apiKey: 'glm-key',
     });
     const settings: AppSettings = {
+      ...DEFAULT_SETTINGS,
       useAi: true,
       activeProviderId: provider.id,
       aiProviders: [{ ...provider, enabled: false }],
@@ -39,10 +37,12 @@ describe('AI providers', () => {
     };
 
     expect(getActiveProvider(settings)).toBeUndefined();
-    expect(getActiveProvider({
-      ...settings,
-      aiProviders: [provider],
-    })).toEqual(provider);
+    expect(
+      getActiveProvider({
+        ...settings,
+        aiProviders: [provider],
+      }),
+    ).toEqual(provider);
   });
 
   it('upserts providers and normalizes trailing slashes', () => {

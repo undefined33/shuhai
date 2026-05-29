@@ -4,6 +4,7 @@ export type ExportScope = 'all' | 'plan' | 'selected';
 export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
 export type UrlHealthStatus = 'alive' | 'redirected' | 'dead' | 'error' | 'skipped';
 export type AiProviderType = 'deepseek' | 'kimi' | 'glm' | 'openai-compatible';
+export type ExtractorPlatform = 'twitter' | 'weibo';
 
 export interface AiProviderConfig {
   id: string;
@@ -98,11 +99,52 @@ export interface FolderItem {
   bookmarkCount: number;
 }
 
+export type RuleType = 'domain' | 'title-keyword' | 'url-pattern' | 'combined';
+
 export interface CustomRule {
-  type: 'domain' | 'title-keyword';
+  id?: string;
+  type: RuleType;
   pattern: string;
+  urlPattern?: string;
+  titlePattern?: string;
   category: string;
   tags: string[];
+  priority?: number;
+  enabled?: boolean;
+}
+
+export type MarkdownTemplateScope = 'bookmark' | 'twitter' | 'weibo' | 'article';
+export type ActivityExportFormat = 'json' | 'markdown';
+
+export interface MarkdownTemplate {
+  id: string;
+  name: string;
+  scope: MarkdownTemplateScope;
+  frontmatter: string;
+  body: string;
+}
+
+export interface SelectorProbe {
+  name: string;
+  selector: string;
+  required: boolean;
+  description: string;
+}
+
+export interface ProbeResult {
+  name: string;
+  found: boolean;
+  selector: string;
+}
+
+export interface DiagnosticReport {
+  platform: ExtractorPlatform;
+  timestamp: string;
+  url: string;
+  probeResults: ProbeResult[];
+  structureValid: boolean;
+  fallbacksUsed: string[];
+  error?: string;
 }
 
 export interface ClassificationSuggestion {
@@ -239,6 +281,8 @@ export interface AppSettings {
   activeProviderId: string;
   aiProviders: AiProviderConfig[];
   customRules: CustomRule[];
+  templates: MarkdownTemplate[];
+  activeTemplateIds: Partial<Record<MarkdownTemplateScope, string>>;
   defaultClassifyMode: ClassificationMode;
   exportDirectory: string;
 }

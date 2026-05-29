@@ -1283,7 +1283,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
         </TabsContent>
 
         <TabsContent className="min-h-0 flex-1" value="activity">
-          <ActivityPage onBack={() => setView('organize')} />
+          <ActivityPage onBack={() => setView('organize')} settings={settings} />
         </TabsContent>
 
         <TabsContent className="min-h-0 flex-1" value="settings">

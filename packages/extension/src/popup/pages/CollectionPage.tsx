@@ -222,6 +222,7 @@ export default function CollectionPage({
         tags,
       },
       directoryPrefix,
+      settings,
     );
 
     if (result.errors.length > 0) {

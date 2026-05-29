@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractTwitterContent } from '../twitter.js';
+import { extractTwitterContent, extractTwitterContentWithDiagnostics } from '../twitter.js';
 
 class FakeElement {
   constructor(
@@ -35,6 +35,9 @@ describe('Twitter content extractor', () => {
     const documentRef = new FakeDocument(
       {
         '[data-testid="User-Name"] [dir="ltr"] span span': new FakeElement('Alice Research'),
+        '[data-testid="User-Name"]': new FakeElement('Alice Research @alice'),
+        '[data-testid="tweetText"]': new FakeElement('main tweet payload'),
+        article: new FakeElement('main tweet payload'),
         'article [data-testid="tweetText"]': new FakeElement('main tweet payload'),
         'article [data-testid="quoteTweet"] [data-testid="tweetText"]': new FakeElement(
           'quoted tweet payload',
@@ -43,9 +46,7 @@ describe('Twitter content extractor', () => {
         time: new FakeElement('', { datetime: '2026-05-28T00:00:00Z' }),
       },
       {
-        '[data-testid="User-Name"] a[href^="/"]': [
-          new FakeElement('@alice', { href: '/alice' }),
-        ],
+        '[data-testid="User-Name"] a[href^="/"]': [new FakeElement('@alice', { href: '/alice' })],
         'article img[src*="twimg.com"], img[src*="twimg.com"]': [
           new FakeElement('', {
             src: 'https://pbs.twimg.com/media/main.jpg',
@@ -96,5 +97,26 @@ describe('Twitter content extractor', () => {
     expect(() =>
       extractTwitterContent(documentRef as unknown as Document, 'https://x.com/alice'),
     ).toThrow('请先打开一条推文的详情页');
+  });
+
+  it('records fallback selectors when the primary tweet text selector misses', () => {
+    const documentRef = new FakeDocument(
+      {
+        '[data-testid="User-Name"]': new FakeElement('Alice @alice'),
+        '[data-testid="tweetText"]': new FakeElement('fallback tweet payload'),
+        article: new FakeElement('fallback tweet payload'),
+      },
+      {
+        '[data-testid="User-Name"] a[href^="/"]': [new FakeElement('@alice', { href: '/alice' })],
+      },
+    );
+
+    const result = extractTwitterContentWithDiagnostics(
+      documentRef as unknown as Document,
+      'https://x.com/alice/status/123456',
+    );
+
+    expect(result.capture.text).toBe('fallback tweet payload');
+    expect(result.diagnostic.fallbacksUsed).toContain('Twitter 正文: [data-testid="tweetText"]');
   });
 });

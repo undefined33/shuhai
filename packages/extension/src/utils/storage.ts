@@ -18,6 +18,12 @@ import {
   providerTemplate,
   trimTrailingSlash,
 } from '../shared/ai-providers.js';
+import {
+  DEFAULT_MARKDOWN_TEMPLATES,
+  normalizeActiveTemplateIds,
+  normalizeTemplates,
+} from './markdown-templates.js';
+import { normalizeCustomRule } from './rule-matcher.js';
 
 export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
@@ -32,6 +38,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
   aiProviders: createDefaultAiProviders(),
   customRules: [],
+  templates: DEFAULT_MARKDOWN_TEMPLATES,
+  activeTemplateIds: {
+    bookmark: 'default-bookmark',
+    twitter: 'default-twitter',
+    weibo: 'default-weibo',
+    article: 'default-article',
+  },
   defaultClassifyMode: 'safe',
   exportDirectory: 'Bookmarks',
 };
@@ -96,13 +109,18 @@ function normalizeClassifyMode(value: unknown): ClassificationMode {
 }
 
 function normalizeCustomRules(value: unknown): CustomRule[] {
-  return arrayOrEmpty<CustomRule>(value).filter(
+  const rules = arrayOrEmpty<CustomRule>(value).filter(
     (rule) =>
-      (rule.type === 'domain' || rule.type === 'title-keyword') &&
+      (rule.type === 'domain' ||
+        rule.type === 'title-keyword' ||
+        rule.type === 'url-pattern' ||
+        rule.type === 'combined') &&
       typeof rule.pattern === 'string' &&
       typeof rule.category === 'string' &&
       Array.isArray(rule.tags),
   );
+
+  return rules.map((rule, index) => normalizeCustomRule(rule, index, rules.length));
 }
 
 function normalizeProvider(value: unknown): AiProviderConfig | undefined {
@@ -203,6 +221,8 @@ export function normalizeSettings(value: unknown): AppSettings {
     activeProviderId,
     aiProviders: normalizedProviders,
     customRules: normalizeCustomRules(settings.customRules),
+    templates: normalizeTemplates(settings.templates),
+    activeTemplateIds: normalizeActiveTemplateIds(settings.activeTemplateIds),
     defaultClassifyMode: normalizeClassifyMode(settings.defaultClassifyMode),
     exportDirectory,
   };

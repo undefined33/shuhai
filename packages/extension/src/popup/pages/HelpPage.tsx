@@ -1,8 +1,11 @@
-import { BookOpen, Database, FolderKanban, KeyRound, RotateCcw, Shield } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BookOpen, Database, FolderKanban, KeyRound, Radar, RotateCcw, Shield } from 'lucide-react';
+import type { DiagnosticReport, ExtractorPlatform } from '../../shared/bookmark-types.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
 import { ScrollArea } from '../../components/ui/scroll-area.js';
+import { getExtractorDiagnostics } from '../../utils/extractor-diagnostics.js';
 
 function StepList({ items }: { items: string[] }) {
   return (
@@ -17,12 +20,56 @@ function StepList({ items }: { items: string[] }) {
   );
 }
 
+function platformLabel(platform: ExtractorPlatform): string {
+  return platform === 'twitter' ? 'Twitter/X' : '微博';
+}
+
+function timeAgo(value: string): string {
+  const diffMs = Date.now() - Date.parse(value);
+  if (!Number.isFinite(diffMs) || diffMs < 0) {
+    return '刚刚';
+  }
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) {
+    return '刚刚';
+  }
+
+  if (minutes < 60) {
+    return `${minutes} 分钟前`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} 小时前`;
+  }
+
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
 export default function HelpPage() {
+  const [diagnostics, setDiagnostics] = useState<DiagnosticReport[]>([]);
+
+  useEffect(() => {
+    void getExtractorDiagnostics()
+      .then(setDiagnostics)
+      .catch(() => setDiagnostics([]));
+  }, []);
+
+  const byPlatform = useMemo(
+    () =>
+      new Map<ExtractorPlatform, DiagnosticReport>(
+        diagnostics.map((report) => [report.platform, report]),
+      ),
+    [diagnostics],
+  );
+
   return (
     <ScrollArea className="h-full pr-2">
       <section className="space-y-3 pb-2">
         <Alert>
-          ShuHai 的核心原则是先生成方案、再由你确认。没有点击“应用选中”前，不会移动真实 Chrome 书签。
+          ShuHai 的核心原则是先生成方案、再由你确认。没有点击“应用选中”前，不会移动真实 Chrome
+          书签。
         </Alert>
 
         <Card>
@@ -122,12 +169,73 @@ export default function HelpPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
+              <Radar className="h-4 w-4 text-primary" />
+              内容提取状态
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {(['twitter', 'weibo'] as const).map((platform) => {
+                const report = byPlatform.get(platform);
+                const degraded = Boolean(report?.fallbacksUsed.length);
+                const broken = report && (!report.structureValid || report.error);
+
+                return (
+                  <div className="rounded-md border border-border p-2" key={platform}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{platformLabel(platform)}</span>
+                      <Badge variant={broken ? 'danger' : degraded ? 'warning' : 'success'}>
+                        {broken ? '异常' : degraded ? '降级' : '正常'}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-muted-foreground">
+                      {report
+                        ? `${timeAgo(report.timestamp)} · ${report.url}`
+                        : '暂无失败或降级记录'}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {diagnostics.length > 0 ? (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">最近问题</div>
+                {diagnostics.slice(0, 4).map((report) => (
+                  <div
+                    className="rounded-md bg-muted px-2 py-2 text-xs"
+                    key={`${report.timestamp}-${report.url}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant={report.structureValid ? 'warning' : 'danger'}>
+                        {platformLabel(report.platform)}
+                      </Badge>
+                      <span className="text-muted-foreground">{timeAgo(report.timestamp)}</span>
+                    </div>
+                    <p className="mt-1">
+                      {report.error ||
+                        `使用了备选选择器：${report.fallbacksUsed.join('、') || '未知'}`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Alert>最近没有内容提取失败或降级记录。</Alert>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-primary" />
               AI 服务商配置
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>API Key 是可选项。不配置时使用内置规则，配置后会调用当前 AI 服务商生成更细的分类建议。</p>
+            <p>
+              API Key 是可选项。不配置时使用内置规则，配置后会调用当前 AI 服务商生成更细的分类建议。
+            </p>
             <p>Key 保存在 Chrome 本地存储中，不会上传到 ShuHai 自己的服务器。</p>
             <a
               className="text-primary underline-offset-4 hover:underline"
