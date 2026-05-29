@@ -62,9 +62,8 @@ export const PRESET_RULES: CustomRule[] = [
   },
   {
     id: 'preset-news',
-    type: 'url-pattern',
-    pattern: '*',
-    urlPattern: 'https://*.news/*',
+    type: 'title-keyword',
+    pattern: '新闻|资讯|breaking|headline',
     category: '阅读/新闻',
     tags: ['news'],
     enabled: true,

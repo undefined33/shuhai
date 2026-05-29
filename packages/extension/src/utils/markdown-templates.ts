@@ -228,12 +228,20 @@ export function renderTemplate(
   template: MarkdownTemplate,
   variables: Record<string, string>,
 ): string {
-  const raw = ['---', template.frontmatter, '---', '', template.body].join('\n');
-  const rendered = raw.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
+  const pattern = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+  const frontmatterRendered = template.frontmatter.replace(pattern, (_match, key: string) => {
+    const value = variables[key] ?? '';
+    if (key === 'tags' || key.endsWith('_yaml')) {
+      return value;
+    }
+
+    return sanitizeYamlString(value);
+  });
+  const bodyRendered = template.body.replace(pattern, (_match, key: string) => {
     return variables[key] ?? '';
   });
 
-  return sanitizeArticleMarkdown(rendered);
+  return ['---', frontmatterRendered, '---', '', sanitizeArticleMarkdown(bodyRendered)].join('\n');
 }
 
 export function getDefaultTemplate(scope: MarkdownTemplateScope): MarkdownTemplate {

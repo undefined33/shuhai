@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { defineConfig, type PluginOption } from 'vite';
 
 function copyExtensionManifest(): PluginOption {
@@ -36,9 +36,44 @@ function wrapContentScripts(): PluginOption {
   };
 }
 
+function duplicateContentDiagnostics(): PluginOption {
+  const diagnosticsPath = resolve(__dirname, 'src/utils/extractor-diagnostics.ts');
+  const normalizedDiagnosticsPath = diagnosticsPath.replace(/\\/g, '/');
+
+  return {
+    name: 'duplicate-content-diagnostics',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      if (!importer || !source.includes('extractor-diagnostics')) {
+        return undefined;
+      }
+
+      const normalizedImporter = importer.replace(/\\/g, '/');
+      if (!normalizedImporter.includes('/src/content/')) {
+        return undefined;
+      }
+
+      return `${normalizedDiagnosticsPath}?content=${basename(normalizedImporter)}`;
+    },
+    load(id) {
+      if (!id.startsWith(`${normalizedDiagnosticsPath}?content=`)) {
+        return undefined;
+      }
+
+      return readFileSync(diagnosticsPath, 'utf8');
+    },
+  };
+}
+
 export default defineConfig({
   root: resolve(__dirname, 'src'),
-  plugins: [react(), tailwindcss(), copyExtensionManifest(), wrapContentScripts()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    copyExtensionManifest(),
+    duplicateContentDiagnostics(),
+    wrapContentScripts(),
+  ],
   resolve: {
     alias: {
       '@shuhai/shared': resolve(__dirname, '../shared/src/index.ts'),

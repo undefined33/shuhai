@@ -105,9 +105,9 @@ describe('markdown sanitization', () => {
 
     expect(markdown).toContain('source: article');
     expect(markdown).toContain('site: "Example Blog"');
-    expect(markdown).toContain('saved: 2026-05-28');
+    expect(markdown).toContain('saved: "2026-05-28"');
     expect(markdown).toContain('shuhai_format: 3');
-    expect(markdown).toContain('word_count: 42');
+    expect(markdown).toContain('word_count: "42"');
     expect(markdown).toContain('[图片: remote](https://example.com/a.png)');
     expect(markdown).toContain('```text');
     expect(markdown).toContain('obsidian-disabled://open');
@@ -135,21 +135,56 @@ describe('markdown sanitization', () => {
     expect(markdown).not.toContain('{{');
   });
 
+  it('keeps frontmatter structure intact for YAML-sensitive values', () => {
+    const markdown = renderTemplate(
+      {
+        id: 'custom',
+        name: 'Custom',
+        scope: 'article',
+        frontmatter: [
+          'title: {{title}}',
+          'aliases: {{aliases}}',
+          'tags: {{tags}}',
+          'summary: {{summary_yaml}}',
+        ].join('\n'),
+        body: '# {{title}}\n\n{{body}}',
+      },
+      {
+        title: 'Research: [APT] --- phase 1',
+        aliases: 'x: y\n---\n- z',
+        tags: '["red-team", "research"]',
+        summary_yaml: '"Already safe: [ok] ---"',
+        body: 'payload ![remote](https://example.com/x.png)\n```dataview\nTABLE\n```',
+      },
+    );
+
+    const [frontmatter] = markdown.split('\n---\n\n');
+
+    expect(markdown.startsWith('---\n')).toBe(true);
+    expect(frontmatter).toContain('title: "Research: [APT] --- phase 1"');
+    expect(frontmatter).toContain('aliases: "x: y --- - z"');
+    expect(frontmatter).toContain('tags: ["red-team", "research"]');
+    expect(frontmatter).toContain('summary: "Already safe: [ok] ---"');
+    expect(markdown).toContain('[图片: remote](https://example.com/x.png)');
+    expect(markdown).toContain('```text');
+  });
+
   it('keeps sanitization effective after template rendering', () => {
     const markdown = renderTemplate(
       {
         id: 'custom',
         name: 'Custom',
         scope: 'article',
-        frontmatter: 'title: {{title_yaml}}\nrun: <% tp.system.exec("calc") %>',
+        frontmatter: 'title: {{title}}\nrun: {{run}}',
         body: '![remote](https://example.com/x.png)\n```dataview\nTABLE\n```',
       },
       {
-        title_yaml: '"Research {{query}}"',
+        title: 'Research {{query}}',
+        run: '<% tp.system.exec("calc") %>',
       },
     );
 
-    expect(markdown).toContain('<\\%');
+    expect(markdown).toContain('<\\\\%');
     expect(markdown).toContain('[图片: remote](https://example.com/x.png)');
     expect(markdown).toContain('```text');
     expect(markdown).not.toContain('![');

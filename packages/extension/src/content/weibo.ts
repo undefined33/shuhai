@@ -2,10 +2,14 @@ import type {
   CapturedContent,
   CapturedMedia,
   DiagnosticReport,
-  ExtractorPlatform,
-  ProbeResult,
   SelectorProbe,
 } from '../shared/bookmark-types.js';
+import {
+  createDiagnosticReport,
+  missingRequiredProbeNames,
+  runSelectorProbes,
+  structureErrorMessage,
+} from '../utils/extractor-diagnostics.js';
 
 type QueryRoot = Pick<ParentNode, 'querySelector' | 'querySelectorAll'> & {
   textContent?: string | null;
@@ -41,69 +45,6 @@ function normalizeText(value: string | null | undefined): string {
     .replace(/\n\s+/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .trim();
-}
-
-function sanitizeDiagnosticUrl(platform: ExtractorPlatform, url: string): string {
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split('/').filter(Boolean).slice(0, 2);
-    return [parsed.hostname, ...segments].join('/');
-  } catch {
-    return platform;
-  }
-}
-
-function runSelectorProbes(root: QueryRoot, probes: SelectorProbe[]): ProbeResult[] {
-  return probes.map((probe) => ({
-    name: probe.name,
-    selector: probe.selector,
-    found: Boolean(root.querySelector(probe.selector)),
-  }));
-}
-
-function missingRequiredProbeNames(probes: SelectorProbe[], results: ProbeResult[]): string[] {
-  const resultByName = new Map(results.map((result) => [result.name, result]));
-
-  return probes
-    .filter((probe) => probe.required && resultByName.get(probe.name)?.found !== true)
-    .map((probe) => probe.name);
-}
-
-function createDiagnosticReport(options: {
-  platform: ExtractorPlatform;
-  url: string;
-  probes: SelectorProbe[];
-  probeResults: ProbeResult[];
-  fallbacksUsed?: string[];
-  error?: string;
-}): DiagnosticReport {
-  const resultByName = new Map(options.probeResults.map((result) => [result.name, result]));
-
-  return {
-    platform: options.platform,
-    timestamp: new Date().toISOString(),
-    url: sanitizeDiagnosticUrl(options.platform, options.url),
-    probeResults: options.probeResults,
-    structureValid: options.probes.every(
-      (probe) => !probe.required || resultByName.get(probe.name)?.found === true,
-    ),
-    fallbacksUsed: [...(options.fallbacksUsed ?? [])],
-    ...(options.error ? { error: options.error } : {}),
-  };
-}
-
-function structureErrorMessage(platform: ExtractorPlatform, missingNames: string[]): string {
-  const label = platform === 'twitter' ? 'Twitter' : 'Weibo';
-
-  if (missingNames.length >= 2) {
-    return `${label} 页面结构已变化（${missingNames.join('、')} 均未找到）。可能是平台改版，请检查扩展是否有新版本。`;
-  }
-
-  if (missingNames.length === 1) {
-    return `${label} 页面可能未完全加载或结构已变化：未找到 ${missingNames[0]}。请等待内容显示后重试。`;
-  }
-
-  return `${label} 页面可能未完全加载，请等待内容显示后重试。`;
 }
 
 function textFromFirst(root: QueryRoot, selectors: string[]): string {

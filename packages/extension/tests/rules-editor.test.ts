@@ -54,12 +54,20 @@ describe('RulesEditor model helpers', () => {
   it('imports presets once and tests the active rules', () => {
     const imported = importPresetRulesForEditor([rules[0]]);
     const importedAgain = importPresetRulesForEditor(imported);
+    const newsRule = imported.find((rule) => rule.id === 'preset-news');
 
     expect(imported.length).toBeGreaterThan(1);
     expect(importedAgain).toHaveLength(imported.length);
+    expect(newsRule).toMatchObject({
+      type: 'title-keyword',
+      pattern: '新闻|资讯|breaking|headline',
+    });
     expect(
       testRulesForEditor(imported, 'https://github.com/undefined33/shuhai', 'ShuHai repository'),
     ).toContain('技术/开源');
+    expect(
+      testRulesForEditor(imported, 'https://reuters.com/world', 'Breaking headline'),
+    ).toContain('阅读/新闻');
     expect(testRulesForEditor([], 'https://example.com', 'Example')).toContain('未命中');
   });
 });

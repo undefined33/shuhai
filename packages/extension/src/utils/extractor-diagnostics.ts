@@ -4,12 +4,44 @@ import type {
   ProbeResult,
   SelectorProbe,
 } from '../shared/bookmark-types.js';
-import { getLocalValue, setLocalValues } from './storage.js';
 
 export const EXTRACTOR_DIAGNOSTICS_KEY = 'extractorDiagnostics';
 export const MAX_EXTRACTOR_DIAGNOSTICS = 20;
 
 type QueryableRoot = Pick<ParentNode, 'querySelector'>;
+
+function getLastError(): Error | undefined {
+  const message = chrome.runtime.lastError?.message;
+  return message ? new Error(message) : undefined;
+}
+
+function getDiagnosticStorageValue<T>(key: string, fallback: T): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(key, (items) => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve((items[key] as T | undefined) ?? fallback);
+    });
+  });
+}
+
+function setDiagnosticStorageValues(values: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(values, () => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
 
 export function sanitizeDiagnosticUrl(platform: ExtractorPlatform, url: string): string {
   try {
@@ -98,7 +130,7 @@ export function trimDiagnosticReports(reports: DiagnosticReport[]): DiagnosticRe
 
 export async function getExtractorDiagnostics(): Promise<DiagnosticReport[]> {
   return trimDiagnosticReports(
-    await getLocalValue<DiagnosticReport[]>(EXTRACTOR_DIAGNOSTICS_KEY, []),
+    await getDiagnosticStorageValue<DiagnosticReport[]>(EXTRACTOR_DIAGNOSTICS_KEY, []),
   );
 }
 
@@ -108,7 +140,7 @@ export async function saveExtractorDiagnostic(report: DiagnosticReport): Promise
   }
 
   const existing = await getExtractorDiagnostics();
-  await setLocalValues({
+  await setDiagnosticStorageValues({
     [EXTRACTOR_DIAGNOSTICS_KEY]: trimDiagnosticReports([report, ...existing]),
   });
 }

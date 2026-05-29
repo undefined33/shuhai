@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { SelectorProbe } from '../src/shared/bookmark-types.js';
 import {
   createDiagnosticReport,
+  getExtractorDiagnostics,
   missingRequiredProbeNames,
+  saveExtractorDiagnostic,
   sanitizeDiagnosticUrl,
   shouldPersistDiagnostic,
   trimDiagnosticReports,
 } from '../src/utils/extractor-diagnostics.js';
+import { getStorageSnapshot } from './setup.js';
 
 const probes: SelectorProbe[] = [
   { name: 'text', selector: '.text', required: true, description: '正文' },
@@ -62,5 +65,35 @@ describe('extractor diagnostics', () => {
 
     expect(trimmed).toHaveLength(20);
     expect(trimmed[0].error).toBe('error-24');
+  });
+
+  it('persists only degraded or failed diagnostic reports', async () => {
+    const healthy = createDiagnosticReport({
+      platform: 'twitter',
+      url: 'https://x.com/user/status/1',
+      probes,
+      probeResults: probes.map((probe) => ({
+        name: probe.name,
+        selector: probe.selector,
+        found: true,
+      })),
+    });
+    const degraded = createDiagnosticReport({
+      platform: 'twitter',
+      url: 'https://x.com/user/status/2',
+      probes,
+      probeResults: probes.map((probe) => ({
+        name: probe.name,
+        selector: probe.selector,
+        found: true,
+      })),
+      fallbacksUsed: ['Twitter 正文: [data-testid="tweetText"]'],
+    });
+
+    await saveExtractorDiagnostic(healthy);
+    await saveExtractorDiagnostic(degraded);
+
+    expect(getStorageSnapshot()).toHaveProperty('extractorDiagnostics');
+    await expect(getExtractorDiagnostics()).resolves.toEqual([degraded]);
   });
 });
