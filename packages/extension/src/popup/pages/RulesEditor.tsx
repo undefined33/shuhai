@@ -87,7 +87,7 @@ export const PRESET_RULES: CustomRule[] = [
   },
 ];
 
-function createRule(): CustomRule {
+export function createEmptyRule(): CustomRule {
   return {
     id: `rule-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
     type: 'domain',
@@ -99,7 +99,7 @@ function createRule(): CustomRule {
   };
 }
 
-function resequence(rules: CustomRule[]): CustomRule[] {
+export function resequenceRules(rules: CustomRule[]): CustomRule[] {
   return rules.map((rule, index) => ({
     ...normalizeCustomRule(rule, index, rules.length),
     priority: rules.length - index,
@@ -117,8 +117,50 @@ function parseTags(value: string): string[] {
     .filter(Boolean);
 }
 
+export function addRuleForEditor(rules: CustomRule[], rule = createEmptyRule()): CustomRule[] {
+  return resequenceRules([...resequenceRules(rules), rule]);
+}
+
+export function deleteRuleForEditor(rules: CustomRule[], id: string | undefined): CustomRule[] {
+  return resequenceRules(resequenceRules(rules).filter((rule) => rule.id !== id));
+}
+
+export function moveRuleForEditor(
+  rules: CustomRule[],
+  id: string | undefined,
+  direction: -1 | 1,
+): CustomRule[] {
+  const normalizedRules = resequenceRules(rules);
+  const index = normalizedRules.findIndex((rule) => rule.id === id);
+  const targetIndex = index + direction;
+  if (index < 0 || targetIndex < 0 || targetIndex >= normalizedRules.length) {
+    return normalizedRules;
+  }
+
+  const nextRules = [...normalizedRules];
+  const [rule] = nextRules.splice(index, 1);
+  nextRules.splice(targetIndex, 0, rule);
+  return resequenceRules(nextRules);
+}
+
+export function importPresetRulesForEditor(rules: CustomRule[]): CustomRule[] {
+  const normalizedRules = resequenceRules(rules);
+  const existing = new Set(normalizedRules.map((rule) => `${rule.type}:${rule.pattern}`));
+  const additions = PRESET_RULES.filter((rule) => !existing.has(`${rule.type}:${rule.pattern}`));
+  return resequenceRules([...normalizedRules, ...additions]);
+}
+
+export function testRulesForEditor(rules: CustomRule[], url: string, title: string): string {
+  const result = matchRules({ url, title }, resequenceRules(rules));
+  if (!result.matched) {
+    return '未命中任何规则，将使用 AI 或内置规则分类。';
+  }
+
+  return `命中 ${result.rule?.type}:${result.rule?.pattern}，文件夹 ${result.category}，标签 ${result.tags.join(', ') || '无'}`;
+}
+
 export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
-  const normalizedRules = useMemo(() => resequence(rules), [rules]);
+  const normalizedRules = useMemo(() => resequenceRules(rules), [rules]);
   const [testUrl, setTestUrl] = useState('https://github.com/anthropics/claude-code');
   const [testTitle, setTestTitle] = useState('Claude Code - GitHub');
   const [testResult, setTestResult] = useState('');
@@ -128,39 +170,22 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
 
   const updateRule = (id: string | undefined, patch: Partial<CustomRule>) => {
     onChange(
-      resequence(normalizedRules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule))),
+      resequenceRules(
+        normalizedRules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
+      ),
     );
   };
 
   const moveRule = (id: string | undefined, direction: -1 | 1) => {
-    const index = normalizedRules.findIndex((rule) => rule.id === id);
-    const targetIndex = index + direction;
-    if (index < 0 || targetIndex < 0 || targetIndex >= normalizedRules.length) {
-      return;
-    }
-
-    const nextRules = [...normalizedRules];
-    const [rule] = nextRules.splice(index, 1);
-    nextRules.splice(targetIndex, 0, rule);
-    onChange(resequence(nextRules));
+    onChange(moveRuleForEditor(normalizedRules, id, direction));
   };
 
   const importPresets = () => {
-    const existing = new Set(normalizedRules.map((rule) => `${rule.type}:${rule.pattern}`));
-    const additions = PRESET_RULES.filter((rule) => !existing.has(`${rule.type}:${rule.pattern}`));
-    onChange(resequence([...normalizedRules, ...additions]));
+    onChange(importPresetRulesForEditor(normalizedRules));
   };
 
   const testRules = () => {
-    const result = matchRules({ url: testUrl, title: testTitle }, normalizedRules);
-    if (!result.matched) {
-      setTestResult('未命中任何规则，将使用 AI 或内置规则分类。');
-      return;
-    }
-
-    setTestResult(
-      `命中 ${result.rule?.type}:${result.rule?.pattern}，文件夹 ${result.category}，标签 ${result.tags.join(', ') || '无'}`,
-    );
+    setTestResult(testRulesForEditor(normalizedRules, testUrl, testTitle));
   };
 
   const applyAdvancedJson = () => {
@@ -172,7 +197,9 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
       }
 
       onChange(
-        resequence(parsed.map((rule, index) => normalizeCustomRule(rule, index, parsed.length))),
+        resequenceRules(
+          parsed.map((rule, index) => normalizeCustomRule(rule, index, parsed.length)),
+        ),
       );
       setAdvancedOpen(false);
     } catch (error) {
@@ -187,10 +214,7 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-2">
-          <Button
-            onClick={() => onChange(resequence([...normalizedRules, createRule()]))}
-            size="sm"
-          >
+          <Button onClick={() => onChange(addRuleForEditor(normalizedRules))} size="sm">
             <Plus className="h-4 w-4" />
             添加规则
           </Button>
@@ -254,9 +278,7 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
                 </label>
                 <Button
                   className="ml-auto"
-                  onClick={() =>
-                    onChange(resequence(normalizedRules.filter((item) => item.id !== rule.id)))
-                  }
+                  onClick={() => onChange(deleteRuleForEditor(normalizedRules, rule.id))}
                   size="icon"
                   variant="ghost"
                 >
