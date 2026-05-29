@@ -212,7 +212,7 @@ export default function HealthPage({
   }, [bookmarkById, records]);
   const summary = useMemo(() => summarizeHealthRecords(activeRecords), [activeRecords]);
   const remainingTodayCount = Math.max(0, bookmarks.length - activeRecords.length);
-  const startLabel = activeRecords.length > 0 ? '继续体检' : '开始体检';
+  const startLabel = activeRecords.length > 0 ? '继续检查' : '开始检查';
   const visibleRecords = useMemo(() => {
     const filtered =
       filter === 'all'
@@ -325,7 +325,7 @@ export default function HealthPage({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-primary" />
-            链接体检
+            检查失效链接
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-3">
@@ -462,14 +462,14 @@ export default function HealthPage({
       ) : null}
 
       <VirtualList
-        ariaLabel="链接体检结果"
+        ariaLabel="失效链接检查结果"
         className="min-h-0 flex-1 rounded-lg border border-border bg-card p-2"
         emptyState={
           activeRecords.length === 0 ? (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
               <ShieldAlert className="mx-auto h-7 w-7" />
-              <p>今天还没有体检结果。</p>
-              <p className="text-xs">点击“开始体检”后，已完成的链接会陆续显示在这里。</p>
+              <p>今天还没有检查结果。</p>
+              <p className="text-xs">点击“开始检查”后，已完成的链接会陆续显示在这里。</p>
             </div>
           ) : (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">

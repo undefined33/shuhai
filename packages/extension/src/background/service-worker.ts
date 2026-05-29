@@ -572,6 +572,20 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         return { ok: true, data: await getPendingCaptures() };
       case 'capture:currentSocial':
         return { ok: true, data: await captureCurrentSocial(request.source) };
+      case 'capture:currentArticle': {
+        const tab = await getActiveTab();
+        if (typeof tab?.id !== 'number') {
+          throw new Error('无法识别当前页面');
+        }
+
+        const capture = await executeArticleExtractor(tab.id);
+        const stored = await storeCapture(capture, tab);
+        if (!stored) {
+          throw new Error('无法保存提取结果');
+        }
+
+        return { ok: true, data: { capture: stored } };
+      }
       case 'capture:removePending':
         return { ok: true, data: { removed: await removePendingCapture(request.id) } };
       case 'capture:clearPending':

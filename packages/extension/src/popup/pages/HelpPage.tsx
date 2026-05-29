@@ -68,7 +68,7 @@ export default function HelpPage() {
     <ScrollArea className="h-full pr-2">
       <section className="space-y-3 pb-2">
         <Alert>
-          ShuHai 的核心原则是先生成方案、再由你确认。没有点击“应用选中”前，不会移动真实 Chrome
+          ShuHai 的核心原则是先生成建议、再由你确认。没有点击“应用选中”前，不会移动真实 Chrome
           书签。
         </Alert>
 
@@ -98,7 +98,7 @@ export default function HelpPage() {
               items={[
                 '在书签页选择整理模式。',
                 '点击生成，等待 AI 或规则分析完成。',
-                '在方案页逐条确认移动建议。',
+                '在整理建议页逐条确认移动建议。',
                 '取消不想移动的项目，必要时修改目标文件夹。',
                 '点击应用选中，ShuHai 会先备份再移动书签。',
               ]}
@@ -110,20 +110,20 @@ export default function HelpPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <Database className="h-4 w-4 text-primary" />
-              导出到 Obsidian
+              写入 Obsidian
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <StepList
               items={[
                 '首次使用时点击选择 Vault，并授权 Obsidian 根目录。',
-                '选择导出范围：全部书签、当前方案或方案选中项。',
+                '选择生成范围：全部书签、当前建议或建议选中项。',
                 '点击预览，确认将写入的 Markdown 文件数量和目录。',
-                '点击导出，已有文件会跳过，不会覆盖。',
+                '点击生成目录，已有文件会跳过，不会覆盖。',
               ]}
             />
             <Alert variant="warning">
-              ShuHai 导出的是书签索引和已捕获内容，不会批量抓取远程网页，也不会自动加载远程图片。
+              ShuHai 生成的是书签目录和已入库正文，不会批量抓取远程网页，也不会自动加载远程图片。
             </Alert>
           </CardContent>
         </Card>
@@ -140,7 +140,7 @@ export default function HelpPage() {
               items={[
                 '在正在阅读的网页中右键，选择“提取文章正文到 ShuHai”。',
                 'ShuHai 只读取当前页面已经加载的 DOM，不访问任何外部 URL。',
-                '导出页会显示标题、来源、字数、图片链接数量和正文预览。',
+                '待入库页会显示标题、来源、字数、图片链接数量和正文预览。',
                 '确认标签后点击写入 Vault，文章正文会保存为 Markdown。',
               ]}
             />
@@ -159,7 +159,7 @@ export default function HelpPage() {
               items={[
                 '在 Twitter/X 或微博页面看到想保存的内容时右键。',
                 '选择“提取推文正文到 ShuHai”或“提取微博正文到 ShuHai”。',
-                '打开 ShuHai 的收藏内容页，确认待保存内容。',
+                '打开 ShuHai 的待入库页，确认待入库内容。',
                 '写入 Vault 后，待处理内容会被清空。',
               ]}
             />
@@ -234,7 +234,7 @@ export default function HelpPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
-              API Key 是可选项。不配置时使用内置规则，配置后会调用当前 AI 服务商生成更细的分类建议。
+              API Key 是可选项。不配置时使用内置规则，配置后会调用当前 AI 服务商生成更细的整理建议。
             </p>
             <p>Key 保存在 Chrome 本地存储中，不会上传到 ShuHai 自己的服务器。</p>
             <a
@@ -256,7 +256,7 @@ export default function HelpPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>每次应用整理方案前都会保存书签树快照，并记录本次移动操作。</p>
+            <p>每次应用整理建议前都会保存书签树快照，并记录本次移动操作。</p>
             <p>如果结果不满意，可以在书签页点击撤销上次整理；也可以在设置页下载备份 JSON。</p>
           </CardContent>
         </Card>
@@ -271,7 +271,7 @@ export default function HelpPage() {
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>Chrome 书签整理只读标题、URL 和文件夹路径，不会访问网页正文。</p>
             <p>社交内容保存只处理当前页面已渲染的 DOM，并在写入 Markdown 前做安全清洗。</p>
-            <p>导出文件不会自动下载远程媒体，避免在 Obsidian 中泄露本机 IP 或触发远程资源加载。</p>
+            <p>写入文件不会自动下载远程媒体，避免在 Obsidian 中泄露本机 IP 或触发远程资源加载。</p>
           </CardContent>
         </Card>
       </section>

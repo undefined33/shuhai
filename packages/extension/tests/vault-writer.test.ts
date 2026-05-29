@@ -137,7 +137,7 @@ describe('vault writer', () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: 'bookmark-index',
-          sourceLabel: '书签索引',
+          sourceLabel: '书签目录',
           fileLabels: ['CVE payload.md'],
           bookmarkCount: 1,
         }),
@@ -187,7 +187,7 @@ describe('vault writer', () => {
     expect(snapshot.exportManifests).toEqual([
       expect.objectContaining({
         type: 'activity',
-        sourceLabel: '操作历史',
+        sourceLabel: '历史记录',
         fileLabels: ['activity-log.md'],
         bookmarkCount: 1,
       }),

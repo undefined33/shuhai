@@ -171,10 +171,10 @@ export default function BookmarkIndexExportPanel({
       );
 
       if (controller.signal.aborted) {
-        setStatus(`导出已取消：已处理 ${result.exported + result.skipped} 个书签`);
+        setStatus(`生成已取消：已处理 ${result.exported + result.skipped} 个书签`);
       } else {
         setStatus(
-          `导出完成：新增 ${result.exported}，跳过 ${result.skipped}，失败 ${result.errors.length}`,
+          `生成完成：新增 ${result.exported}，跳过 ${result.skipped}，失败 ${result.errors.length}`,
         );
         setProgress(100);
       }
@@ -190,7 +190,7 @@ export default function BookmarkIndexExportPanel({
 
   const cancelExport = () => {
     exportControllerRef.current?.abort();
-    setStatus('正在取消导出...');
+    setStatus('正在取消生成...');
   };
 
   return (
@@ -199,7 +199,7 @@ export default function BookmarkIndexExportPanel({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-primary" />
-            导出书签索引
+            生成书签目录
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-3">
@@ -207,7 +207,7 @@ export default function BookmarkIndexExportPanel({
           {status ? <Alert variant="success">{status}</Alert> : null}
 
           <p className="text-xs text-muted-foreground">
-            为每个书签生成一个 .md 索引文件：标题、链接、分类、标签。不抓取网页正文。
+            为每个书签生成一个 .md 目录文件：标题、链接、分类、标签。不抓取网页正文。
           </p>
 
           <div className="flex items-center gap-2 rounded-md bg-muted px-2 py-2 text-xs">
@@ -224,7 +224,7 @@ export default function BookmarkIndexExportPanel({
               onClick={buildPreview}
               variant="secondary"
             >
-              预览索引
+              预览目录
             </Button>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -236,11 +236,11 @@ export default function BookmarkIndexExportPanel({
                     onClick={exportBookmarks}
                   >
                     <Download className="h-4 w-4" />
-                    导出索引
+                    生成目录
                   </Button>
                 </span>
               </TooltipTrigger>
-              <TooltipContent>把书签索引写成 Markdown 文件，不会抓取远程网页内容。</TooltipContent>
+              <TooltipContent>把书签目录写成 Markdown 文件，不会抓取远程网页内容。</TooltipContent>
             </Tooltip>
             {exporting ? (
               <Button onClick={cancelExport} variant="outline">
@@ -253,12 +253,12 @@ export default function BookmarkIndexExportPanel({
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5">
-              <Label>导出范围</Label>
+              <Label>生成范围</Label>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
                 </TooltipTrigger>
-                <TooltipContent>只导出书签元数据，不访问网页内容。</TooltipContent>
+                <TooltipContent>只写入书签元数据，不访问网页内容。</TooltipContent>
               </Tooltip>
             </div>
             <RadioGroup onValueChange={(value) => setScope(value as ExportScope)} value={scope}>
@@ -269,19 +269,19 @@ export default function BookmarkIndexExportPanel({
               </label>
               <label className="flex items-center gap-2 rounded-md border border-border px-2 py-2 text-sm">
                 <RadioGroupItem disabled={!plan} value="plan" />
-                <span className="flex-1">当前方案</span>
+                <span className="flex-1">当前建议</span>
                 <Badge variant="secondary">{plan?.moves.length ?? 0}</Badge>
               </label>
               <label className="flex items-center gap-2 rounded-md border border-border px-2 py-2 text-sm">
                 <RadioGroupItem disabled={!plan} value="selected" />
-                <span className="flex-1">方案选中项</span>
+                <span className="flex-1">建议选中项</span>
                 <Badge variant="secondary">{selectedMoveIds.length}</Badge>
               </label>
             </RadioGroup>
           </div>
 
           <div className="space-y-1.5">
-            <Label>导出目录</Label>
+            <Label>写入目录</Label>
             <Input
               onChange={(event) => setDirectoryPrefix(event.target.value)}
               placeholder="Bookmarks"
@@ -308,9 +308,9 @@ export default function BookmarkIndexExportPanel({
           ) : null}
 
           <div className="border-t border-border pt-3">
-            <div className="mb-2 text-sm font-medium">最近导出</div>
+            <div className="mb-2 text-sm font-medium">最近生成</div>
             {bookmarkIndexManifests.length === 0 ? (
-              <p className="text-xs text-muted-foreground">尚未导出过书签</p>
+              <p className="text-xs text-muted-foreground">尚未生成过书签目录</p>
             ) : (
               <div className="space-y-2">
                 {bookmarkIndexManifests.slice(0, 5).map((manifest) => (
@@ -318,7 +318,7 @@ export default function BookmarkIndexExportPanel({
                     <span className="min-w-0 flex-1 truncate">
                       写入：{new Date(manifest.exportedAt).toLocaleString()}
                     </span>
-                    <Badge variant="outline">{manifest.sourceLabel ?? '书签索引'}</Badge>
+                    <Badge variant="outline">{manifest.sourceLabel ?? '书签目录'}</Badge>
                     <Badge variant="secondary">{manifest.bookmarkCount} 条</Badge>
                   </div>
                 ))}

@@ -53,7 +53,7 @@ function confidenceVariant(confidence: number): 'success' | 'warning' | 'danger'
 
 function emptyReason(plan: ClassificationPlan): string {
   return plan.mode === 'safe'
-    ? '安全模式下，已有文件夹中的书签不会被重新分类。返回书签页切换为全量模式可以重新审视全部书签。'
+    ? '安全模式下，已有文件夹中的书签不会被重新整理。返回书签页切换为全量模式可以重新审视全部书签。'
     : '全量模式没有发现需要调整的书签。可以回到书签页修改自定义规则后再生成。';
 }
 
@@ -334,7 +334,7 @@ export default function ClassifyPreview({
         ) : null}
 
         <Alert variant="warning">
-          当前为{plan.mode === 'safe' ? '仅整理未分类' : '重新分类全部'}模式；应用前不会修改 Chrome
+          当前为{plan.mode === 'safe' ? '仅整理未分类' : '重新整理全部'}模式；应用前不会修改 Chrome
           书签。
         </Alert>
 
@@ -351,7 +351,7 @@ export default function ClassifyPreview({
           <Card>
             <CardContent className="flex flex-col items-center gap-2 p-6 text-center">
               <ShieldAlert className="h-7 w-7 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">未找到匹配「{search}」的分类建议。</p>
+              <p className="text-sm text-muted-foreground">未找到匹配「{search}」的整理建议。</p>
               <Button onClick={() => setSearch('')} size="sm" variant="outline">
                 清除搜索
               </Button>
@@ -367,7 +367,7 @@ export default function ClassifyPreview({
         ) : null}
 
         <VirtualList
-          ariaLabel="分类建议列表"
+          ariaLabel="整理建议列表"
           className="min-h-0 flex-1 rounded-lg"
           estimatedHeight={surface === 'sidepanel' ? 520 : 300}
           itemHeight={176}

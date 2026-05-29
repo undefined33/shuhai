@@ -11,7 +11,7 @@ import {
 export const DEFAULT_MARKDOWN_TEMPLATES: MarkdownTemplate[] = [
   {
     id: 'default-bookmark',
-    name: '默认书签索引',
+    name: '默认书签目录',
     scope: 'bookmark',
     frontmatter: [
       'title: {{title_yaml}}',

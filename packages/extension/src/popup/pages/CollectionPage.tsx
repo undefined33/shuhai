@@ -415,7 +415,7 @@ export default function CollectionPage({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Inbox className="h-4 w-4 text-primary" />
-            待保存内容
+            待入库
             <Badge variant={pendingCaptures.length > 0 ? 'success' : 'secondary'}>
               {pendingCaptures.length}
             </Badge>
@@ -465,7 +465,7 @@ export default function CollectionPage({
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
                 <Inbox className="h-7 w-7 text-muted-foreground" />
-                <p className="text-sm font-medium">还没有待保存的内容</p>
+                <p className="text-sm font-medium">还没有待入库内容</p>
                 <p className="max-w-sm text-xs text-muted-foreground">
                   在任意网页右键选择“提取文章正文到 ShuHai”，或在 Twitter/X、微博页面提取当前内容。
                 </p>
@@ -523,13 +523,13 @@ export default function CollectionPage({
                           size="sm"
                         >
                           <Save className="h-4 w-4" />
-                          {handle ? '保存选中内容' : '先选择 Vault'}
+                          {handle ? '写入选中内容' : '先选择 Vault'}
                         </Button>
                         <Button
                           disabled={busy}
                           onClick={() => onRemovePendingCapture(selectedCapture.id)}
                           size="icon"
-                          title="移除这条待保存内容"
+                          title="移除这条待入库内容"
                           variant="outline"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -599,7 +599,7 @@ export default function CollectionPage({
               <div className="grid shrink-0 grid-cols-2 gap-2">
                 <Button disabled={busy || !handle} loading={busy} onClick={saveAllCaptures}>
                   <Save className="h-4 w-4" />
-                  全部保存到 Vault
+                  全部写入 Vault
                 </Button>
                 <Button disabled={busy} onClick={onClearPendingCapture} variant="outline">
                   清空队列
@@ -614,12 +614,12 @@ export default function CollectionPage({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-primary" />
-            最近写入 Vault
+            已保存
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {captureManifests.length === 0 ? (
-            <p className="text-xs text-muted-foreground">尚未写入过收藏内容。</p>
+            <p className="text-xs text-muted-foreground">尚未写入过内容。</p>
           ) : (
             captureManifests.slice(0, 5).map((manifest) => (
               <div className="flex items-center gap-2 text-xs" key={manifest.id}>

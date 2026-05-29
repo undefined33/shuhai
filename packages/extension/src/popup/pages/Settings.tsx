@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
+  ChevronDown,
   CheckCircle2,
   Download,
   Eye,
   EyeOff,
   FolderOpen,
   HelpCircle,
-  Info,
   Plus,
   Save,
   Trash2,
@@ -30,6 +31,11 @@ import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../../components/ui/collapsible.js';
 import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { ScrollArea } from '../../components/ui/scroll-area.js';
@@ -57,6 +63,7 @@ interface SettingsProps {
   settings: AppSettings;
   onSave(settings: AppSettings): void;
   onDownloadBackup(backup: BackupRecord): void;
+  onOpenActivity?(): void;
   onTestProvider(provider: AiProviderConfig): Promise<AiProviderTestResult>;
 }
 
@@ -93,15 +100,15 @@ function manifestTypeLabel(manifest: ExportManifest): string {
   }
 
   if (manifest.type === 'bookmark-index' || (!manifest.type && manifest.bookmarkCount > 5)) {
-    return '书签索引';
+    return '书签目录';
   }
 
   if (manifest.type === 'activity') {
-    return '操作历史';
+    return '历史记录';
   }
 
   if (manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5)) {
-    return '收藏内容';
+    return '内容';
   }
 
   return '未分类';
@@ -122,6 +129,7 @@ export default function Settings({
   settings,
   onSave,
   onDownloadBackup,
+  onOpenActivity,
   onTestProvider,
 }: SettingsProps) {
   const [form, setForm] = useState(settings);
@@ -134,6 +142,7 @@ export default function Settings({
   const [addingProvider, setAddingProvider] = useState<AiProviderConfig | undefined>();
   const [testResults, setTestResults] = useState<Record<string, AiProviderTestResult>>({});
   const [testingProviderId, setTestingProviderId] = useState('');
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setForm(settings);
@@ -245,6 +254,36 @@ export default function Settings({
     onSave(form);
   };
 
+  const activeProvider = form.aiProviders.find((provider) => provider.id === form.activeProviderId);
+  const aiConfigured = form.aiProviders.some((provider) => provider.apiKey.trim());
+  const setupIncomplete = !vaultHandle || !aiConfigured;
+  const renderCollapsibleSection = (
+    id: string,
+    title: string,
+    description: string,
+    content: ReactNode,
+  ) => (
+    <Collapsible
+      onOpenChange={(open) => setOpenSections((current) => ({ ...current, [id]: open }))}
+      open={Boolean(openSections[id])}
+    >
+      <Card>
+        <CollapsibleTrigger asChild>
+          <button className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">{title}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{description}</div>
+            </div>
+            <ChevronDown className={openSections[id] ? 'h-4 w-4 rotate-180' : 'h-4 w-4'} />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="border-t border-border pt-3">{content}</CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+
   return (
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
@@ -253,6 +292,31 @@ export default function Settings({
 
         <ScrollArea className="min-h-0 flex-1 pr-2">
           <div className="space-y-3">
+            {setupIncomplete ? (
+              <Card className="border-primary/40 bg-primary/5">
+                <CardHeader className="pb-2">
+                  <CardTitle>开始使用 ShuHai</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-2 rounded-md bg-card px-2 py-2">
+                    <span>1. 选择 Obsidian Vault</span>
+                    <Badge variant={vaultHandle ? 'success' : 'warning'}>
+                      {vaultHandle ? '已完成' : '待配置'}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-md bg-card px-2 py-2">
+                    <span>2. 配置 AI 服务商</span>
+                    <Badge variant={aiConfigured ? 'success' : 'warning'}>
+                      {aiConfigured ? '已完成' : '待配置'}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    完成后即可整理书签、检查失效链接，并把提取的内容写入知识库。
+                  </p>
+                </CardContent>
+              </Card>
+            ) : null}
+
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2">
@@ -278,7 +342,7 @@ export default function Settings({
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>导出前缀</Label>
+                  <Label>写入前缀</Label>
                   <Input
                     onChange={(event) =>
                       setForm({
@@ -293,7 +357,7 @@ export default function Settings({
 
                 {!vaultHandle ? (
                   <Alert variant="warning">
-                    收藏内容和书签索引都会写入同一个 Vault。首次使用需要授权目录。
+                    待入库内容和书签目录都会写入同一个 Vault。首次使用需要授权目录。
                   </Alert>
                 ) : null}
               </CardContent>
@@ -317,7 +381,7 @@ export default function Settings({
                       }
                       type="checkbox"
                     />
-                    <span>使用 AI 辅助分类</span>
+                    <span>使用 AI 辅助整理</span>
                   </label>
                   <div className="space-y-1.5">
                     <Label>默认模式</Label>
@@ -334,8 +398,8 @@ export default function Settings({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="safe">未分类</SelectItem>
-                        <SelectItem value="full">全量</SelectItem>
+                        <SelectItem value="safe">仅整理未分类</SelectItem>
+                        <SelectItem value="full">重新整理全部</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -343,10 +407,7 @@ export default function Settings({
 
                 <div className="rounded-md border border-border bg-muted/40 px-2 py-2 text-xs">
                   当前使用：
-                  <span className="font-medium">
-                    {form.aiProviders.find((provider) => provider.id === form.activeProviderId)
-                      ?.name ?? '未选择'}
-                  </span>
+                  <span className="font-medium">{activeProvider?.name ?? '未选择'}</span>
                 </div>
 
                 <div className="space-y-2">
@@ -631,78 +692,96 @@ export default function Settings({
 
                 {!form.aiProviders.some((provider) => provider.apiKey.trim()) ? (
                   <Alert variant="warning">
-                    未配置 API Key 时，ShuHai 会使用内置规则分类；配置后能获得更精确的 AI 建议。
+                    未配置 API Key 时，ShuHai 会使用内置规则整理；配置后能获得更精确的 AI 建议。
                   </Alert>
                 ) : null}
               </CardContent>
             </Card>
 
-            <RulesEditor
-              onChange={(customRules) => setForm((current) => ({ ...current, customRules }))}
-              rules={form.customRules}
-            />
+            {renderCollapsibleSection(
+              'rules',
+              '分类规则',
+              '维护固定规则，用来补充或替代 AI 整理建议。',
+              <RulesEditor
+                onChange={(customRules) => setForm((current) => ({ ...current, customRules }))}
+                rules={form.customRules}
+              />,
+            )}
 
-            <MarkdownTemplateEditor onChange={setForm} settings={form} />
+            {renderCollapsibleSection(
+              'template',
+              '导出模板',
+              '调整写入 Obsidian 的 Markdown 字段和格式。',
+              <MarkdownTemplateEditor onChange={setForm} settings={form} />,
+            )}
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle>最近写入</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {exportManifests.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    尚未写入过 Vault。收藏内容或导出书签索引后会显示在这里。
-                  </p>
-                ) : null}
-                {exportManifests.map((manifest) => (
-                  <div className="flex items-center gap-2 text-xs" key={manifest.id}>
-                    <span className="min-w-0 flex-1 truncate">
-                      写入：{new Date(manifest.exportedAt).toLocaleString()}
-                    </span>
-                    <Badge variant="outline">{manifestTypeLabel(manifest)}</Badge>
-                    <Badge variant="secondary">{manifestCountLabel(manifest)}</Badge>
+            {renderCollapsibleSection(
+              'backup-history',
+              '备份与历史',
+              '查看已保存记录，下载整理前自动创建的书签备份。',
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">已保存</h3>
+                    {onOpenActivity ? (
+                      <Button onClick={onOpenActivity} size="sm" variant="outline">
+                        历史记录
+                      </Button>
+                    ) : null}
                   </div>
-                ))}
-              </CardContent>
-            </Card>
+                  {exportManifests.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      尚未写入过 Vault。内容或书签目录写入后会显示在这里。
+                    </p>
+                  ) : null}
+                  {exportManifests.map((manifest) => (
+                    <div className="flex items-center gap-2 text-xs" key={manifest.id}>
+                      <span className="min-w-0 flex-1 truncate">
+                        写入：{new Date(manifest.exportedAt).toLocaleString()}
+                      </span>
+                      <Badge variant="outline">{manifestTypeLabel(manifest)}</Badge>
+                      <Badge variant="secondary">{manifestCountLabel(manifest)}</Badge>
+                    </div>
+                  ))}
+                </div>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle>书签备份</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {backups.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    暂无备份。每次应用整理方案前会自动备份，便于撤销。
-                  </p>
-                ) : null}
-                {backups.map((backup) => (
-                  <div className="flex items-center gap-2 text-xs" key={backup.key}>
-                    <span className="min-w-0 flex-1 truncate">
-                      {new Date(backup.createdAt).toLocaleString()}
-                    </span>
-                    <Badge variant="outline">{backup.bookmarkCount}</Badge>
-                    <Button onClick={() => onDownloadBackup(backup)} size="sm" variant="outline">
-                      <Download className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">书签备份</h3>
+                  {backups.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      暂无备份。每次应用整理建议前会自动备份，便于撤销。
+                    </p>
+                  ) : null}
+                  {backups.map((backup) => (
+                    <div className="flex items-center gap-2 text-xs" key={backup.key}>
+                      <span className="min-w-0 flex-1 truncate">
+                        {new Date(backup.createdAt).toLocaleString()}
+                      </span>
+                      <Badge variant="outline">{backup.bookmarkCount}</Badge>
+                      <Button onClick={() => onDownloadBackup(backup)} size="sm" variant="outline">
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>,
+            )}
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2">
-                  <Info className="h-4 w-4 text-primary" />
-                  使用帮助
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>“整理书签”负责浏览、AI 分类、确认移动和链接体检。</p>
-                <p>“收藏内容”负责处理右键保存进来的文章、推文和微博。</p>
+            {renderCollapsibleSection(
+              'advanced',
+              '高级工具与帮助',
+              '低频工具和安全说明放在这里，需要时再展开。',
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>“整理书签”负责浏览、AI 整理建议和确认移动。</p>
+                <p>“待入库”负责处理右键提取进来的文章、推文和微博。</p>
                 <p>ShuHai 不会批量抓取远程网页，写入 Markdown 前会做安全清洗。</p>
-              </CardContent>
-            </Card>
+                {onOpenActivity ? (
+                  <Button onClick={onOpenActivity} size="sm" variant="outline">
+                    查看历史记录
+                  </Button>
+                ) : null}
+              </div>,
+            )}
           </div>
         </ScrollArea>
 

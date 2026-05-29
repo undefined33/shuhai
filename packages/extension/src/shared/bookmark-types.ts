@@ -371,6 +371,7 @@ export type ExtensionRequest =
   | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
   | { type: 'capture:currentSocial'; source: 'twitter' | 'weibo' }
+  | { type: 'capture:currentArticle' }
   | { type: 'health:clearRecords' }
   | { type: 'health:retryOne'; bookmarkId: string }
   | { type: 'bookmark:delete'; id: string }

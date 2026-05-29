@@ -1,11 +1,7 @@
 import type { KeyboardEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Folder, HelpCircle, Link2, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
-import type {
-  BookmarkItem,
-  ClassificationMode,
-  FolderItem,
-} from '../../shared/bookmark-types.js';
+import type { BookmarkItem, ClassificationMode, FolderItem } from '../../shared/bookmark-types.js';
 import { VirtualList } from '../../components/VirtualList.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
@@ -263,7 +259,7 @@ export default function BookmarkTree({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="safe">仅整理未分类</SelectItem>
-                    <SelectItem value="full">重新分类全部</SelectItem>
+                    <SelectItem value="full">重新整理全部</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -46,19 +46,19 @@ interface ActivityPageProps {
 }
 
 const TYPE_FILTERS: Array<{ type: ActivityType; label: string; group: string }> = [
-  { type: 'classify_apply', label: '分类', group: '分类' },
-  { type: 'classify_undo', label: '撤销', group: '分类' },
-  { type: 'vault_export', label: '导出', group: '导出' },
-  { type: 'health_delete', label: '健康', group: '健康' },
-  { type: 'health_update', label: '健康更新', group: '健康' },
+  { type: 'classify_apply', label: '整理', group: '整理' },
+  { type: 'classify_undo', label: '撤销', group: '整理' },
+  { type: 'vault_export', label: '写入', group: '写入' },
+  { type: 'health_delete', label: '链接删除', group: '链接' },
+  { type: 'health_update', label: '链接更新', group: '链接' },
   { type: 'capture_save', label: '收藏', group: '收藏' },
   { type: 'backup_create', label: '备份', group: '备份' },
 ];
 
 const FILTER_GROUPS = [
-  { label: '分类', types: ['classify_apply', 'classify_undo'] as ActivityType[] },
-  { label: '导出', types: ['vault_export'] as ActivityType[] },
-  { label: '健康', types: ['health_delete', 'health_update'] as ActivityType[] },
+  { label: '整理', types: ['classify_apply', 'classify_undo'] as ActivityType[] },
+  { label: '写入', types: ['vault_export'] as ActivityType[] },
+  { label: '链接', types: ['health_delete', 'health_update'] as ActivityType[] },
   { label: '收藏', types: ['capture_save'] as ActivityType[] },
   { label: '备份', types: ['backup_create'] as ActivityType[] },
 ];
@@ -153,12 +153,12 @@ export default function ActivityPage({ settings, onBack }: ActivityPageProps) {
     await clearActivityLog();
     setEntries([]);
     setConfirmClearOpen(false);
-    setStatus('操作历史已清空。');
+    setStatus('历史记录已清空。');
   };
 
   const exportJson = () => {
     downloadJson(entries);
-    setStatus('操作历史 JSON 已下载。');
+    setStatus('历史记录 JSON 已下载。');
   };
 
   const exportMarkdown = async () => {
@@ -175,7 +175,7 @@ export default function ActivityPage({ settings, onBack }: ActivityPageProps) {
       }
 
       const path = await exportActivityLogToVault(handle, entries, settings.exportDirectory);
-      setStatus(`操作历史已写入 ${path}`);
+      setStatus(`历史记录已写入 ${path}`);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : String(exportError));
     }
@@ -187,19 +187,19 @@ export default function ActivityPage({ settings, onBack }: ActivityPageProps) {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-primary" />
-            操作历史
+            历史记录
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-3">
           {status ? <Alert variant="success">{status}</Alert> : null}
           {error ? <Alert variant="destructive">{error}</Alert> : null}
           <p className="text-xs text-muted-foreground">
-            这里记录最近 200 次关键操作，支持搜索、筛选和导出。
+            这里记录最近 200 次关键操作，支持搜索、筛选和下载。
           </p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={onBack} size="sm" variant="outline">
               <ArrowLeft className="h-4 w-4" />
-              返回整理
+              返回首页
             </Button>
             <Button
               disabled={entries.length === 0}
@@ -268,7 +268,7 @@ export default function ActivityPage({ settings, onBack }: ActivityPageProps) {
           {filteredEntries.length === 0 ? (
             <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
               <Activity className="h-7 w-7" />
-              <p>{entries.length === 0 ? '还没有操作历史。' : '没有匹配的操作历史。'}</p>
+              <p>{entries.length === 0 ? '还没有历史记录。' : '没有匹配的历史记录。'}</p>
               <p className="text-xs">整理、删除、保存或写入 Vault 后会出现在这里。</p>
             </div>
           ) : (
@@ -335,8 +335,8 @@ export default function ActivityPage({ settings, onBack }: ActivityPageProps) {
       <Dialog onOpenChange={setConfirmClearOpen} open={confirmClearOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>清空操作历史</DialogTitle>
-            <DialogDescription>确定清空所有操作历史？此操作不可撤销。</DialogDescription>
+            <DialogTitle>清空历史记录</DialogTitle>
+            <DialogDescription>确定清空所有历史记录？此操作不可撤销。</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <DialogClose asChild>

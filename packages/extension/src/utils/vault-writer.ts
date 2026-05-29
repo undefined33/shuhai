@@ -250,7 +250,7 @@ export async function exportBookmarksToVault(
     fileLabels: [],
     bookmarkCount: bookmarks.length,
     type: 'bookmark-index',
-    sourceLabel: '书签索引',
+    sourceLabel: '书签目录',
   };
   const result: ExportResult = {
     exported: 0,
@@ -392,7 +392,7 @@ export async function exportActivityLogToVault(
     fileLabels: ['activity-log.md'],
     bookmarkCount: entries.length,
     type: 'activity',
-    sourceLabel: '操作历史',
+    sourceLabel: '历史记录',
   });
 
   return path;

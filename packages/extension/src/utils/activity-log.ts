@@ -206,7 +206,7 @@ export function calculateActivityStats(entries: ActivityEntry[], now = new Date(
 
 export function generateActivityMarkdown(entries: ActivityEntry[], now = new Date()): string {
   const groups = groupActivityEntries(entries, now);
-  const lines = ['# ShuHai 操作历史', '', `导出时间: ${now.toISOString()}`, ''];
+  const lines = ['# ShuHai 历史记录', '', `导出时间: ${now.toISOString()}`, ''];
 
   for (const group of groups) {
     lines.push(`## ${group.label} (${group.entries.length})`, '');
