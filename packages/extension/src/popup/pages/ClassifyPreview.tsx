@@ -1,16 +1,13 @@
 import type { KeyboardEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, HelpCircle, ShieldAlert } from 'lucide-react';
-import type {
-  ClassificationPlan,
-  FolderItem,
-  MovePlan,
-} from '../../shared/bookmark-types.js';
+import type { ClassificationPlan, FolderItem, MovePlan } from '../../shared/bookmark-types.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
+import { SearchInput } from '../../components/SearchInput.js';
 import { Command, CommandInput, CommandList } from '../../components/ui/command.js';
 import { VirtualList } from '../../components/VirtualList.js';
 import {
@@ -56,7 +53,7 @@ function confidenceVariant(confidence: number): 'success' | 'warning' | 'danger'
 
 function emptyReason(plan: ClassificationPlan): string {
   return plan.mode === 'safe'
-    ? '安全模式下，已有文件夹中的书签不会被重新分类。返回书签页切换为全量模式可以重新审视全部书签。'
+    ? '安全模式下，已有文件夹中的书签不会被重新整理。返回书签页切换为全量模式可以重新审视全部书签。'
     : '全量模式没有发现需要调整的书签。可以回到书签页修改自定义规则后再生成。';
 }
 
@@ -169,6 +166,8 @@ export default function ClassifyPreview({
 }: ClassifyPreviewProps) {
   const [sortMode, setSortMode] = useState<SortMode>('default');
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
   const moveGridClass =
     surface === 'sidepanel'
       ? 'grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.25fr)] items-center gap-2'
@@ -184,15 +183,24 @@ export default function ClassifyPreview({
                 a.bookmarkTitle.localeCompare(b.bookmarkTitle, 'zh-CN'),
             )
           : plan.moves;
+    const keyword = deferredSearch.trim().toLowerCase();
+    const filteredMoves = keyword
+      ? moves.filter((move) =>
+          [move.bookmarkTitle, move.bookmarkUrl, move.targetFolder]
+            .join('\n')
+            .toLowerCase()
+            .includes(keyword),
+        )
+      : moves;
     let lastFolder = '';
 
-    return moves.map((move) => {
+    return filteredMoves.map((move) => {
       const groupLabel =
         sortMode === 'folder' && move.targetFolder !== lastFolder ? move.targetFolder : undefined;
       lastFolder = move.targetFolder;
       return { groupLabel, move };
     });
-  }, [plan.moves, sortMode]);
+  }, [deferredSearch, plan.moves, sortMode]);
 
   useEffect(() => {
     setFocusedIndex((current) => Math.min(current, Math.max(0, rows.length - 1)));
@@ -239,107 +247,133 @@ export default function ClassifyPreview({
   return (
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
-      <div className="grid grid-cols-3 gap-2">
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-xl font-semibold">{plan.moves.length}</div>
-            <div className="text-[11px] text-muted-foreground">建议</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-xl font-semibold">{selectedCount}</div>
-            <div className="text-[11px] text-muted-foreground">选中</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-xl font-semibold">{plan.unchanged}</div>
-            <div className="text-[11px] text-muted-foreground">不动</div>
-          </CardContent>
-        </Card>
-      </div>
+        <div className="grid grid-cols-3 gap-2">
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-xl font-semibold">{plan.moves.length}</div>
+              <div className="text-[11px] text-muted-foreground">建议</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-xl font-semibold">{selectedCount}</div>
+              <div className="text-[11px] text-muted-foreground">选中</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-xl font-semibold">{plan.unchanged}</div>
+              <div className="text-[11px] text-muted-foreground">不动</div>
+            </CardContent>
+          </Card>
+        </div>
 
-      <div className="flex items-center gap-2">
-        <Button onClick={onCancel} disabled={busy} variant="ghost">
-          返回
-        </Button>
-        <Button
-          className="flex-1"
-          disabled={busy || selectedCount === 0}
-          loading={busy}
-          onClick={onApply}
-        >
-          <CheckCircle2 className="h-4 w-4" />
-          应用选中
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex gap-2">
-          <Button
-            disabled={busy || plan.moves.length === 0}
-            onClick={() => setAllSelected(true)}
-            size="sm"
-            variant="outline"
-          >
-            全选
+        <div className="flex items-center gap-2">
+          <Button onClick={onCancel} disabled={busy} variant="ghost">
+            返回
           </Button>
           <Button
-            disabled={busy || plan.moves.length === 0}
-            onClick={() => setAllSelected(false)}
-            size="sm"
-            variant="outline"
+            className="flex-1"
+            disabled={busy || selectedCount === 0}
+            loading={busy}
+            onClick={onApply}
           >
-            全不选
+            <CheckCircle2 className="h-4 w-4" />
+            应用选中
           </Button>
         </div>
-        <div className="flex justify-end gap-2">
-          {[
-            ['default', '默认'],
-            ['confidence', '低置信'],
-            ['folder', '按文件夹'],
-          ].map(([value, label]) => (
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex gap-2">
             <Button
-              key={value}
-              onClick={() => setSortMode(value as SortMode)}
+              disabled={busy || plan.moves.length === 0}
+              onClick={() => setAllSelected(true)}
               size="sm"
-              variant={sortMode === value ? 'default' : 'outline'}
+              variant="outline"
             >
-              {label}
+              全选
             </Button>
-          ))}
+            <Button
+              disabled={busy || plan.moves.length === 0}
+              onClick={() => setAllSelected(false)}
+              size="sm"
+              variant="outline"
+            >
+              全不选
+            </Button>
+          </div>
+          <div className="flex justify-end gap-2">
+            {[
+              ['default', '默认'],
+              ['confidence', '低置信'],
+              ['folder', '按文件夹'],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                onClick={() => setSortMode(value as SortMode)}
+                size="sm"
+                variant={sortMode === value ? 'default' : 'outline'}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <Alert variant="warning">
-        当前为{plan.mode === 'safe' ? '仅整理未分类' : '重新分类全部'}模式；应用前不会修改 Chrome 书签。
-      </Alert>
+        {plan.moves.length > 0 ? (
+          <div className="space-y-1.5">
+            <SearchInput
+              onChange={setSearch}
+              placeholder="搜索标题、URL 或目标文件夹"
+              value={search}
+            />
+            <div className="text-[11px] text-muted-foreground">
+              显示 {rows.length} / {plan.moves.length} 条
+            </div>
+          </div>
+        ) : null}
 
-      {plan.moves.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 p-6 text-center">
-            <ShieldAlert className="h-7 w-7 text-muted-foreground" />
+        <Alert variant="warning">
+          当前为{plan.mode === 'safe' ? '仅整理未分类' : '重新整理全部'}模式；应用前不会修改 Chrome
+          书签。
+        </Alert>
+
+        {plan.moves.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 p-6 text-center">
+              <ShieldAlert className="h-7 w-7 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">{emptyReason(plan)}</p>
             </CardContent>
           </Card>
-      ) : null}
+        ) : null}
 
-      {plan.newFolders.length > 0 ? (
-        <Alert>
-          将创建 {plan.newFolders.length} 个新文件夹：{plan.newFolders.slice(0, 8).join('、')}
-          {plan.newFolders.length > 8 ? '…' : ''}
-        </Alert>
-      ) : null}
+        {plan.moves.length > 0 && rows.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 p-6 text-center">
+              <ShieldAlert className="h-7 w-7 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">未找到匹配「{search}」的整理建议。</p>
+              <Button onClick={() => setSearch('')} size="sm" variant="outline">
+                清除搜索
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
-      <VirtualList
-        ariaLabel="分类建议列表"
-        className="min-h-0 flex-1 rounded-lg"
-        estimatedHeight={surface === 'sidepanel' ? 520 : 300}
-        itemHeight={176}
-        items={rows}
-        onKeyDown={handleKeyboard}
-        renderItem={({ groupLabel, move }, index) => (
+        {plan.newFolders.length > 0 ? (
+          <Alert>
+            将创建 {plan.newFolders.length} 个新文件夹：{plan.newFolders.slice(0, 8).join('、')}
+            {plan.newFolders.length > 8 ? '…' : ''}
+          </Alert>
+        ) : null}
+
+        <VirtualList
+          ariaLabel="整理建议列表"
+          className="min-h-0 flex-1 rounded-lg"
+          estimatedHeight={surface === 'sidepanel' ? 520 : 300}
+          itemHeight={176}
+          items={rows}
+          onKeyDown={handleKeyboard}
+          renderItem={({ groupLabel, move }, index) => (
             <Card
               className={moveCardClass(move, index === focusedIndex)}
               key={move.id}
@@ -388,7 +422,7 @@ export default function ClassifyPreview({
 
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge variant={move.reason === 'ai' ? 'default' : 'outline'}>
-                    {move.reason === 'ai' ? 'AI' : move.ruleName ?? '规则'}
+                    {move.reason === 'ai' ? 'AI' : (move.ruleName ?? '规则')}
                   </Badge>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -408,9 +442,9 @@ export default function ClassifyPreview({
                 </div>
               </CardContent>
             </Card>
-        )}
-      />
-    </section>
+          )}
+        />
+      </section>
     </TooltipProvider>
   );
 }

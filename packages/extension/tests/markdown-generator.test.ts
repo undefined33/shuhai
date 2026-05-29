@@ -4,6 +4,7 @@ import {
   generateBookmarkMarkdown,
   generateCapturedContentMarkdown,
 } from '../src/utils/markdown-generator.js';
+import { getDefaultTemplate, renderTemplate } from '../src/utils/markdown-templates.js';
 import {
   neutralizeObsidianSyntax,
   sanitizeFileName,
@@ -49,6 +50,7 @@ describe('markdown sanitization', () => {
     const markdown = generateBookmarkMarkdown(bookmark);
 
     expect(markdown).toContain('source: chrome');
+    expect(markdown).toContain('shuhai_format: 3');
     expect(markdown).toContain('已过滤不安全 URL');
     expect(markdown).not.toContain('javascript:alert');
     expect(markdown).not.toContain('<% tp.system');
@@ -103,13 +105,89 @@ describe('markdown sanitization', () => {
 
     expect(markdown).toContain('source: article');
     expect(markdown).toContain('site: "Example Blog"');
-    expect(markdown).toContain('saved: 2026-05-28');
-    expect(markdown).toContain('word_count: 42');
+    expect(markdown).toContain('saved: "2026-05-28"');
+    expect(markdown).toContain('shuhai_format: 3');
+    expect(markdown).toContain('word_count: "42"');
     expect(markdown).toContain('[图片: remote](https://example.com/a.png)');
     expect(markdown).toContain('```text');
     expect(markdown).toContain('obsidian-disabled://open');
     expect(markdown).not.toContain('![');
     expect(markdown).not.toContain('<% bad %>');
+    expect(markdown).not.toContain('{{query}}');
+  });
+
+  it('renders custom templates and removes unknown variables', () => {
+    const markdown = renderTemplate(getDefaultTemplate('bookmark'), {
+      title: 'A',
+      title_yaml: '"A"',
+      url: 'https://example.com',
+      url_yaml: '"https://example.com"',
+      url_link: '[打开](https://example.com)',
+      folder: '研究',
+      folder_yaml: '"研究"',
+      confidence: '',
+      date: '2026-05-29',
+      created: '',
+      tags: '["tag"]',
+    });
+
+    expect(markdown).toContain('# A');
+    expect(markdown).not.toContain('{{');
+  });
+
+  it('keeps frontmatter structure intact for YAML-sensitive values', () => {
+    const markdown = renderTemplate(
+      {
+        id: 'custom',
+        name: 'Custom',
+        scope: 'article',
+        frontmatter: [
+          'title: {{title}}',
+          'aliases: {{aliases}}',
+          'tags: {{tags}}',
+          'summary: {{summary_yaml}}',
+        ].join('\n'),
+        body: '# {{title}}\n\n{{body}}',
+      },
+      {
+        title: 'Research: [APT] --- phase 1',
+        aliases: 'x: y\n---\n- z',
+        tags: '["red-team", "research"]',
+        summary_yaml: '"Already safe: [ok] ---"',
+        body: 'payload ![remote](https://example.com/x.png)\n```dataview\nTABLE\n```',
+      },
+    );
+
+    const [frontmatter] = markdown.split('\n---\n\n');
+
+    expect(markdown.startsWith('---\n')).toBe(true);
+    expect(frontmatter).toContain('title: "Research: [APT] --- phase 1"');
+    expect(frontmatter).toContain('aliases: "x: y --- - z"');
+    expect(frontmatter).toContain('tags: ["red-team", "research"]');
+    expect(frontmatter).toContain('summary: "Already safe: [ok] ---"');
+    expect(markdown).toContain('[图片: remote](https://example.com/x.png)');
+    expect(markdown).toContain('```text');
+  });
+
+  it('keeps sanitization effective after template rendering', () => {
+    const markdown = renderTemplate(
+      {
+        id: 'custom',
+        name: 'Custom',
+        scope: 'article',
+        frontmatter: 'title: {{title}}\nrun: {{run}}',
+        body: '![remote](https://example.com/x.png)\n```dataview\nTABLE\n```',
+      },
+      {
+        title: 'Research {{query}}',
+        run: '<% tp.system.exec("calc") %>',
+      },
+    );
+
+    expect(markdown).toContain('<\\\\%');
+    expect(markdown).toContain('[图片: remote](https://example.com/x.png)');
+    expect(markdown).toContain('```text');
+    expect(markdown).not.toContain('![');
     expect(markdown).not.toContain('{{query}}');
   });
 });

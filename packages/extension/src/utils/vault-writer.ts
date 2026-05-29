@@ -1,21 +1,25 @@
 import type {
   BookmarkItem,
+  AppSettings,
   CapturedContent,
   ExportManifest,
   ExportPreview,
   MovePlan,
 } from '../shared/bookmark-types.js';
 import { stripRootFolder } from '../shared/classifier.js';
-import {
-  generateBookmarkMarkdown,
-  generateCapturedContentMarkdown,
-} from './markdown-generator.js';
+import { generateBookmarkMarkdown, generateCapturedContentMarkdown } from './markdown-generator.js';
 import {
   assertSafeRelativePath,
   sanitizeFileName,
   sanitizePathSegment,
   sanitizeRelativePath,
 } from './sanitize.js';
+import {
+  addActivityEntry,
+  generateActivityMarkdown,
+  summarizeVaultExport,
+  type ActivityEntry,
+} from './activity-log.js';
 import { saveExportManifest } from './storage.js';
 
 const DB_NAME = 'shuhai-vault';
@@ -39,6 +43,7 @@ export interface ExportOptions {
   directoryPrefix: string;
   moves?: MovePlan[];
   signal?: AbortSignal;
+  settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>;
 }
 
 export interface ExportResult {
@@ -55,6 +60,18 @@ function captureSourceFolder(source: CapturedContent['source']): string {
   }
 
   return source;
+}
+
+function captureSourceLabel(source: CapturedContent['source']): string {
+  if (source === 'article') {
+    return '文章';
+  }
+
+  if (source === 'twitter') {
+    return 'Twitter/X';
+  }
+
+  return '微博';
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -91,7 +108,8 @@ function idbSet(key: string, value: unknown): Promise<void> {
         const request = transaction.objectStore(STORE_NAME).put(value, key);
 
         request.onerror = () => reject(request.error ?? new Error('Cannot save vault handle'));
-        transaction.onerror = () => reject(transaction.error ?? new Error('Cannot save vault handle'));
+        transaction.onerror = () =>
+          reject(transaction.error ?? new Error('Cannot save vault handle'));
         transaction.oncomplete = () => {
           db.close();
           resolve();
@@ -119,9 +137,7 @@ export async function requestVaultAccess(): Promise<FileSystemDirectoryHandle> {
   return handle;
 }
 
-export async function checkVaultPermission(
-  handle: FileSystemDirectoryHandle,
-): Promise<boolean> {
+export async function checkVaultPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
   const permissioned = handle as PermissionedDirectoryHandle;
   const descriptor = { mode: 'readwrite' as const };
   const current = await permissioned.queryPermission(descriptor);
@@ -138,10 +154,7 @@ function moveByBookmarkId(moves: MovePlan[] = []): Map<string, MovePlan> {
   return new Map(moves.map((move) => [move.bookmarkId, move]));
 }
 
-export function buildBookmarkExportPath(
-  bookmark: BookmarkItem,
-  options: ExportOptions,
-): string[] {
+export function buildBookmarkExportPath(bookmark: BookmarkItem, options: ExportOptions): string[] {
   const move = moveByBookmarkId(options.moves).get(bookmark.id);
   const folder = stripRootFolder(move?.targetFolder ?? bookmark.parentPath);
   const prefix = sanitizeRelativePath(options.directoryPrefix || 'Bookmarks');
@@ -234,7 +247,10 @@ export async function exportBookmarksToVault(
     exportedAt: new Date().toISOString(),
     vaultPath: handle.name,
     files: [],
+    fileLabels: [],
     bookmarkCount: bookmarks.length,
+    type: 'bookmark-index',
+    sourceLabel: '书签目录',
   };
   const result: ExportResult = {
     exported: 0,
@@ -263,10 +279,11 @@ export async function exportBookmarksToVault(
         await writeTextFile(
           directory,
           fileName,
-          generateBookmarkMarkdown(bookmark, moves.get(bookmark.id)),
+          generateBookmarkMarkdown(bookmark, moves.get(bookmark.id), new Date(), options.settings),
         );
         result.exported += 1;
         result.files.push(relativePath);
+        result.manifest.fileLabels?.push(fileName);
       }
     } catch (error) {
       result.errors.push({
@@ -283,6 +300,13 @@ export async function exportBookmarksToVault(
   }
 
   await saveExportManifest(manifest);
+  if (result.exported > 0) {
+    await addActivityEntry({
+      type: 'vault_export',
+      summary: summarizeVaultExport(result.exported, options.directoryPrefix),
+      details: result.files.map((file) => ({ label: file })),
+    });
+  }
   return result;
 }
 
@@ -290,6 +314,7 @@ export async function exportCaptureToVault(
   handle: FileSystemDirectoryHandle,
   capture: CapturedContent,
   directoryPrefix: string,
+  settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>,
 ): Promise<ExportResult> {
   const segments = buildCaptureExportPath(capture, directoryPrefix);
   const fileName = segments.at(-1) ?? sanitizeFileName(capture.title || capture.url);
@@ -300,7 +325,10 @@ export async function exportCaptureToVault(
     exportedAt: new Date().toISOString(),
     vaultPath: handle.name,
     files: [],
+    fileLabels: [],
     bookmarkCount: 1,
+    type: 'capture',
+    sourceLabel: captureSourceLabel(capture.source),
   };
   const result: ExportResult = {
     exported: 0,
@@ -315,9 +343,14 @@ export async function exportCaptureToVault(
     if (await fileExists(directory, fileName)) {
       result.skipped = 1;
     } else {
-      await writeTextFile(directory, fileName, generateCapturedContentMarkdown(capture));
+      await writeTextFile(
+        directory,
+        fileName,
+        generateCapturedContentMarkdown(capture, new Date(), settings),
+      );
       result.exported = 1;
       result.files.push(relativePath);
+      result.manifest.fileLabels?.push(fileName);
     }
   } catch (error) {
     result.errors.push({
@@ -327,5 +360,40 @@ export async function exportCaptureToVault(
   }
 
   await saveExportManifest(manifest);
+  if (result.exported > 0) {
+    await addActivityEntry({
+      type: 'vault_export',
+      summary: summarizeVaultExport(result.exported, directoryPrefix),
+      details: result.files.map((file) => ({ label: file })),
+    });
+  }
   return result;
+}
+
+export async function exportActivityLogToVault(
+  handle: FileSystemDirectoryHandle,
+  entries: ActivityEntry[],
+  directoryPrefix: string,
+): Promise<string> {
+  const prefix = sanitizeRelativePath(directoryPrefix || 'Bookmarks');
+  const segments = [...prefix, '_activity'];
+  assertSafeRelativePath(segments);
+
+  const directory = await ensureDirectory(handle, segments);
+  const content = generateActivityMarkdown(entries);
+  await writeTextFile(directory, 'activity-log.md', content);
+
+  const path = [...segments, 'activity-log.md'].join('/');
+  await saveExportManifest({
+    id: crypto.randomUUID(),
+    exportedAt: new Date().toISOString(),
+    vaultPath: handle.name,
+    files: [path],
+    fileLabels: ['activity-log.md'],
+    bookmarkCount: entries.length,
+    type: 'activity',
+    sourceLabel: '历史记录',
+  });
+
+  return path;
 }

@@ -7,9 +7,11 @@ import type {
   ClassificationPortRequest,
   ClassificationProgress,
   ClassificationMode,
+  DiagnosticReport,
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
+  StateSummary,
   UrlHealthPortMessage,
   UrlHealthPortRequest,
   UrlHealthProgress,
@@ -29,6 +31,7 @@ import {
   clearPendingCapture,
   clearUrlHealthRecords,
   getExportManifests,
+  getOnboardingProgress,
   getPendingCaptures,
   getSettings,
   normalizeSettings,
@@ -40,10 +43,15 @@ import {
   saveSettings,
   saveUrlHealthRecords,
 } from '../utils/storage.js';
+import { checkBookmarkUrl, checkBookmarkUrls } from '../utils/url-health.js';
 import {
-  checkBookmarkUrl,
-  checkBookmarkUrls,
-} from '../utils/url-health.js';
+  addActivityEntry,
+  summarizeClassifyApply,
+  summarizeClassifyUndo,
+} from '../utils/activity-log.js';
+import { inferErrorCode } from '../utils/error-messages.js';
+import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
+import { getVaultHandle } from '../utils/vault-writer.js';
 
 type SocialCaptureSource = 'twitter' | 'weibo';
 
@@ -51,6 +59,7 @@ interface SocialExtractResponse {
   ok?: boolean;
   data?: CapturedContent;
   error?: string;
+  diagnostic?: DiagnosticReport;
 }
 
 let activeClassification: AbortController | undefined;
@@ -78,6 +87,27 @@ async function getState(): Promise<ExtensionState> {
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
+  };
+}
+
+async function getStateSummary(): Promise<StateSummary> {
+  const tree = await getFullTree();
+  const summary = flattenBookmarkTree(tree);
+  const settings = await getSettings();
+  const pendingCaptures = await getPendingCaptures();
+  const exportManifests = await getExportManifests();
+  const vaultHandle = await getVaultHandle().catch(() => null);
+
+  return {
+    bookmarkCount: summary.bookmarks.length,
+    folderCount: summary.folders.length,
+    pendingCaptureCount: pendingCaptures.length,
+    onboarded: await getOnboarded(),
+    hasVaultHandle: Boolean(vaultHandle),
+    hasAiProvider: settings.aiProviders.some(
+      (provider) => provider.enabled && provider.apiKey.trim().length > 0,
+    ),
+    lastExportDate: exportManifests[0]?.exportedAt,
   };
 }
 
@@ -167,11 +197,13 @@ function getReusableTodayHealthRecords(
   });
 }
 
-async function checkBookmarkHealth(options: {
-  bookmarkIds?: string[];
-  signal?: AbortSignal;
-  onProgress?: (progress: UrlHealthProgress, records: UrlHealthRecord[]) => void;
-} = {}): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
+async function checkBookmarkHealth(
+  options: {
+    bookmarkIds?: string[];
+    signal?: AbortSignal;
+    onProgress?: (progress: UrlHealthProgress, records: UrlHealthRecord[]) => void;
+  } = {},
+): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
   const selectedIds = options.bookmarkIds ? new Set(options.bookmarkIds) : undefined;
@@ -255,9 +287,45 @@ async function storeCapture(
   }
 
   await savePendingCapture(capture);
+  await addActivityEntry({
+    type: 'capture_save',
+    summary: `保存了「${capture.title}」(${capture.source})`,
+    details: [{ label: capture.title, meta: capture.url }],
+  });
   await openSidePanelForTab(tab);
+  await showTabToast(tab, '已提取到 ShuHai · 打开侧边栏写入 Vault →', 'success');
 
   return capture;
+}
+
+async function showTabToast(
+  tab: chrome.tabs.Tab | undefined,
+  message: string,
+  kind: 'success' | 'error' | 'info' = 'success',
+): Promise<void> {
+  const tabId = tab?.id;
+  if (typeof tabId !== 'number') {
+    return;
+  }
+
+  const payload = { type: 'toast:show', message, kind };
+
+  try {
+    await chrome.tabs.sendMessage(tabId, payload);
+    return;
+  } catch {
+    // The toast listener is injected lazily so ordinary pages stay untouched.
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/toast.js'],
+    });
+    await chrome.tabs.sendMessage(tabId, payload);
+  } catch {
+    // Toast is best-effort feedback; capture success should not fail because of it.
+  }
 }
 
 function socialDetailMessage(source: SocialCaptureSource): string {
@@ -275,7 +343,8 @@ function matchesSocialSource(tabUrl: string | undefined, source: SocialCaptureSo
     const url = new URL(tabUrl);
     if (source === 'twitter') {
       return (
-        (url.hostname === 'x.com' || url.hostname.endsWith('.x.com') ||
+        (url.hostname === 'x.com' ||
+          url.hostname.endsWith('.x.com') ||
           url.hostname === 'twitter.com' ||
           url.hostname.endsWith('.twitter.com')) &&
         /\/[^/]+\/status\/\d+/.test(url.pathname)
@@ -283,7 +352,8 @@ function matchesSocialSource(tabUrl: string | undefined, source: SocialCaptureSo
     }
 
     return (
-      (url.hostname === 'weibo.com' || url.hostname.endsWith('.weibo.com') ||
+      (url.hostname === 'weibo.com' ||
+        url.hostname.endsWith('.weibo.com') ||
         url.hostname === 'm.weibo.cn') &&
       (/\/detail\/[^/?#]+/.test(url.pathname) || /\/status\/[^/?#]+/.test(url.pathname))
     );
@@ -301,15 +371,19 @@ function sendSocialExtractMessage(
   source: SocialCaptureSource,
 ): Promise<SocialExtractResponse> {
   return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: 'social:extract', source }, (response: SocialExtractResponse | undefined) => {
-      const error = chrome.runtime.lastError?.message;
-      if (error) {
-        reject(new Error(error));
-        return;
-      }
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'social:extract', source },
+      (response: SocialExtractResponse | undefined) => {
+        const error = chrome.runtime.lastError?.message;
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
 
-      resolve(response ?? { ok: false, error: '页面结构可能已更新，提取失败。请反馈此问题。' });
-    });
+        resolve(response ?? { ok: false, error: '页面结构可能已更新，提取失败。请反馈此问题。' });
+      },
+    );
   });
 }
 
@@ -342,11 +416,24 @@ async function extractSocialCapture(
   }
 
   if (!response.ok || !response.data) {
+    if (response.diagnostic) {
+      await saveExtractorDiagnostic(response.diagnostic);
+    }
     throw new Error(response.error ?? '页面结构可能已更新，提取失败。请反馈此问题。');
   }
 
   if (!response.data.text.trim()) {
+    if (response.diagnostic) {
+      await saveExtractorDiagnostic({
+        ...response.diagnostic,
+        error: '页面可能未完全加载，请等待内容显示后重试。',
+      });
+    }
     throw new Error('页面结构可能已更新，提取失败。请反馈此问题。');
+  }
+
+  if (response.diagnostic) {
+    await saveExtractorDiagnostic(response.diagnostic);
   }
 
   return response.data;
@@ -380,16 +467,22 @@ function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
   });
 }
 
-async function captureCurrentSocial(source: SocialCaptureSource): Promise<{ capture: CapturedContent }> {
+async function captureCurrentSocial(
+  source: SocialCaptureSource,
+): Promise<{ capture: CapturedContent }> {
   const capture = await captureSocialFromTab(await getActiveTab(), source);
   return { capture };
 }
 
 async function executeArticleExtractor(tabId: number): Promise<CapturedContent> {
   const injected = await new Promise<boolean>((resolve) => {
-    chrome.tabs.sendMessage(tabId, { type: 'article:ping' }, (response: { ok?: boolean } | undefined) => {
-      resolve(!chrome.runtime.lastError && response?.ok === true);
-    });
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'article:ping' },
+      (response: { ok?: boolean } | undefined) => {
+        resolve(!chrome.runtime.lastError && response?.ok === true);
+      },
+    );
   });
 
   if (!injected) {
@@ -437,16 +530,46 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
     switch (request.type) {
       case 'state:get':
         return { ok: true, data: await getState() };
+      case 'state:summary':
+        return { ok: true, data: await getStateSummary() };
       case 'plan:create':
         return { ok: true, data: await createPlan(request.mode) };
-      case 'plan:apply':
+      case 'plan:apply': {
+        const result = await applyClassificationPlan(request.plan, request.selectedMoveIds);
+        const selectedIds = new Set(request.selectedMoveIds);
+        const selectedMoves = request.plan.moves.filter((move) => selectedIds.has(move.id));
+        const targetFolders = new Set(selectedMoves.map((move) => move.targetFolder));
+
+        if (result.moved > 0) {
+          await addActivityEntry({
+            type: 'classify_apply',
+            summary: summarizeClassifyApply(result.moved, targetFolders.size),
+            details: selectedMoves.slice(0, result.moved).map((move) => ({
+              label: move.bookmarkTitle,
+              meta: `${move.currentFolder || '根目录'} → ${move.targetFolder}`,
+            })),
+          });
+        }
+
         return {
           ok: true,
-          data: await applyClassificationPlan(request.plan, request.selectedMoveIds),
+          data: result,
         };
+      }
       case 'plan:undoLast': {
         const records = await getLastMoveRecords();
-        return { ok: true, data: { undone: await undoMoveRecords(records) } };
+        const undone = await undoMoveRecords(records);
+        if (undone > 0) {
+          await addActivityEntry({
+            type: 'classify_undo',
+            summary: summarizeClassifyUndo(undone),
+            details: records.slice(0, undone).map((record) => ({
+              label: record.bookmarkTitle,
+              meta: '回到原位置',
+            })),
+          });
+        }
+        return { ok: true, data: { undone } };
       }
       case 'settings:get':
         return { ok: true, data: await getSettings() };
@@ -457,6 +580,16 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
       }
       case 'ai:testConnection':
         return { ok: true, data: await testAiProviderConnection(request.provider) };
+      case 'onboarding:getProgress':
+        return {
+          ok: true,
+          data: (await getOnboardingProgress()) ?? {
+            vaultConfigured: false,
+            providerConfigured: false,
+            firstClassifyDone: false,
+            firstExportDone: false,
+          },
+        };
       case 'onboarding:set':
         await saveOnboarded(request.onboarded);
         return { ok: true, data: { onboarded: request.onboarded } };
@@ -464,6 +597,20 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         return { ok: true, data: await getPendingCaptures() };
       case 'capture:currentSocial':
         return { ok: true, data: await captureCurrentSocial(request.source) };
+      case 'capture:currentArticle': {
+        const tab = await getActiveTab();
+        if (typeof tab?.id !== 'number') {
+          throw new Error('无法识别当前页面');
+        }
+
+        const capture = await executeArticleExtractor(tab.id);
+        const stored = await storeCapture(capture, tab);
+        if (!stored) {
+          throw new Error('无法保存提取结果');
+        }
+
+        return { ok: true, data: { capture: stored } };
+      }
       case 'capture:removePending':
         return { ok: true, data: { removed: await removePendingCapture(request.id) } };
       case 'capture:clearPending':
@@ -487,11 +634,15 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
+      errorCode: inferErrorCode(error),
     };
   }
 }
 
-function postClassificationMessage(port: chrome.runtime.Port, message: ClassificationPortMessage): void {
+function postClassificationMessage(
+  port: chrome.runtime.Port,
+  message: ClassificationPortMessage,
+): void {
   try {
     port.postMessage(message);
   } catch {
@@ -552,6 +703,7 @@ function handleClassificationPort(port: chrome.runtime.Port): void {
         postClassificationMessage(port, {
           type: 'error',
           error: error instanceof Error ? error.message : String(error),
+          errorCode: inferErrorCode(error),
         });
       })
       .finally(() => {
@@ -613,6 +765,7 @@ function handleHealthPort(port: chrome.runtime.Port): void {
         postHealthMessage(port, {
           type: 'error',
           error: error instanceof Error ? error.message : String(error),
+          errorCode: inferErrorCode(error),
         });
       })
       .finally(() => {
@@ -625,7 +778,9 @@ function handleHealthPort(port: chrome.runtime.Port): void {
 
 chrome.runtime.onInstalled.addListener(() => {
   if (chrome.sidePanel?.setPanelBehavior) {
-    void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => undefined);
+    void chrome.sidePanel
+      .setPanelBehavior({ openPanelOnActionClick: false })
+      .catch(() => undefined);
   }
 
   chrome.contextMenus.removeAll(() => {
@@ -636,18 +791,18 @@ chrome.runtime.onInstalled.addListener(() => {
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-article',
-      title: '保存此文章到知识库',
+      title: '提取文章正文到 ShuHai',
       contexts: ['page', 'selection'],
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-tweet',
-      title: '保存此推文',
+      title: '提取推文正文到 ShuHai',
       contexts: ['page'],
       documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-weibo',
-      title: '保存此微博',
+      title: '提取微博正文到 ShuHai',
       contexts: ['page'],
       documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
     });

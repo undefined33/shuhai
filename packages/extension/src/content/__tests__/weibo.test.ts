@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractWeiboContent } from '../weibo.js';
+import { extractWeiboContent, extractWeiboContentWithDiagnostics } from '../weibo.js';
 
 class FakeElement {
   constructor(
@@ -35,6 +35,8 @@ describe('Weibo content extractor', () => {
     const documentRef = new FakeDocument(
       {
         '[class*="head_name"]': new FakeElement('研究员'),
+        '[class*="detail_wbtext"], [class*="weibo-text"]': new FakeElement('转发评论'),
+        '[class*="head_name"], [class*="username"]': new FakeElement('研究员'),
         'article [class*="detail_wbtext"]': new FakeElement('转发评论'),
         '[class*="retweet"] [class*="detail_wbtext"]': new FakeElement('原微博正文'),
         time: new FakeElement('2026-05-28'),
@@ -86,6 +88,8 @@ describe('Weibo content extractor', () => {
   it('requires users to expand long Weibo text before saving', () => {
     const documentRef = new FakeDocument(
       {
+        '[class*="detail_wbtext"], [class*="weibo-text"]': new FakeElement('微博正文'),
+        '[class*="head_name"], [class*="username"]': new FakeElement('研究员'),
         '[class*="detail_wbtext"]': new FakeElement('微博正文'),
       },
       {
@@ -104,5 +108,27 @@ describe('Weibo content extractor', () => {
     expect(() =>
       extractWeiboContent(documentRef as unknown as Document, 'https://weibo.com/u/123'),
     ).toThrow('请先打开一条微博的详情页');
+  });
+
+  it('records fallback selectors when primary Weibo selectors miss', () => {
+    const documentRef = new FakeDocument(
+      {
+        '[class*="detail_wbtext"], [class*="weibo-text"]': new FakeElement('微博正文'),
+        '[class*="head_name"], [class*="username"]': new FakeElement('研究员'),
+        '[class*="weibo-text"]': new FakeElement('微博正文'),
+        '[class*="username"]': new FakeElement('研究员'),
+      },
+      {
+        'a, button, span': [],
+      },
+    );
+
+    const result = extractWeiboContentWithDiagnostics(
+      documentRef as unknown as Document,
+      'https://weibo.com/detail/Nabc123',
+    );
+
+    expect(result.capture.text).toBe('微博正文');
+    expect(result.diagnostic.fallbacksUsed).toContain('Weibo 正文: [class*="weibo-text"]');
   });
 });

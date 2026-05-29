@@ -4,6 +4,7 @@ export type ExportScope = 'all' | 'plan' | 'selected';
 export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
 export type UrlHealthStatus = 'alive' | 'redirected' | 'dead' | 'error' | 'skipped';
 export type AiProviderType = 'deepseek' | 'kimi' | 'glm' | 'openai-compatible';
+export type ExtractorPlatform = 'twitter' | 'weibo';
 
 export interface AiProviderConfig {
   id: string;
@@ -98,11 +99,52 @@ export interface FolderItem {
   bookmarkCount: number;
 }
 
+export type RuleType = 'domain' | 'title-keyword' | 'url-pattern' | 'combined';
+
 export interface CustomRule {
-  type: 'domain' | 'title-keyword';
+  id?: string;
+  type: RuleType;
   pattern: string;
+  urlPattern?: string;
+  titlePattern?: string;
   category: string;
   tags: string[];
+  priority?: number;
+  enabled?: boolean;
+}
+
+export type MarkdownTemplateScope = 'bookmark' | 'twitter' | 'weibo' | 'article';
+export type ActivityExportFormat = 'json' | 'markdown';
+
+export interface MarkdownTemplate {
+  id: string;
+  name: string;
+  scope: MarkdownTemplateScope;
+  frontmatter: string;
+  body: string;
+}
+
+export interface SelectorProbe {
+  name: string;
+  selector: string;
+  required: boolean;
+  description: string;
+}
+
+export interface ProbeResult {
+  name: string;
+  found: boolean;
+  selector: string;
+}
+
+export interface DiagnosticReport {
+  platform: ExtractorPlatform;
+  timestamp: string;
+  url: string;
+  probeResults: ProbeResult[];
+  structureValid: boolean;
+  fallbacksUsed: string[];
+  error?: string;
 }
 
 export interface ClassificationSuggestion {
@@ -190,7 +232,7 @@ export type UrlHealthPortMessage =
       records: UrlHealthRecord[];
       cancelled: boolean;
     }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string; errorCode?: string };
 
 export type ClassificationPortRequest =
   | { type: 'plan:create'; mode: ClassificationMode }
@@ -204,7 +246,7 @@ export type ClassificationPortMessage =
       progress: ClassificationProgress;
       cancelled: boolean;
     }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string; errorCode?: string };
 
 export interface MoveRecord {
   bookmarkId: string;
@@ -239,16 +281,23 @@ export interface AppSettings {
   activeProviderId: string;
   aiProviders: AiProviderConfig[];
   customRules: CustomRule[];
+  templates: MarkdownTemplate[];
+  activeTemplateIds: Partial<Record<MarkdownTemplateScope, string>>;
   defaultClassifyMode: ClassificationMode;
   exportDirectory: string;
 }
+
+export type ExportManifestType = 'bookmark-index' | 'capture' | 'activity';
 
 export interface ExportManifest {
   id: string;
   exportedAt: string;
   vaultPath: string;
   files: string[];
+  fileLabels?: string[];
   bookmarkCount: number;
+  type?: ExportManifestType;
+  sourceLabel?: string;
 }
 
 export interface ExportPreviewFolder {
@@ -297,8 +346,26 @@ export interface ExtensionState {
   settings: AppSettings;
 }
 
+export interface StateSummary {
+  bookmarkCount: number;
+  folderCount: number;
+  pendingCaptureCount: number;
+  onboarded: boolean;
+  hasVaultHandle: boolean;
+  hasAiProvider: boolean;
+  lastExportDate?: string;
+}
+
+export interface OnboardingProgressState {
+  vaultConfigured: boolean;
+  providerConfigured: boolean;
+  firstClassifyDone: boolean;
+  firstExportDone: boolean;
+}
+
 export type ExtensionRequest =
   | { type: 'state:get' }
+  | { type: 'state:summary' }
   | { type: 'plan:create'; mode: ClassificationMode }
   | {
       type: 'plan:apply';
@@ -309,11 +376,13 @@ export type ExtensionRequest =
   | { type: 'settings:get' }
   | { type: 'settings:set'; settings: AppSettings }
   | { type: 'ai:testConnection'; provider: AiProviderConfig }
+  | { type: 'onboarding:getProgress' }
   | { type: 'onboarding:set'; onboarded: boolean }
   | { type: 'capture:getPending' }
   | { type: 'capture:removePending'; id: string }
   | { type: 'capture:clearPending' }
   | { type: 'capture:currentSocial'; source: 'twitter' | 'weibo' }
+  | { type: 'capture:currentArticle' }
   | { type: 'health:clearRecords' }
   | { type: 'health:retryOne'; bookmarkId: string }
   | { type: 'bookmark:delete'; id: string }
@@ -322,11 +391,13 @@ export type ExtensionRequest =
 
 export type ExtensionResponse =
   | { ok: true; data: ExtensionState }
+  | { ok: true; data: StateSummary }
   | { ok: true; data: ClassificationPlan }
   | { ok: true; data: ApplyResult }
   | { ok: true; data: BackupRecord[] }
   | { ok: true; data: AppSettings }
   | { ok: true; data: AiProviderTestResult }
+  | { ok: true; data: OnboardingProgressState }
   | { ok: true; data: { undone: number } }
   | { ok: true; data: { onboarded: boolean } }
   | { ok: true; data: CapturedContent[] }
@@ -336,4 +407,4 @@ export type ExtensionResponse =
   | { ok: true; data: { record: UrlHealthRecord; records: UrlHealthRecord[] } }
   | { ok: true; data: { deleted: boolean; backupKey: string } }
   | { ok: true; data: { updated: boolean; backupKey: string } }
-  | { ok: false; error: string };
+  | { ok: false; error: string; errorCode?: string };

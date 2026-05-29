@@ -10,6 +10,7 @@ import type {
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import { PROVIDER_TEMPLATES } from '../shared/bookmark-types.js';
+import type { OnboardingProgress } from './onboarding.js';
 import {
   DEFAULT_ACTIVE_PROVIDER_ID,
   createDefaultAiProviders,
@@ -17,6 +18,12 @@ import {
   providerTemplate,
   trimTrailingSlash,
 } from '../shared/ai-providers.js';
+import {
+  DEFAULT_MARKDOWN_TEMPLATES,
+  normalizeActiveTemplateIds,
+  normalizeTemplates,
+} from './markdown-templates.js';
+import { normalizeCustomRule } from './rule-matcher.js';
 
 export const SETTINGS_KEY = 'settings';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
@@ -24,12 +31,20 @@ export const EXPORT_MANIFESTS_KEY = 'exportManifests';
 export const PENDING_CAPTURE_KEY = 'pendingCapture';
 export const URL_HEALTH_RECORDS_KEY = 'urlHealthRecords';
 export const ONBOARDED_KEY = 'onboarded';
+export const ONBOARDING_PROGRESS_KEY = 'onboardingProgress';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   useAi: false,
   activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
   aiProviders: createDefaultAiProviders(),
   customRules: [],
+  templates: DEFAULT_MARKDOWN_TEMPLATES,
+  activeTemplateIds: {
+    bookmark: 'default-bookmark',
+    twitter: 'default-twitter',
+    weibo: 'default-weibo',
+    article: 'default-article',
+  },
   defaultClassifyMode: 'safe',
   exportDirectory: 'Bookmarks',
 };
@@ -94,13 +109,18 @@ function normalizeClassifyMode(value: unknown): ClassificationMode {
 }
 
 function normalizeCustomRules(value: unknown): CustomRule[] {
-  return arrayOrEmpty<CustomRule>(value).filter(
+  const rules = arrayOrEmpty<CustomRule>(value).filter(
     (rule) =>
-      (rule.type === 'domain' || rule.type === 'title-keyword') &&
+      (rule.type === 'domain' ||
+        rule.type === 'title-keyword' ||
+        rule.type === 'url-pattern' ||
+        rule.type === 'combined') &&
       typeof rule.pattern === 'string' &&
       typeof rule.category === 'string' &&
       Array.isArray(rule.tags),
   );
+
+  return rules.map((rule, index) => normalizeCustomRule(rule, index, rules.length));
 }
 
 function normalizeProvider(value: unknown): AiProviderConfig | undefined {
@@ -201,6 +221,8 @@ export function normalizeSettings(value: unknown): AppSettings {
     activeProviderId,
     aiProviders: normalizedProviders,
     customRules: normalizeCustomRules(settings.customRules),
+    templates: normalizeTemplates(settings.templates),
+    activeTemplateIds: normalizeActiveTemplateIds(settings.activeTemplateIds),
     defaultClassifyMode: normalizeClassifyMode(settings.defaultClassifyMode),
     exportDirectory,
   };
@@ -287,4 +309,12 @@ export function getOnboarded(): Promise<boolean> {
 
 export function saveOnboarded(onboarded: boolean): Promise<void> {
   return setLocalValues({ [ONBOARDED_KEY]: onboarded });
+}
+
+export function getOnboardingProgress(): Promise<OnboardingProgress | undefined> {
+  return getLocalValue<OnboardingProgress | undefined>(ONBOARDING_PROGRESS_KEY, undefined);
+}
+
+export function saveOnboardingProgress(progress: OnboardingProgress): Promise<void> {
+  return setLocalValues({ [ONBOARDING_PROGRESS_KEY]: progress });
 }

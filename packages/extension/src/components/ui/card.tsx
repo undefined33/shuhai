@@ -1,10 +1,20 @@
 import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/utils.js';
 
-export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
+  variant?: 'default' | 'flat' | 'soft';
+}
+
+export function Card({ className, variant = 'default', ...props }: CardProps) {
   return (
     <div
-      className={cn('rounded-lg border border-border bg-card text-card-foreground shadow-sm', className)}
+      className={cn(
+        'rounded-lg text-card-foreground',
+        variant === 'default' && 'border border-border bg-card shadow-sm',
+        variant === 'flat' && 'bg-transparent shadow-none',
+        variant === 'soft' && 'bg-card/70 shadow-none',
+        className,
+      )}
       {...props}
     />
   );

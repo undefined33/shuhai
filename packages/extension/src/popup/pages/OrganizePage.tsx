@@ -1,14 +1,5 @@
 import { useMemo, useState } from 'react';
-import {
-  Activity,
-  Bookmark,
-  CheckCircle2,
-  Download,
-  FolderTree,
-  GitBranch,
-  ShieldAlert,
-  Sparkles,
-} from 'lucide-react';
+import { Bookmark, CheckCircle2, Download, FolderTree, GitBranch, Sparkles } from 'lucide-react';
 import type {
   AppSettings,
   BackupRecord,
@@ -18,21 +9,17 @@ import type {
   ExportManifest,
   FolderItem,
   MovePlan,
-  UrlHealthProgress,
-  UrlHealthRecord,
 } from '../../shared/bookmark-types.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs.js';
-import { summarizeHealthRecords } from '../../utils/url-health.js';
 import BookmarkIndexExportPanel from './BookmarkIndexExportPanel.js';
 import BookmarkTree from './BookmarkTree.js';
 import ClassifyPreview from './ClassifyPreview.js';
-import HealthPage from './HealthPage.js';
 
-export type OrganizeMode = 'browse' | 'plan' | 'health';
+export type OrganizeMode = 'browse' | 'plan';
 
 interface OrganizePageProps {
   backups: BackupRecord[];
@@ -44,9 +31,7 @@ interface OrganizePageProps {
   exportBookmarks: BookmarkItem[];
   exportManifests: ExportManifest[];
   folders: FolderItem[];
-  healthChecking: boolean;
-  healthProgress?: UrlHealthProgress;
-  healthRecords: UrlHealthRecord[];
+  lastAppliedCount: number;
   mode: OrganizeMode;
   plan?: ClassificationPlan;
   selectedCount: number;
@@ -54,29 +39,16 @@ interface OrganizePageProps {
   settings: AppSettings;
   surface?: 'popup' | 'sidepanel';
   onApplyPlan(): void;
-  onCancelHealth(): void;
   onCancelPlan(): void;
   onClassifyModeChange(mode: ClassificationMode): void;
-  onClearHealthRecords(): void;
   onCreatePlan(mode: ClassificationMode): void;
-  onDeleteManyHealthRecords(records: UrlHealthRecord[]): void;
   onDownloadBackup(backup: BackupRecord): void;
   onModeChange(mode: OrganizeMode): void;
   onMoveChange(move: MovePlan): void;
+  onOpenHealth(): void;
+  onOpenHome(): void;
   onRefresh(): Promise<void>;
-  onRetryHealthRecord(record: UrlHealthRecord): void;
-  onStartHealthCheck(): void;
   onUndo(): void;
-  onUpdateManyHealthUrls(records: UrlHealthRecord[]): void;
-  onUpdateHealthUrl(record: UrlHealthRecord, url: string): void;
-}
-
-function localDateKey(value: string | Date): string {
-  const date = typeof value === 'string' ? new Date(value) : value;
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 export default function OrganizePage({
@@ -89,9 +61,7 @@ export default function OrganizePage({
   exportBookmarks,
   exportManifests,
   folders,
-  healthChecking,
-  healthProgress,
-  healthRecords,
+  lastAppliedCount,
   mode,
   plan,
   selectedCount,
@@ -99,52 +69,23 @@ export default function OrganizePage({
   settings,
   surface = 'popup',
   onApplyPlan,
-  onCancelHealth,
   onCancelPlan,
   onClassifyModeChange,
-  onClearHealthRecords,
   onCreatePlan,
-  onDeleteManyHealthRecords,
   onDownloadBackup,
   onModeChange,
   onMoveChange,
+  onOpenHealth,
+  onOpenHome,
   onRefresh,
-  onRetryHealthRecord,
-  onStartHealthCheck,
   onUndo,
-  onUpdateManyHealthUrls,
-  onUpdateHealthUrl,
 }: OrganizePageProps) {
   const [showIndexTool, setShowIndexTool] = useState(false);
-  const bookmarkById = useMemo(
-    () => new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark])),
-    [bookmarks],
-  );
-  const todayHealthRecords = useMemo(() => {
-    const today = localDateKey(new Date());
-    return healthRecords.filter((record) => {
-      const bookmark = bookmarkById.get(record.bookmarkId);
-      return (
-        Boolean(bookmark) &&
-        bookmark?.url === record.bookmarkUrl &&
-        localDateKey(record.checkedAt) === today
-      );
-    });
-  }, [bookmarkById, healthRecords]);
-  const healthSummary = useMemo(
-    () => summarizeHealthRecords(todayHealthRecords),
-    [todayHealthRecords],
-  );
-  const issueCount = healthSummary.dead + healthSummary.error + healthSummary.redirected;
+  const selectedPlanCount = useMemo(() => plan?.moves.length ?? 0, [plan]);
 
   const createPlan = (modeToCreate = classifyMode) => {
     onModeChange('plan');
     onCreatePlan(modeToCreate);
-  };
-
-  const startHealth = () => {
-    onModeChange('health');
-    onStartHealthCheck();
   };
 
   return (
@@ -155,11 +96,11 @@ export default function OrganizePage({
             <div className="min-w-0">
               <h2 className="text-sm font-semibold">整理书签</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                浏览、分类、体检和处理问题都在这个工作台完成。
+                浏览书签、生成整理建议，确认后再移动真实 Chrome 书签。
               </p>
             </div>
-            <Badge variant={issueCount > 0 ? 'warning' : 'success'}>
-              {issueCount > 0 ? `${issueCount} 个待处理` : '暂无待处理'}
+            <Badge variant={selectedPlanCount > 0 ? 'success' : 'outline'}>
+              {selectedPlanCount > 0 ? `${selectedPlanCount} 条建议` : '待生成建议'}
             </Badge>
           </div>
 
@@ -174,7 +115,7 @@ export default function OrganizePage({
             </div>
             <div className="rounded-md border border-border p-2">
               <div className="text-lg font-semibold">{plan?.moves.length ?? 0}</div>
-              <div className="text-[11px] text-muted-foreground">分类建议</div>
+              <div className="text-[11px] text-muted-foreground">整理建议</div>
             </div>
           </div>
 
@@ -183,27 +124,37 @@ export default function OrganizePage({
               <Sparkles className="h-4 w-4" />
               整理书签
             </Button>
-            <Button disabled={healthChecking || bookmarks.length === 0} onClick={startHealth}>
-              <Activity className="h-4 w-4" />
-              体检链接
-            </Button>
-            <Button
-              disabled={busy || !canUndo}
-              onClick={onUndo}
-              variant="outline"
-            >
+            <Button disabled={busy || !canUndo} onClick={onUndo} variant="outline">
               撤销上次整理
-            </Button>
-            <Button
-              onClick={() => setShowIndexTool((current) => !current)}
-              variant="outline"
-            >
-              <Download className="h-4 w-4" />
-              {showIndexTool ? '收起索引导出' : '导出书签索引'}
             </Button>
           </div>
         </CardContent>
       </Card>
+
+      {lastAppliedCount > 0 ? (
+        <Alert variant="success">
+          <div className="space-y-2">
+            <CheckCircle2 className="animate-check-pop h-5 w-5 text-primary" />
+            <p>已整理 {lastAppliedCount} 个书签。</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => setShowIndexTool((current) => !current)}
+                size="sm"
+                variant="outline"
+              >
+                <Download className="h-3.5 w-3.5" />
+                {showIndexTool ? '收起书签目录' : '生成书签目录'}
+              </Button>
+              <Button onClick={onOpenHealth} size="sm" variant="outline">
+                检查失效链接
+              </Button>
+              <Button onClick={onOpenHome} size="sm" variant="ghost">
+                返回首页
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      ) : null}
 
       {showIndexTool ? (
         <BookmarkIndexExportPanel
@@ -222,18 +173,14 @@ export default function OrganizePage({
         onValueChange={(next) => onModeChange(next as OrganizeMode)}
         value={mode}
       >
-        <TabsList className="grid-cols-3">
+        <TabsList className="grid-cols-2">
           <TabsTrigger value="browse">
             <Bookmark className="h-3.5 w-3.5" />
             浏览
           </TabsTrigger>
           <TabsTrigger value="plan">
             <GitBranch className="h-3.5 w-3.5" />
-            分类方案
-          </TabsTrigger>
-          <TabsTrigger value="health">
-            <Activity className="h-3.5 w-3.5" />
-            链接体检
+            整理建议
           </TabsTrigger>
         </TabsList>
 
@@ -272,7 +219,7 @@ export default function OrganizePage({
                   <>
                     <GitBranch className="h-7 w-7 text-primary" />
                     <div>
-                      <p className="text-sm font-medium">正在生成分类方案</p>
+                      <p className="text-sm font-medium">正在生成整理建议</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         进度会显示在页面顶部，完成后这里会出现可确认的移动建议。
                       </p>
@@ -282,36 +229,20 @@ export default function OrganizePage({
                   <>
                     <FolderTree className="h-7 w-7 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium">还没有分类方案</p>
+                      <p className="text-sm font-medium">还没有整理建议</p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        点击“整理书签”生成 AI 或规则分类方案，确认前不会修改真实书签。
+                        点击“整理书签”生成 AI 或规则整理建议，确认前不会修改真实书签。
                       </p>
                     </div>
                     <Button disabled={busy || bookmarks.length === 0} onClick={() => createPlan()}>
                       <Sparkles className="h-4 w-4" />
-                      生成分类方案
+                      生成整理建议
                     </Button>
                   </>
                 )}
               </CardContent>
             </Card>
           )}
-        </TabsContent>
-
-        <TabsContent className="min-h-0 flex-1" forceMount value="health">
-          <HealthPage
-            bookmarks={bookmarks}
-            checking={healthChecking}
-            onCancel={onCancelHealth}
-            onClear={onClearHealthRecords}
-            onDeleteMany={onDeleteManyHealthRecords}
-            onRetry={onRetryHealthRecord}
-            onStart={startHealth}
-            onUpdateManyUrls={onUpdateManyHealthUrls}
-            onUpdateUrl={onUpdateHealthUrl}
-            progress={healthProgress}
-            records={healthRecords}
-          />
         </TabsContent>
       </Tabs>
 
@@ -327,13 +258,6 @@ export default function OrganizePage({
             <CheckCircle2 className="h-3.5 w-3.5" />
             下载备份
           </Button>
-        </Alert>
-      ) : null}
-
-      {issueCount === 0 && todayHealthRecords.length > 0 ? (
-        <Alert>
-          <ShieldAlert className="h-4 w-4" />
-          今天的链接体检没有发现需要处理的死链或重定向。
         </Alert>
       ) : null}
     </section>

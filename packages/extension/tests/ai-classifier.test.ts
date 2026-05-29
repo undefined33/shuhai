@@ -13,6 +13,7 @@ import {
   type FetchLike,
 } from '../src/shared/ai-classifier.js';
 import { createProviderFromTemplate, providerTemplate } from '../src/shared/ai-providers.js';
+import { DEFAULT_SETTINGS } from '../src/utils/storage.js';
 
 function bookmark(id: string): BookmarkItem {
   return {
@@ -31,6 +32,7 @@ const deepseekProvider = createProviderFromTemplate(providerTemplate('deepseek')
 });
 
 const settings: AppSettings = {
+  ...DEFAULT_SETTINGS,
   useAi: true,
   activeProviderId: deepseekProvider.id,
   aiProviders: [deepseekProvider],
@@ -51,10 +53,14 @@ const folders: FolderItem[] = [
 describe('ai classifier', () => {
   it('does not call fetch when AI is disabled or no API key exists', async () => {
     const fetchImpl = vi.fn<FetchLike>();
-    const disabledResult = await classifyAllWithAi([bookmark('b1')], {
-      ...settings,
-      useAi: false,
-    }, { fetchImpl });
+    const disabledResult = await classifyAllWithAi(
+      [bookmark('b1')],
+      {
+        ...settings,
+        useAi: false,
+      },
+      { fetchImpl },
+    );
     const noKeyResult = await classifyWithAi(
       [bookmark('b2')],
       { ...deepseekProvider, apiKey: '' },
@@ -238,11 +244,15 @@ describe('ai classifier', () => {
       }),
     });
 
-    await classifyAllWithAi([bookmark('kimi')], {
-      ...settings,
-      activeProviderId: kimiProvider.id,
-      aiProviders: [deepseekProvider, kimiProvider],
-    }, { fetchImpl });
+    await classifyAllWithAi(
+      [bookmark('kimi')],
+      {
+        ...settings,
+        activeProviderId: kimiProvider.id,
+        aiProviders: [deepseekProvider, kimiProvider],
+      },
+      { fetchImpl },
+    );
 
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.moonshot.cn/v1/chat/completions');
     expect(JSON.parse(fetchImpl.mock.calls[0]?.[1].body ?? '{}')).toMatchObject({
