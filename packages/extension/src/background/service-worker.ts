@@ -270,7 +270,7 @@ async function storeCapture(
     details: [{ label: capture.title, meta: capture.url }],
   });
   await openSidePanelForTab(tab);
-  await showTabToast(tab, '已保存到 ShuHai，等待写入 Vault', 'success');
+  await showTabToast(tab, '已提取到 ShuHai · 打开侧边栏写入 Vault →', 'success');
 
   return capture;
 }
@@ -752,18 +752,18 @@ chrome.runtime.onInstalled.addListener(() => {
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-article',
-      title: '保存此文章到知识库',
+      title: '提取文章正文到 ShuHai',
       contexts: ['page', 'selection'],
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-tweet',
-      title: '保存此推文',
+      title: '提取推文正文到 ShuHai',
       contexts: ['page'],
       documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
     });
     chrome.contextMenus.create({
       id: 'shuhai-save-weibo',
-      title: '保存此微博',
+      title: '提取微博正文到 ShuHai',
       contexts: ['page'],
       documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
     });

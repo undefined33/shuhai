@@ -70,6 +70,24 @@ function formatCaptureTime(value: string): string {
   }
 }
 
+async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // Fallback for extension contexts where Clipboard API permission is unavailable.
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
 function isCaptureManifest(manifest: ExportManifest): boolean {
   return manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5);
 }
@@ -88,6 +106,13 @@ function manifestSourceLabel(manifest: ExportManifest): string {
 
 function manifestCountLabel(manifest: ExportManifest): string {
   return `${manifest.bookmarkCount} 篇`;
+}
+
+function manifestFileSummary(manifest: ExportManifest): string {
+  const firstFile = manifest.files[0] ?? manifest.fileLabels?.[0] ?? '未知文件';
+  const fileCount = manifest.files.length || manifest.fileLabels?.length || 0;
+
+  return fileCount > 1 ? `${firstFile} 等 ${fileCount} 个文件` : firstFile;
 }
 
 function activeSocialSource(url: string): 'twitter' | 'weibo' | undefined {
@@ -256,6 +281,11 @@ export default function CollectionPage({
     return result;
   };
 
+  const copyPath = async (path: string) => {
+    await copyToClipboard(path);
+    toast({ kind: 'success', message: '路径已复制。' });
+  };
+
   const saveSelectedCapture = async () => {
     if (!selectedCapture) {
       return;
@@ -269,12 +299,19 @@ export default function CollectionPage({
         .map((tag) => tag.trim())
         .filter(Boolean);
       const result = await exportCapture(selectedCapture, tags);
-      setStatus('内容保存完成，已从待保存队列移除。');
+      const filePath = result.files[0] ?? '';
+      setStatus(filePath ? `已写入：${filePath}` : '内容已存在，未重复写入。');
       toast({
         kind: 'success',
-        message: result.files[0]
-          ? `已写入「${selectedCapture.title}」到 ${directoryPrefix}/`
+        message: filePath
+          ? `已写入：${filePath}`
           : `「${selectedCapture.title}」已存在，未重复写入。`,
+        action: filePath
+          ? {
+              label: '复制路径',
+              onClick: () => copyPath(filePath),
+            }
+          : undefined,
       });
       await onRemovePendingCapture(selectedCapture.id);
     } catch (captureError) {
@@ -317,8 +354,11 @@ export default function CollectionPage({
     try {
       const capture = await onCaptureCurrentSocial(source);
       setSelectedCaptureId(capture.id);
-      setStatus(`${sourceLabel(source)}已加入待保存队列。`);
-      toast({ kind: 'success', message: `${sourceLabel(source)}已加入待保存队列。` });
+      setStatus(`${sourceLabel(source)}正文已提取到 ShuHai，确认后写入 Vault。`);
+      toast({
+        kind: 'success',
+        message: `${sourceLabel(source)}正文已提取到 ShuHai，确认后写入 Vault。`,
+      });
       await onRefresh();
     } catch (captureError) {
       setError(toStructuredError(captureError));
@@ -383,28 +423,28 @@ export default function CollectionPage({
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <p className="text-xs text-muted-foreground">
-            在网页右键保存文章、推文或微博后，内容会先进入这里。确认后才写入 Vault。
+            在网页右键提取文章、推文或微博正文后，内容会先进入这里。确认后才写入 Vault。
           </p>
           <div className="grid grid-cols-2 gap-2">
             <Button
               disabled={busy || activeSource !== 'twitter'}
               onClick={() => captureCurrentSocial('twitter')}
               size="sm"
-              title={activeSource === 'twitter' ? '保存当前推文' : '请先打开一条推文详情页'}
+              title={activeSource === 'twitter' ? '提取当前推文正文' : '请先打开一条推文详情页'}
               variant="outline"
             >
               <MessageCircle className="h-4 w-4" />
-              保存当前推文
+              提取当前推文
             </Button>
             <Button
               disabled={busy || activeSource !== 'weibo'}
               onClick={() => captureCurrentSocial('weibo')}
               size="sm"
-              title={activeSource === 'weibo' ? '保存当前微博' : '请先打开一条微博详情页'}
+              title={activeSource === 'weibo' ? '提取当前微博正文' : '请先打开一条微博详情页'}
               variant="outline"
             >
               <MessageCircle className="h-4 w-4" />
-              保存当前微博
+              提取当前微博
             </Button>
           </div>
 
@@ -427,7 +467,7 @@ export default function CollectionPage({
                 <Inbox className="h-7 w-7 text-muted-foreground" />
                 <p className="text-sm font-medium">还没有待保存的内容</p>
                 <p className="max-w-sm text-xs text-muted-foreground">
-                  在任意网页右键选择“保存此文章到知识库”，或在 Twitter/X、微博页面保存当前内容。
+                  在任意网页右键选择“提取文章正文到 ShuHai”，或在 Twitter/X、微博页面提取当前内容。
                 </p>
               </div>
             </div>
@@ -583,10 +623,13 @@ export default function CollectionPage({
           ) : (
             captureManifests.slice(0, 5).map((manifest) => (
               <div className="flex items-center gap-2 text-xs" key={manifest.id}>
-                <span className="min-w-0 flex-1 truncate">
-                  写入：{new Date(manifest.exportedAt).toLocaleString()}
-                </span>
-                <Badge variant="outline">{manifestSourceLabel(manifest)}</Badge>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{manifestFileSummary(manifest)}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {manifestSourceLabel(manifest)} · 写入：
+                    {new Date(manifest.exportedAt).toLocaleString()}
+                  </div>
+                </div>
                 <Badge variant="secondary">{manifestCountLabel(manifest)}</Badge>
               </div>
             ))

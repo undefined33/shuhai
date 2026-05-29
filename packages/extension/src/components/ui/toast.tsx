@@ -5,16 +5,26 @@ import { Button } from './button.js';
 
 export type ToastKind = 'success' | 'error' | 'info';
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void | Promise<void>;
+}
+
 export interface ToastInput {
   kind?: ToastKind;
   message: string;
   description?: string;
   durationMs?: number;
+  action?: ToastAction;
 }
 
-interface ToastEntry extends Required<Omit<ToastInput, 'durationMs'>> {
+interface ToastEntry {
   id: string;
+  kind: ToastKind;
+  message: string;
+  description: string;
   durationMs: number | null;
+  action?: ToastAction;
 }
 
 interface ToastContextValue {
@@ -51,6 +61,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         message: input.message,
         description: input.description ?? '',
         durationMs: toastDuration(input),
+        action: input.action,
       };
 
       setItems((current) => [entry, ...current].slice(0, 4));
@@ -92,6 +103,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   <div className="mt-1 break-words text-xs text-muted-foreground">
                     {item.description}
                   </div>
+                ) : null}
+                {item.action ? (
+                  <Button
+                    className="mt-2 h-7 px-2 text-xs"
+                    onClick={() => void item.action?.onClick()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {item.action.label}
+                  </Button>
                 ) : null}
               </div>
               <Button

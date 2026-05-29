@@ -132,13 +132,13 @@ export default function HelpPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
-              保存当前文章
+              提取当前文章
             </CardTitle>
           </CardHeader>
           <CardContent>
             <StepList
               items={[
-                '在正在阅读的网页中右键，选择“保存此文章到知识库”。',
+                '在正在阅读的网页中右键，选择“提取文章正文到 ShuHai”。',
                 'ShuHai 只读取当前页面已经加载的 DOM，不访问任何外部 URL。',
                 '导出页会显示标题、来源、字数、图片链接数量和正文预览。',
                 '确认标签后点击写入 Vault，文章正文会保存为 Markdown。',
@@ -151,15 +151,15 @@ export default function HelpPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
-              保存 Twitter/X 或微博内容
+              提取 Twitter/X 或微博内容
             </CardTitle>
           </CardHeader>
           <CardContent>
             <StepList
               items={[
                 '在 Twitter/X 或微博页面看到想保存的内容时右键。',
-                '选择保存当前推文或微博。',
-                '打开 ShuHai 的导出页，确认待保存内容。',
+                '选择“提取推文正文到 ShuHai”或“提取微博正文到 ShuHai”。',
+                '打开 ShuHai 的收藏内容页，确认待保存内容。',
                 '写入 Vault 后，待处理内容会被清空。',
               ]}
             />

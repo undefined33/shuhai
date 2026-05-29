@@ -390,7 +390,7 @@ export default function ExportPage({
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2">
               <Save className="h-4 w-4 text-primary" />
-              保存文章内容
+              提取文章内容
               <Badge variant={pendingCaptures.length > 0 ? 'success' : 'secondary'}>
                 {pendingCaptures.length}
               </Badge>
@@ -398,11 +398,11 @@ export default function ExportPage({
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              在任意网页右键“保存此文章到知识库”，正文会进入这里。确认后才写入 Vault。
+              在任意网页右键“提取文章正文到 ShuHai”，正文会进入这里。确认后才写入 Vault。
             </p>
             {pendingCaptures.length === 0 ? (
               <Alert variant="warning">
-                当前没有待保存文章。请到正在阅读的网页右键选择“保存此文章到知识库”。
+                当前没有待保存文章。请到正在阅读的网页右键选择“提取文章正文到 ShuHai”。
               </Alert>
             ) : (
               <div className="space-y-3">

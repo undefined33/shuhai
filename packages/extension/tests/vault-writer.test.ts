@@ -138,6 +138,7 @@ describe('vault writer', () => {
         expect.objectContaining({
           type: 'bookmark-index',
           sourceLabel: '书签索引',
+          fileLabels: ['CVE payload.md'],
           bookmarkCount: 1,
         }),
       ]),
@@ -160,6 +161,7 @@ describe('vault writer', () => {
       expect.objectContaining({
         type: 'capture',
         sourceLabel: '文章',
+        fileLabels: ['深入理解 eBPF.md'],
         bookmarkCount: 1,
       }),
     ]);
@@ -186,6 +188,7 @@ describe('vault writer', () => {
       expect.objectContaining({
         type: 'activity',
         sourceLabel: '操作历史',
+        fileLabels: ['activity-log.md'],
         bookmarkCount: 1,
       }),
     ]);

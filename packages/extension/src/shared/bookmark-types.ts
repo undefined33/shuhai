@@ -294,6 +294,7 @@ export interface ExportManifest {
   exportedAt: string;
   vaultPath: string;
   files: string[];
+  fileLabels?: string[];
   bookmarkCount: number;
   type?: ExportManifestType;
   sourceLabel?: string;

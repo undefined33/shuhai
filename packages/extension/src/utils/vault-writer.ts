@@ -247,6 +247,7 @@ export async function exportBookmarksToVault(
     exportedAt: new Date().toISOString(),
     vaultPath: handle.name,
     files: [],
+    fileLabels: [],
     bookmarkCount: bookmarks.length,
     type: 'bookmark-index',
     sourceLabel: '书签索引',
@@ -282,6 +283,7 @@ export async function exportBookmarksToVault(
         );
         result.exported += 1;
         result.files.push(relativePath);
+        result.manifest.fileLabels?.push(fileName);
       }
     } catch (error) {
       result.errors.push({
@@ -323,6 +325,7 @@ export async function exportCaptureToVault(
     exportedAt: new Date().toISOString(),
     vaultPath: handle.name,
     files: [],
+    fileLabels: [],
     bookmarkCount: 1,
     type: 'capture',
     sourceLabel: captureSourceLabel(capture.source),
@@ -347,6 +350,7 @@ export async function exportCaptureToVault(
       );
       result.exported = 1;
       result.files.push(relativePath);
+      result.manifest.fileLabels?.push(fileName);
     }
   } catch (error) {
     result.errors.push({
@@ -385,6 +389,7 @@ export async function exportActivityLogToVault(
     exportedAt: new Date().toISOString(),
     vaultPath: handle.name,
     files: [path],
+    fileLabels: ['activity-log.md'],
     bookmarkCount: entries.length,
     type: 'activity',
     sourceLabel: '操作历史',
