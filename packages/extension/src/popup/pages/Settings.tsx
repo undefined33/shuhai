@@ -87,6 +87,34 @@ function providerModels(provider: AiProviderConfig): string[] {
     : [provider.model, ...template.models].filter(Boolean);
 }
 
+function manifestTypeLabel(manifest: ExportManifest): string {
+  if (manifest.sourceLabel) {
+    return manifest.sourceLabel;
+  }
+
+  if (manifest.type === 'bookmark-index' || (!manifest.type && manifest.bookmarkCount > 5)) {
+    return '书签索引';
+  }
+
+  if (manifest.type === 'activity') {
+    return '操作历史';
+  }
+
+  if (manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5)) {
+    return '收藏内容';
+  }
+
+  return '未分类';
+}
+
+function manifestCountLabel(manifest: ExportManifest): string {
+  if (manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5)) {
+    return `${manifest.bookmarkCount} 篇`;
+  }
+
+  return `${manifest.bookmarkCount} 条`;
+}
+
 export default function Settings({
   backups,
   busy,
@@ -629,9 +657,10 @@ export default function Settings({
                 {exportManifests.map((manifest) => (
                   <div className="flex items-center gap-2 text-xs" key={manifest.id}>
                     <span className="min-w-0 flex-1 truncate">
-                      {new Date(manifest.exportedAt).toLocaleString()}
+                      写入：{new Date(manifest.exportedAt).toLocaleString()}
                     </span>
-                    <Badge variant="secondary">{manifest.bookmarkCount}</Badge>
+                    <Badge variant="outline">{manifestTypeLabel(manifest)}</Badge>
+                    <Badge variant="secondary">{manifestCountLabel(manifest)}</Badge>
                   </div>
                 ))}
               </CardContent>

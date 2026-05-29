@@ -287,12 +287,16 @@ export interface AppSettings {
   exportDirectory: string;
 }
 
+export type ExportManifestType = 'bookmark-index' | 'capture' | 'activity';
+
 export interface ExportManifest {
   id: string;
   exportedAt: string;
   vaultPath: string;
   files: string[];
   bookmarkCount: number;
+  type?: ExportManifestType;
+  sourceLabel?: string;
 }
 
 export interface ExportPreviewFolder {

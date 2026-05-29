@@ -4,6 +4,7 @@ import {
   buildBookmarkExportPath,
   buildCaptureExportPath,
   checkVaultPermission,
+  exportActivityLogToVault,
   exportBookmarksToVault,
   exportCaptureToVault,
   previewBookmarkExport,
@@ -44,7 +45,10 @@ class FakeDirectoryHandle {
     return 'granted';
   }
 
-  async getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<FakeDirectoryHandle> {
+  async getDirectoryHandle(
+    name: string,
+    options?: { create?: boolean },
+  ): Promise<FakeDirectoryHandle> {
     const existing = this.dirs.get(name);
     if (existing) {
       return existing;
@@ -129,11 +133,21 @@ describe('vault writer', () => {
     expect(first.exported).toBe(1);
     expect(second.skipped).toBe(1);
     expect(snapshot.exportManifests).toHaveLength(2);
+    expect(snapshot.exportManifests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'bookmark-index',
+          sourceLabel: '书签索引',
+          bookmarkCount: 1,
+        }),
+      ]),
+    );
   });
 
   it('writes captured articles under the article folder', async () => {
     const root = new FakeDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
     const result = await exportCaptureToVault(root, articleCapture, 'Bookmarks');
+    const snapshot = getStorageSnapshot();
 
     expect(buildCaptureExportPath(articleCapture, 'Bookmarks')).toEqual([
       'Bookmarks',
@@ -142,5 +156,38 @@ describe('vault writer', () => {
     ]);
     expect(result.exported).toBe(1);
     expect(result.files).toEqual(['Bookmarks/文章/深入理解 eBPF.md']);
+    expect(snapshot.exportManifests).toEqual([
+      expect.objectContaining({
+        type: 'capture',
+        sourceLabel: '文章',
+        bookmarkCount: 1,
+      }),
+    ]);
+  });
+
+  it('records activity log exports with an activity manifest', async () => {
+    const root = new FakeDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
+    const path = await exportActivityLogToVault(
+      root,
+      [
+        {
+          id: 'activity-1',
+          type: 'capture_save',
+          timestamp: new Date(0).toISOString(),
+          summary: '保存了一篇文章',
+        },
+      ],
+      'Bookmarks',
+    );
+    const snapshot = getStorageSnapshot();
+
+    expect(path).toBe('Bookmarks/_activity/activity-log.md');
+    expect(snapshot.exportManifests).toEqual([
+      expect.objectContaining({
+        type: 'activity',
+        sourceLabel: '操作历史',
+        bookmarkCount: 1,
+      }),
+    ]);
   });
 });

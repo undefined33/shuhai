@@ -62,6 +62,18 @@ function captureSourceFolder(source: CapturedContent['source']): string {
   return source;
 }
 
+function captureSourceLabel(source: CapturedContent['source']): string {
+  if (source === 'article') {
+    return '文章';
+  }
+
+  if (source === 'twitter') {
+    return 'Twitter/X';
+  }
+
+  return '微博';
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -236,6 +248,8 @@ export async function exportBookmarksToVault(
     vaultPath: handle.name,
     files: [],
     bookmarkCount: bookmarks.length,
+    type: 'bookmark-index',
+    sourceLabel: '书签索引',
   };
   const result: ExportResult = {
     exported: 0,
@@ -310,6 +324,8 @@ export async function exportCaptureToVault(
     vaultPath: handle.name,
     files: [],
     bookmarkCount: 1,
+    type: 'capture',
+    sourceLabel: captureSourceLabel(capture.source),
   };
   const result: ExportResult = {
     exported: 0,
@@ -363,5 +379,16 @@ export async function exportActivityLogToVault(
   const content = generateActivityMarkdown(entries);
   await writeTextFile(directory, 'activity-log.md', content);
 
-  return [...segments, 'activity-log.md'].join('/');
+  const path = [...segments, 'activity-log.md'].join('/');
+  await saveExportManifest({
+    id: crypto.randomUUID(),
+    exportedAt: new Date().toISOString(),
+    vaultPath: handle.name,
+    files: [path],
+    bookmarkCount: entries.length,
+    type: 'activity',
+    sourceLabel: '操作历史',
+  });
+
+  return path;
 }

@@ -70,6 +70,26 @@ function formatCaptureTime(value: string): string {
   }
 }
 
+function isCaptureManifest(manifest: ExportManifest): boolean {
+  return manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5);
+}
+
+function manifestSourceLabel(manifest: ExportManifest): string {
+  if (manifest.sourceLabel) {
+    return manifest.sourceLabel;
+  }
+
+  if (manifest.type === 'capture' || (!manifest.type && manifest.bookmarkCount <= 5)) {
+    return '内容';
+  }
+
+  return '未分类';
+}
+
+function manifestCountLabel(manifest: ExportManifest): string {
+  return `${manifest.bookmarkCount} 篇`;
+}
+
 function activeSocialSource(url: string): 'twitter' | 'weibo' | undefined {
   try {
     const parsed = new URL(url);
@@ -173,6 +193,10 @@ export default function CollectionPage({
         .includes(keyword),
     );
   }, [pendingCaptures, search]);
+  const captureManifests = useMemo(
+    () => exportManifests.filter(isCaptureManifest),
+    [exportManifests],
+  );
 
   useEffect(() => {
     if (!selectedCapture) {
@@ -347,7 +371,7 @@ export default function CollectionPage({
         </CardContent>
       </Card>
 
-      <Card className="min-h-0 flex-1">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Inbox className="h-4 w-4 text-primary" />
@@ -357,7 +381,7 @@ export default function CollectionPage({
             </Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex min-h-0 flex-col gap-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <p className="text-xs text-muted-foreground">
             在网页右键保存文章、推文或微博后，内容会先进入这里。确认后才写入 Vault。
           </p>
@@ -398,127 +422,141 @@ export default function CollectionPage({
           ) : null}
 
           {pendingCaptures.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
-              <Inbox className="h-7 w-7 text-muted-foreground" />
-              <p className="text-sm font-medium">还没有待保存的内容</p>
-              <p className="max-w-sm text-xs text-muted-foreground">
-                在任意网页右键选择“保存此文章到知识库”，或在 Twitter/X、微博页面保存当前内容。
-              </p>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
+                <Inbox className="h-7 w-7 text-muted-foreground" />
+                <p className="text-sm font-medium">还没有待保存的内容</p>
+                <p className="max-w-sm text-xs text-muted-foreground">
+                  在任意网页右键选择“保存此文章到知识库”，或在 Twitter/X、微博页面保存当前内容。
+                </p>
+              </div>
             </div>
           ) : filteredCaptures.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
-              <Inbox className="h-7 w-7 text-muted-foreground" />
-              <p className="text-sm font-medium">未找到匹配「{search}」的内容</p>
-              <Button onClick={() => setSearch('')} size="sm" variant="outline">
-                清除搜索
-              </Button>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/30 p-6 text-center">
+                <Inbox className="h-7 w-7 text-muted-foreground" />
+                <p className="text-sm font-medium">未找到匹配「{search}」的内容</p>
+                <Button onClick={() => setSearch('')} size="sm" variant="outline">
+                  清除搜索
+                </Button>
+              </div>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <div className="space-y-2">
-                {filteredCaptures.map((capture) => (
-                  <button
-                    className={
-                      capture.id === selectedCapture?.id
-                        ? 'w-full rounded-md border border-primary bg-accent px-2 py-2 text-left'
-                        : 'w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted'
-                    }
-                    key={capture.id}
-                    onClick={() => setSelectedCaptureId(capture.id)}
-                    type="button"
-                  >
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <span className="min-w-0 flex-1 truncate">{capture.title}</span>
-                      <Badge variant="outline">{sourceLabel(capture.source)}</Badge>
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{capture.siteName ?? hostFromUrl(capture.url)}</span>
-                      {captureAuthorLine(capture) ? (
-                        <span className="truncate">{captureAuthorLine(capture)}</span>
-                      ) : null}
-                      {capture.wordCount ? <span>{capture.wordCount} 字</span> : null}
-                      <span>{capture.media.length} 媒体</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {selectedCapture ? (
-                <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Button
-                      disabled={busy || !handle}
-                      loading={busy}
-                      onClick={saveSelectedCapture}
-                      size="sm"
-                    >
-                      <Save className="h-4 w-4" />
-                      {handle ? '保存选中内容' : '先选择 Vault'}
-                    </Button>
-                    <Button
-                      disabled={busy}
-                      onClick={() => onRemovePendingCapture(selectedCapture.id)}
-                      size="icon"
-                      title="移除这条待保存内容"
-                      variant="outline"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    {filteredCaptures.map((capture) => (
+                      <button
+                        className={
+                          capture.id === selectedCapture?.id
+                            ? 'w-full rounded-md border border-primary bg-accent px-2 py-2 text-left'
+                            : 'w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted'
+                        }
+                        key={capture.id}
+                        onClick={() => setSelectedCaptureId(capture.id)}
+                        type="button"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <span className="min-w-0 flex-1 truncate">{capture.title}</span>
+                          <Badge variant="outline">{sourceLabel(capture.source)}</Badge>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                          <span>{capture.siteName ?? hostFromUrl(capture.url)}</span>
+                          {captureAuthorLine(capture) ? (
+                            <span className="truncate">{captureAuthorLine(capture)}</span>
+                          ) : null}
+                          {capture.wordCount ? <span>{capture.wordCount} 字</span> : null}
+                          <span>{capture.media.length} 媒体</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1 truncate text-sm font-medium">
-                      预览：{selectedCapture.title}
-                    </div>
-                    <Badge variant="outline">{sourceLabel(selectedCapture.source)}</Badge>
-                    <Button onClick={() => setPreviewCaptureOpen(true)} size="sm" variant="outline">
-                      <Eye className="h-4 w-4" />
-                      放大
-                    </Button>
-                  </div>
+                  {selectedCapture ? (
+                    <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
+                        <Button
+                          disabled={busy || !handle}
+                          loading={busy}
+                          onClick={saveSelectedCapture}
+                          size="sm"
+                        >
+                          <Save className="h-4 w-4" />
+                          {handle ? '保存选中内容' : '先选择 Vault'}
+                        </Button>
+                        <Button
+                          disabled={busy}
+                          onClick={() => onRemovePendingCapture(selectedCapture.id)}
+                          size="icon"
+                          title="移除这条待保存内容"
+                          variant="outline"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
 
-                  <div className="max-h-72 overflow-y-auto rounded-md bg-card p-3 text-xs leading-5 text-foreground">
-                    <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                      {captureAuthorLine(selectedCapture) ? (
-                        <span>{captureAuthorLine(selectedCapture)}</span>
-                      ) : null}
-                      {selectedCapture.created ? <span>{selectedCapture.created}</span> : null}
-                      <span>捕获：{formatCaptureTime(selectedCapture.capturedAt)}</span>
-                    </div>
-                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                      {selectedCapture.text.slice(0, 2400)}
-                      {selectedCapture.text.length > 2400 ? '\n\n...' : ''}
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1 truncate text-sm font-medium">
+                          预览：{selectedCapture.title}
+                        </div>
+                        <Badge variant="outline">{sourceLabel(selectedCapture.source)}</Badge>
+                        <Button
+                          onClick={() => setPreviewCaptureOpen(true)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Eye className="h-4 w-4" />
+                          放大
+                        </Button>
+                      </div>
 
-                  {selectedCapture.media.length > 0 ? (
-                    <div className="space-y-1.5">
-                      <Label>媒体链接</Label>
-                      <div className="space-y-1 rounded-md bg-card p-2 text-[11px] text-muted-foreground">
-                        {selectedCapture.media.slice(0, 4).map((item, index) => (
-                          <div className="truncate" key={`${item.url}-${index}`}>
-                            {item.type === 'video' ? '视频' : '图片'}：{item.url}
+                      <div className="max-h-72 overflow-y-auto rounded-md bg-card p-3 text-xs leading-5 text-foreground">
+                        <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                          {captureAuthorLine(selectedCapture) ? (
+                            <span>{captureAuthorLine(selectedCapture)}</span>
+                          ) : null}
+                          {selectedCapture.created ? (
+                            <span>发布：{selectedCapture.created}</span>
+                          ) : null}
+                          <span>收藏：{formatCaptureTime(selectedCapture.capturedAt)}</span>
+                        </div>
+                        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                          {selectedCapture.text.slice(0, 2400)}
+                          {selectedCapture.text.length > 2400 ? '\n\n...' : ''}
+                        </div>
+                      </div>
+
+                      {selectedCapture.media.length > 0 ? (
+                        <div className="space-y-1.5">
+                          <Label>媒体链接</Label>
+                          <div className="space-y-1 rounded-md bg-card p-2 text-[11px] text-muted-foreground">
+                            {selectedCapture.media.slice(0, 4).map((item, index) => (
+                              <div className="truncate" key={`${item.url}-${index}`}>
+                                {item.type === 'video' ? '视频' : '图片'}：{item.url}
+                              </div>
+                            ))}
+                            {selectedCapture.media.length > 4 ? (
+                              <div>还有 {selectedCapture.media.length - 4} 条，点击放大查看。</div>
+                            ) : null}
                           </div>
-                        ))}
-                        {selectedCapture.media.length > 4 ? (
-                          <div>还有 {selectedCapture.media.length - 4} 条，点击放大查看。</div>
-                        ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="space-y-1.5">
+                        <Label>标签</Label>
+                        <Input
+                          onChange={(event) => setCaptureTags(event.target.value)}
+                          placeholder="article, security"
+                          value={captureTags}
+                        />
                       </div>
                     </div>
                   ) : null}
-
-                  <div className="space-y-1.5">
-                    <Label>标签</Label>
-                    <Input
-                      onChange={(event) => setCaptureTags(event.target.value)}
-                      placeholder="article, security"
-                      value={captureTags}
-                    />
-                  </div>
                 </div>
-              ) : null}
+              </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid shrink-0 grid-cols-2 gap-2">
                 <Button disabled={busy || !handle} loading={busy} onClick={saveAllCaptures}>
                   <Save className="h-4 w-4" />
                   全部保存到 Vault
@@ -527,7 +565,7 @@ export default function CollectionPage({
                   清空队列
                 </Button>
               </div>
-            </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -536,19 +574,20 @@ export default function CollectionPage({
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-primary" />
-            最近保存
+            最近写入 Vault
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {exportManifests.length === 0 ? (
-            <p className="text-xs text-muted-foreground">尚未写入过 Vault。</p>
+          {captureManifests.length === 0 ? (
+            <p className="text-xs text-muted-foreground">尚未写入过收藏内容。</p>
           ) : (
-            exportManifests.slice(0, 5).map((manifest) => (
+            captureManifests.slice(0, 5).map((manifest) => (
               <div className="flex items-center gap-2 text-xs" key={manifest.id}>
                 <span className="min-w-0 flex-1 truncate">
-                  {new Date(manifest.exportedAt).toLocaleString()}
+                  写入：{new Date(manifest.exportedAt).toLocaleString()}
                 </span>
-                <Badge variant="secondary">{manifest.bookmarkCount}</Badge>
+                <Badge variant="outline">{manifestSourceLabel(manifest)}</Badge>
+                <Badge variant="secondary">{manifestCountLabel(manifest)}</Badge>
               </div>
             ))
           )}
@@ -574,8 +613,8 @@ export default function CollectionPage({
                 {captureAuthorLine(selectedCapture) ? (
                   <span>{captureAuthorLine(selectedCapture)}</span>
                 ) : null}
-                {selectedCapture.created ? <span>{selectedCapture.created}</span> : null}
-                <span>捕获：{formatCaptureTime(selectedCapture.capturedAt)}</span>
+                {selectedCapture.created ? <span>发布：{selectedCapture.created}</span> : null}
+                <span>收藏：{formatCaptureTime(selectedCapture.capturedAt)}</span>
               </div>
             ) : null}
             <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">

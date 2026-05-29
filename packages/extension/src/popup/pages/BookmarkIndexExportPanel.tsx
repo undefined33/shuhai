@@ -60,6 +60,10 @@ function bookmarksForScope(
   return bookmarks.filter((bookmark) => bookmarkIds.has(bookmark.id));
 }
 
+function isBookmarkIndexManifest(manifest: ExportManifest): boolean {
+  return manifest.type === 'bookmark-index' || (!manifest.type && manifest.bookmarkCount > 5);
+}
+
 export default function BookmarkIndexExportPanel({
   bookmarks,
   exportManifests,
@@ -79,6 +83,10 @@ export default function BookmarkIndexExportPanel({
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const exportControllerRef = useRef<AbortController | undefined>(undefined);
+  const bookmarkIndexManifests = useMemo(
+    () => exportManifests.filter(isBookmarkIndexManifest),
+    [exportManifests],
+  );
 
   useEffect(() => {
     setDirectoryPrefix(settings.exportDirectory);
@@ -301,16 +309,17 @@ export default function BookmarkIndexExportPanel({
 
           <div className="border-t border-border pt-3">
             <div className="mb-2 text-sm font-medium">最近导出</div>
-            {exportManifests.length === 0 ? (
+            {bookmarkIndexManifests.length === 0 ? (
               <p className="text-xs text-muted-foreground">尚未导出过书签</p>
             ) : (
               <div className="space-y-2">
-                {exportManifests.slice(0, 5).map((manifest) => (
+                {bookmarkIndexManifests.slice(0, 5).map((manifest) => (
                   <div className="flex items-center gap-2 text-xs" key={manifest.id}>
                     <span className="min-w-0 flex-1 truncate">
-                      {new Date(manifest.exportedAt).toLocaleString()}
+                      写入：{new Date(manifest.exportedAt).toLocaleString()}
                     </span>
-                    <Badge variant="secondary">{manifest.bookmarkCount}</Badge>
+                    <Badge variant="outline">{manifest.sourceLabel ?? '书签索引'}</Badge>
+                    <Badge variant="secondary">{manifest.bookmarkCount} 条</Badge>
                   </div>
                 ))}
               </div>
