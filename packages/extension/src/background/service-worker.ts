@@ -11,6 +11,7 @@ import type {
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
+  StateSummary,
   UrlHealthPortMessage,
   UrlHealthPortRequest,
   UrlHealthProgress,
@@ -50,6 +51,7 @@ import {
 } from '../utils/activity-log.js';
 import { inferErrorCode } from '../utils/error-messages.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
+import { getVaultHandle } from '../utils/vault-writer.js';
 
 type SocialCaptureSource = 'twitter' | 'weibo';
 
@@ -85,6 +87,27 @@ async function getState(): Promise<ExtensionState> {
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
+  };
+}
+
+async function getStateSummary(): Promise<StateSummary> {
+  const tree = await getFullTree();
+  const summary = flattenBookmarkTree(tree);
+  const settings = await getSettings();
+  const pendingCaptures = await getPendingCaptures();
+  const exportManifests = await getExportManifests();
+  const vaultHandle = await getVaultHandle().catch(() => null);
+
+  return {
+    bookmarkCount: summary.bookmarks.length,
+    folderCount: summary.folders.length,
+    pendingCaptureCount: pendingCaptures.length,
+    onboarded: await getOnboarded(),
+    hasVaultHandle: Boolean(vaultHandle),
+    hasAiProvider: settings.aiProviders.some(
+      (provider) => provider.enabled && provider.apiKey.trim().length > 0,
+    ),
+    lastExportDate: exportManifests[0]?.exportedAt,
   };
 }
 
@@ -507,6 +530,8 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
     switch (request.type) {
       case 'state:get':
         return { ok: true, data: await getState() };
+      case 'state:summary':
+        return { ok: true, data: await getStateSummary() };
       case 'plan:create':
         return { ok: true, data: await createPlan(request.mode) };
       case 'plan:apply': {

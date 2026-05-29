@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BookOpen, CheckCircle2, FolderOpen, Save, X } from 'lucide-react';
+import { CheckCircle2, Copy, FolderOpen, Save, X } from 'lucide-react';
 import type { AppSettings, CapturedContent } from '../../shared/bookmark-types.js';
 import { Alert } from '../../components/ui/alert.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card.js';
+import { Card, CardContent } from '../../components/ui/card.js';
 import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { useToast } from '../../components/ui/toast.js';
@@ -28,6 +28,7 @@ interface InlineSavePanelProps {
   currentTab?: CurrentTabInfo;
   initialCapture?: CapturedContent;
   pendingCaptures: CapturedContent[];
+  prominent?: boolean;
   settings: AppSettings;
   onCapture(source: InlineSaveSource): Promise<CapturedContent>;
   onOpenCollection(): void;
@@ -94,6 +95,7 @@ export default function InlineSavePanel({
   currentTab,
   initialCapture,
   pendingCaptures,
+  prominent = false,
   settings,
   onCapture,
   onOpenCollection,
@@ -108,6 +110,7 @@ export default function InlineSavePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<StructuredError | undefined>();
   const [status, setStatus] = useState('');
+  const [savedPath, setSavedPath] = useState('');
 
   useEffect(() => {
     if (!initialCapture) {
@@ -118,6 +121,15 @@ export default function InlineSavePanel({
     setTagsText(initialCapture.tags.join(', '));
     setExpanded(true);
   }, [initialCapture]);
+
+  useEffect(() => {
+    if (!savedPath) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => setSavedPath(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [savedPath]);
 
   const pendingCount = pendingCaptures.length;
   const source = currentTab?.source;
@@ -138,6 +150,7 @@ export default function InlineSavePanel({
     setBusy(true);
     setError(undefined);
     setStatus('');
+    setSavedPath('');
     try {
       const nextCapture = await onCapture(source);
       setCapture(nextCapture);
@@ -159,6 +172,7 @@ export default function InlineSavePanel({
     setBusy(true);
     setError(undefined);
     setStatus('');
+    setSavedPath('');
     try {
       const handle = await getVaultHandle();
       if (!handle) {
@@ -186,7 +200,7 @@ export default function InlineSavePanel({
       const filePath = result.files[0] ?? pathPreview;
       await onRemovePendingCapture(capture.id);
       await onRefresh();
-      setStatus(`已写入：${filePath}`);
+      setSavedPath(filePath);
       setCapture(undefined);
       setExpanded(false);
       toast({
@@ -215,20 +229,39 @@ export default function InlineSavePanel({
     setStatus('');
   };
 
-  if (!canExtract && !capture) {
+  if (!canExtract && !capture && !savedPath) {
     return null;
   }
 
   return (
-    <Card className="border-primary/40 bg-primary/5">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2">
-          <BookOpen className="h-4 w-4 text-primary" />
-          保存当前页面到 Obsidian
+    <Card className={prominent ? 'bg-primary/5' : 'bg-card/70'} variant="soft">
+      <CardContent className="space-y-4 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold">保存当前页面</h2>
+            <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+              提取正文，检查后写入 Obsidian Vault。
+            </p>
+          </div>
           {capture ? <Badge variant="success">已提取</Badge> : null}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+        </div>
+
+        {savedPath ? (
+          <div className="animate-soft-rise rounded-lg border border-primary/30 bg-primary/10 p-3">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="animate-check-pop mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">已保存到 Vault</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">{savedPath}</p>
+              </div>
+              <Button onClick={() => copyToClipboard(savedPath)} size="sm" variant="outline">
+                <Copy className="h-3.5 w-3.5" />
+                复制
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {error ? (
           <Alert variant="destructive">
             <div className="space-y-1">
@@ -243,12 +276,12 @@ export default function InlineSavePanel({
 
         {!expanded ? (
           <div className="space-y-3">
-            <div className="min-w-0 text-xs text-muted-foreground">
+            <div className="min-w-0 text-[13px] text-muted-foreground">
               <div className="truncate">
                 {currentTab?.title || currentTab?.url || '当前页面可提取正文'}
               </div>
               {currentTab?.url ? (
-                <div className="mt-1 truncate">{hostFromUrl(currentTab.url)}</div>
+                <div className="mt-1 truncate text-xs">{hostFromUrl(currentTab.url)}</div>
               ) : null}
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -257,7 +290,7 @@ export default function InlineSavePanel({
               </Button>
               {pendingCount > 0 ? (
                 <Button onClick={onOpenCollection} variant="outline">
-                  查看待入库 {pendingCount}
+                  处理待入库 {pendingCount}
                 </Button>
               ) : (
                 <Button onClick={onOpenSettings} variant="outline">
@@ -284,10 +317,10 @@ export default function InlineSavePanel({
               </div>
             </div>
 
-            <div className="max-h-28 overflow-y-auto rounded-md bg-card p-2 text-xs leading-5">
+            <div className="max-h-32 overflow-y-auto rounded-md bg-background/70 p-3 text-[13px] leading-5">
               <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                {capture.text.slice(0, 480)}
-                {capture.text.length > 480 ? '\n\n...' : ''}
+                {capture.text.slice(0, 520)}
+                {capture.text.length > 520 ? '\n\n...' : ''}
               </div>
             </div>
 
@@ -302,7 +335,7 @@ export default function InlineSavePanel({
 
             <div className="space-y-1.5">
               <Label>写入路径</Label>
-              <div className="truncate rounded-md border border-border bg-muted px-2 py-2 text-xs">
+              <div className="truncate rounded-md border border-border bg-muted px-2 py-2 text-[11px]">
                 {pathPreview}
               </div>
             </div>
@@ -310,11 +343,10 @@ export default function InlineSavePanel({
             <div className="grid grid-cols-[1fr_auto_auto] gap-2">
               <Button disabled={busy} loading={busy} onClick={saveToVault}>
                 <Save className="h-4 w-4" />
-                写入 Vault
+                确认保存
               </Button>
               <Button onClick={onOpenCollection} variant="outline">
-                <CheckCircle2 className="h-4 w-4" />
-                加入队列
+                稍后处理
               </Button>
               <Button onClick={cancel} size="icon" title="取消" variant="ghost">
                 <X className="h-4 w-4" />

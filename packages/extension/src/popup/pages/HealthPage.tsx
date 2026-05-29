@@ -388,6 +388,21 @@ export default function HealthPage({
         </CardContent>
       </Card>
 
+      {!checking && activeRecords.length > 0 ? (
+        <Card className="bg-primary/5" variant="soft">
+          <CardContent className="flex items-start gap-3 p-3">
+            <CheckCircle2 className="animate-check-pop mt-0.5 h-5 w-5 shrink-0 text-primary" />
+            <div className="min-w-0 text-[13px]">
+              <p className="font-medium">本次检查完成</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                正常 {summary.alive} · 死链 {summary.dead} · 错误 {summary.error} · 重定向{' '}
+                {summary.redirected}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         {[
           ['actionable', '待处理'],

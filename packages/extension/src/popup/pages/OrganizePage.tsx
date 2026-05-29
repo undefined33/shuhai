@@ -134,6 +134,7 @@ export default function OrganizePage({
       {lastAppliedCount > 0 ? (
         <Alert variant="success">
           <div className="space-y-2">
+            <CheckCircle2 className="animate-check-pop h-5 w-5 text-primary" />
             <p>已整理 {lastAppliedCount} 个书签。</p>
             <div className="flex flex-wrap gap-2">
               <Button

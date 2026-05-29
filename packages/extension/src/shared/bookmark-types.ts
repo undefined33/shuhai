@@ -346,6 +346,16 @@ export interface ExtensionState {
   settings: AppSettings;
 }
 
+export interface StateSummary {
+  bookmarkCount: number;
+  folderCount: number;
+  pendingCaptureCount: number;
+  onboarded: boolean;
+  hasVaultHandle: boolean;
+  hasAiProvider: boolean;
+  lastExportDate?: string;
+}
+
 export interface OnboardingProgressState {
   vaultConfigured: boolean;
   providerConfigured: boolean;
@@ -355,6 +365,7 @@ export interface OnboardingProgressState {
 
 export type ExtensionRequest =
   | { type: 'state:get' }
+  | { type: 'state:summary' }
   | { type: 'plan:create'; mode: ClassificationMode }
   | {
       type: 'plan:apply';
@@ -380,6 +391,7 @@ export type ExtensionRequest =
 
 export type ExtensionResponse =
   | { ok: true; data: ExtensionState }
+  | { ok: true; data: StateSummary }
   | { ok: true; data: ClassificationPlan }
   | { ok: true; data: ApplyResult }
   | { ok: true; data: BackupRecord[] }

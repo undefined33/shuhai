@@ -27,6 +27,7 @@ import type {
   ExtensionState,
   FolderItem,
   MovePlan,
+  StateSummary,
   UrlHealthPortMessage,
   UrlHealthPortRequest,
   UrlHealthProgress,
@@ -107,6 +108,30 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
         : 0,
     onboarded: state.onboarded === true,
     settings: normalizeSettings(state.settings),
+  };
+}
+
+function normalizeStateSummary(value: unknown): StateSummary {
+  const summary = objectRecord(value);
+
+  return {
+    bookmarkCount:
+      typeof summary.bookmarkCount === 'number' && Number.isFinite(summary.bookmarkCount)
+        ? summary.bookmarkCount
+        : 0,
+    folderCount:
+      typeof summary.folderCount === 'number' && Number.isFinite(summary.folderCount)
+        ? summary.folderCount
+        : 0,
+    pendingCaptureCount:
+      typeof summary.pendingCaptureCount === 'number' &&
+      Number.isFinite(summary.pendingCaptureCount)
+        ? summary.pendingCaptureCount
+        : 0,
+    onboarded: summary.onboarded === true,
+    hasVaultHandle: summary.hasVaultHandle === true,
+    hasAiProvider: summary.hasAiProvider === true,
+    lastExportDate: typeof summary.lastExportDate === 'string' ? summary.lastExportDate : undefined,
   };
 }
 
@@ -368,6 +393,7 @@ function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
 interface PopupLauncherProps {
   busy: boolean;
   onboardingProgress: OnboardingProgress;
+  summary?: StateSummary;
   state?: ExtensionState;
   onOpenSidePanel(page: PageName): void;
   onQuickClassify(): void;
@@ -379,6 +405,7 @@ interface PopupLauncherProps {
 function PopupLauncher({
   busy,
   onboardingProgress,
+  summary,
   state,
   onOpenSidePanel,
   onQuickClassify,
@@ -386,9 +413,108 @@ function PopupLauncher({
   onSkipOnboarding,
   onUsePopup,
 }: PopupLauncherProps) {
-  const bookmarkCount = state?.bookmarks?.length ?? 0;
-  const folderCount = state?.folders?.length ?? 0;
-  const pendingCaptureCount = state?.pendingCaptures?.length ?? 0;
+  const bookmarkCount = summary?.bookmarkCount ?? state?.bookmarks?.length ?? 0;
+  const folderCount = summary?.folderCount ?? state?.folders?.length ?? 0;
+  const pendingCaptureCount = summary?.pendingCaptureCount ?? state?.pendingCaptures?.length ?? 0;
+  const setupReady = Boolean(summary?.hasVaultHandle && summary?.hasAiProvider);
+  const lastSavedLabel = summary?.lastExportDate
+    ? new Date(summary.lastExportDate).toLocaleDateString()
+    : undefined;
+
+  if (!state) {
+    return (
+      <main className="flex h-[600px] flex-col gap-4 bg-background p-4 text-foreground">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold tracking-tight">ShuHai</h1>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {bookmarkCount} 个书签 · {folderCount} 个文件夹
+            </p>
+          </div>
+          {pendingCaptureCount > 0 ? (
+            <Badge variant="success">待入库 {pendingCaptureCount}</Badge>
+          ) : null}
+        </header>
+
+        <Card className="bg-primary/5" variant="soft">
+          <CardContent className="space-y-4 p-4">
+            <div className="space-y-2">
+              <div className="inline-flex rounded-md bg-primary/10 p-2 text-primary">
+                <PanelRightOpen className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold">打开 ShuHai 工作区</h2>
+                <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+                  在侧边栏里整理书签、检查失效链接、确认内容入库。
+                </p>
+              </div>
+            </div>
+            <Button className="h-10 w-full" disabled={busy} onClick={() => onOpenSidePanel('home')}>
+              <PanelRightOpen className="h-4 w-4" />
+              打开工作区
+            </Button>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            disabled={busy || bookmarkCount === 0}
+            onClick={onQuickClassify}
+            variant="outline"
+          >
+            <Sparkles className="h-4 w-4" />
+            整理我的书签
+          </Button>
+          <Button disabled={busy || bookmarkCount === 0} onClick={onQuickHealth} variant="outline">
+            <Activity className="h-4 w-4" />
+            找出坏链接
+          </Button>
+        </div>
+
+        <div className="rounded-lg bg-card/70 p-3 text-[13px]">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">准备状态</span>
+            <Badge variant={setupReady ? 'success' : 'warning'}>
+              {setupReady ? '已配置' : '需配置'}
+            </Badge>
+          </div>
+          <div className="mt-2 grid gap-1.5 text-xs text-muted-foreground">
+            <span>Vault：{summary?.hasVaultHandle ? '已选择' : '未选择'}</span>
+            <span>AI：{summary?.hasAiProvider ? '已配置' : '未配置'}</span>
+            {lastSavedLabel ? <span>上次保存：{lastSavedLabel}</span> : null}
+          </div>
+        </div>
+
+        <div className="mt-auto grid gap-2">
+          {pendingCaptureCount > 0 ? (
+            <Button disabled={busy} onClick={() => onUsePopup('collection')} variant="secondary">
+              <BookOpen className="h-4 w-4" />
+              处理待入库 {pendingCaptureCount}
+            </Button>
+          ) : null}
+          <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
+            <button
+              className="hover:text-foreground"
+              disabled={busy}
+              onClick={() => onUsePopup('home')}
+              type="button"
+            >
+              继续用弹窗
+            </button>
+            <button
+              className="inline-flex items-center gap-1 hover:text-foreground"
+              disabled={busy}
+              onClick={() => onUsePopup('settings')}
+              type="button"
+            >
+              <SettingsIcon className="h-3.5 w-3.5" />
+              设置
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex h-[600px] flex-col gap-3 bg-background p-3 text-foreground">
@@ -533,6 +659,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [page, setPage] = useState<PageName>('home');
   const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('browse');
   const [state, setState] = useState<ExtensionState | undefined>();
+  const [summary, setSummary] = useState<StateSummary | undefined>();
   const [onboardingProgress, setOnboardingProgress] =
     useState<OnboardingProgress>(EMPTY_ONBOARDING_PROGRESS);
   const [plan, setPlan] = useState<ClassificationPlan | undefined>();
@@ -600,6 +727,17 @@ function AppContent({ surface = 'popup' }: AppProps) {
         nextState = { ...nextState, onboarded: true };
       }
       setState(nextState);
+      setSummary({
+        bookmarkCount: nextState.bookmarks.length,
+        folderCount: nextState.folders.length,
+        pendingCaptureCount: nextState.pendingCaptures.length,
+        onboarded: nextState.onboarded,
+        hasVaultHandle: Boolean(vaultHandle),
+        hasAiProvider: nextState.settings.aiProviders.some(
+          (provider) => provider.enabled && provider.apiKey.trim().length > 0,
+        ),
+        lastExportDate: nextState.exportManifests[0]?.exportedAt,
+      });
       setClassifyMode(nextState.settings.defaultClassifyMode);
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
       setRecoveryError(undefined);
@@ -610,8 +748,35 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const loadSummary = async () => {
+    setBusyAction('load');
+    setNotice(undefined);
+    try {
+      const nextSummary = normalizeStateSummary(
+        await sendMessage<unknown>({ type: 'state:summary' }),
+      );
+      setSummary(nextSummary);
+      setOnboardingProgress({
+        vaultConfigured: nextSummary.hasVaultHandle,
+        providerConfigured: nextSummary.hasAiProvider,
+        firstClassifyDone: false,
+        firstExportDone: Boolean(nextSummary.lastExportDate),
+      });
+      setStatus(`已读取 ${nextSummary.bookmarkCount} 个书签`);
+      setRecoveryError(undefined);
+    } catch (loadError) {
+      showError(loadError);
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
   useEffect(() => {
-    void loadState();
+    if (surface === 'sidepanel') {
+      void loadState();
+    } else {
+      void loadSummary();
+    }
     void getActiveTabInfo().then(setCurrentTabInfo);
   }, []);
 
@@ -643,13 +808,18 @@ function AppContent({ surface = 'popup' }: AppProps) {
       ]);
 
       if (Object.keys(changes).some((key) => relevantKeys.has(key))) {
+        if (surface === 'popup' && !forcePopupWorkspace) {
+          void loadSummary();
+          return;
+        }
+
         void loadState();
       }
     };
 
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
-  }, []);
+  }, [forcePopupWorkspace, surface]);
 
   useEffect(() => {
     const pendingCount = state?.pendingCaptures?.length ?? 0;
@@ -1114,6 +1284,9 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const usePopupWorkspace = (nextPage: PageName) => {
     setPage(nextPage);
     setForcePopupWorkspace(true);
+    if (!state) {
+      void loadState();
+    }
   };
 
   const quickClassifyFromPopup = () => {
@@ -1219,6 +1392,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
           onQuickHealth={quickHealthFromPopup}
           onSkipOnboarding={completeOnboarding}
           onUsePopup={usePopupWorkspace}
+          summary={summary}
           state={state}
         />
       </>
