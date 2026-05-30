@@ -21,6 +21,10 @@ import ClassifyPreview from './ClassifyPreview.js';
 
 export type OrganizeMode = 'browse' | 'plan';
 
+function MetricNumber({ children }: { children: number | string }) {
+  return <span className="font-serif tabular-nums text-foreground">{children}</span>;
+}
+
 interface OrganizePageProps {
   backups: BackupRecord[];
   bookmarks: BookmarkItem[];
@@ -99,22 +103,28 @@ export default function OrganizePage({
                 浏览书签、生成整理建议，确认后再移动真实 Chrome 书签。
               </p>
             </div>
-            <Badge variant={selectedPlanCount > 0 ? 'success' : 'outline'}>
+            <Badge variant={selectedPlanCount > 0 ? 'accent' : 'outline'}>
               {selectedPlanCount > 0 ? `${selectedPlanCount} 条建议` : '待生成建议'}
             </Badge>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{bookmarks.length}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{bookmarks.length}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">书签</div>
             </div>
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{folders.length}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{folders.length}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">文件夹</div>
             </div>
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{plan?.moves.length ?? 0}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{plan?.moves.length ?? 0}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">整理建议</div>
             </div>
           </div>
@@ -135,7 +145,9 @@ export default function OrganizePage({
         <Alert variant="success">
           <div className="space-y-2">
             <CheckCircle2 className="animate-check-pop h-5 w-5 text-primary" />
-            <p>已整理 {lastAppliedCount} 个书签。</p>
+            <p>
+              已整理 <MetricNumber>{lastAppliedCount}</MetricNumber> 个书签。
+            </p>
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => setShowIndexTool((current) => !current)}
@@ -213,7 +225,7 @@ export default function OrganizePage({
               surface={surface}
             />
           ) : (
-            <Card>
+            <Card variant="outline">
               <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
                 {classifying ? (
                   <>

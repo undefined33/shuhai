@@ -81,9 +81,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((item) => (
           <div
             className={cn(
-              'pointer-events-auto rounded-lg border bg-popover p-3 text-sm shadow-lg',
-              item.kind === 'success' && 'border-emerald-700/40',
-              item.kind === 'error' && 'border-red-700/40',
+              'pointer-events-auto rounded-lg border bg-popover p-3 text-sm',
+              item.kind === 'success' && 'border-primary/40',
+              item.kind === 'error' && 'border-destructive/40',
               item.kind === 'info' && 'border-border',
             )}
             key={item.id}

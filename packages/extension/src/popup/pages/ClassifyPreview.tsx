@@ -59,10 +59,9 @@ function emptyReason(plan: ClassificationPlan): string {
 
 function moveCardClass(move: MovePlan, focused: boolean): string {
   if (move.confidence < 0.6) {
-    return [
-      'h-[168px] border-amber-300 bg-amber-50/80 transition hover:border-amber-400',
-      'dark:border-amber-800 dark:bg-amber-950/30',
-    ].join(' ');
+    return ['h-[168px] border-accent/30 bg-accent-soft transition hover:border-accent/50'].join(
+      ' ',
+    );
   }
 
   if (focused) {
@@ -115,7 +114,7 @@ function FolderCombobox({ folders, value, onChange }: FolderComboboxProps) {
         value={value}
       />
       {open ? (
-        <CommandList className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 rounded-lg border border-border bg-popover shadow-lg">
+        <CommandList className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 rounded-lg border border-border bg-popover">
           {value.trim() && !hasExactMatch ? (
             <button
               className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted"

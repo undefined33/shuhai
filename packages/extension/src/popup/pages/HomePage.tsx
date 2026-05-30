@@ -4,6 +4,7 @@ import type { AppSettings, CapturedContent, ExportManifest } from '../../shared/
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
 import { Card, CardContent } from '../../components/ui/card.js';
+import { Separator } from '../../components/ui/separator.js';
 import type { OnboardingProgress } from '../../utils/onboarding.js';
 import { OnboardingChecklist } from './OnboardingChecklist.js';
 import InlineSavePanel, { type CurrentTabInfo, type InlineSaveSource } from './InlineSavePanel.js';
@@ -50,6 +51,10 @@ function lastSavedLabel(manifests: ExportManifest[]): string | undefined {
   return `上次保存 ${new Date(last.exportedAt).toLocaleDateString()}`;
 }
 
+function MetricNumber({ children }: { children: number | string }) {
+  return <span className="font-serif tabular-nums text-foreground">{children}</span>;
+}
+
 function SecondaryAction({
   title,
   description,
@@ -67,7 +72,7 @@ function SecondaryAction({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="truncate text-sm font-medium">{title}</h3>
-          {badge ? <Badge variant="success">{badge}</Badge> : null}
+          {badge ? <Badge variant="accent">{badge}</Badge> : null}
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{description}</p>
       </div>
@@ -108,9 +113,12 @@ export default function HomePage({
     <section className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4">
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-base font-semibold tracking-tight">今天要做什么？</h1>
+          <h1 className="text-base font-semibold tracking-tight">
+            今天要做什<span className="font-serif font-bold">么</span>？
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            {bookmarkCount} 个书签 · {folderCount} 个文件夹
+            <MetricNumber>{bookmarkCount}</MetricNumber> 个书签 ·{' '}
+            <MetricNumber>{folderCount}</MetricNumber> 个文件夹
           </p>
         </div>
         <Button onClick={onOpenSettings} size="icon" title="设置" variant="ghost">
@@ -168,6 +176,8 @@ export default function HomePage({
         </Card>
       )}
 
+      <Separator />
+
       <div className="space-y-1">
         {saveIsPrimary ? (
           <SecondaryAction
@@ -198,6 +208,8 @@ export default function HomePage({
           />
         ) : null}
       </div>
+
+      <Separator />
 
       <div className="mt-auto flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
         <button className="hover:text-foreground" onClick={onOpenOrganize} type="button">

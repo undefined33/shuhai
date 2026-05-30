@@ -1,49 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap&subset=chinese-simplified,latin');
 @import 'tailwindcss';
 
 @theme {
-  --color-background: #f8fafc;
-  --color-foreground: #0f172a;
+  --color-background: #faf8f5;
+  --color-foreground: #1c1917;
   --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
+  --color-card-foreground: #1c1917;
   --color-popover: #ffffff;
-  --color-popover-foreground: #0f172a;
+  --color-popover-foreground: #1c1917;
+  --color-muted: #f5f1ea;
+  --color-muted-foreground: #57534e;
+  --color-border: #e7e1d6;
+  --color-input: #e7e1d6;
   --color-primary: #146c5b;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #e2e8f0;
-  --color-secondary-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-accent: #e2f3ee;
-  --color-accent-foreground: #0f3f36;
-  --color-destructive: #b42318;
-  --color-destructive-foreground: #ffffff;
-  --color-border: #dbe3eb;
-  --color-input: #dbe3eb;
   --color-ring: #146c5b;
+  --color-secondary: #efeae0;
+  --color-secondary-foreground: #1c1917;
+  --color-accent: #c2410c;
+  --color-accent-foreground: #ffffff;
+  --color-accent-soft: #fff1e6;
+  --color-destructive: #991b1b;
+  --color-destructive-foreground: #ffffff;
   --radius: 0.5rem;
   --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --font-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', ui-serif, serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-background: #0f1419;
-    --color-foreground: #f8fafc;
-    --color-card: #1a2332;
-    --color-card-foreground: #f8fafc;
-    --color-popover: #1a2332;
-    --color-popover-foreground: #f8fafc;
+    --color-background: #14110d;
+    --color-foreground: #f5f1ea;
+    --color-card: #1f1b16;
+    --color-card-foreground: #f5f1ea;
+    --color-popover: #1f1b16;
+    --color-popover-foreground: #f5f1ea;
+    --color-muted: #1a1712;
+    --color-muted-foreground: #a8a29e;
+    --color-border: #2d2820;
+    --color-input: #2d2820;
     --color-primary: #1a9a7a;
-    --color-secondary: #243247;
-    --color-secondary-foreground: #f8fafc;
-    --color-muted: #182231;
-    --color-muted-foreground: #94a3b8;
-    --color-accent: #123d35;
-    --color-accent-foreground: #dff7ef;
-    --color-destructive: #ef4444;
+    --color-secondary: #2d2820;
+    --color-secondary-foreground: #f5f1ea;
+    --color-accent: #ea580c;
+    --color-accent-foreground: #14110d;
+    --color-accent-soft: #2a1810;
+    --color-destructive: #dc2626;
     --color-destructive-foreground: #ffffff;
-    --color-border: #2a3a4a;
-    --color-input: #2a3a4a;
     --color-ring: #1a9a7a;
   }
 }
@@ -61,6 +66,21 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+}
+
+.shuhai-logomark {
+  display: inline-flex;
+  height: 1.25rem;
+  width: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-family: var(--font-serif);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 body.shuhai-sidepanel {

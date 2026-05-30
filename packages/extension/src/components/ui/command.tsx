@@ -5,7 +5,7 @@ import { cn } from '../../lib/utils.js';
 export function Command({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('overflow-hidden rounded-lg border border-border bg-card shadow-sm', className)}
+      className={cn('overflow-hidden rounded-lg border border-border bg-card', className)}
       {...props}
     />
   );

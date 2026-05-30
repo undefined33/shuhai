@@ -382,7 +382,7 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
           {advancedOpen ? (
             <div className="space-y-2">
               <textarea
-                className="min-h-32 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm outline-none focus:ring-2 focus:ring-ring"
+                className="min-h-32 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
                 onChange={(event) => setAdvancedText(event.target.value)}
                 rows={6}
                 spellCheck={false}

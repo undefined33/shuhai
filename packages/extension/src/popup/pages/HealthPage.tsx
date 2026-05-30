@@ -59,6 +59,10 @@ type HealthRow =
 
 const ACTIONABLE_STATUSES = new Set<UrlHealthStatus>(['dead', 'error', 'redirected']);
 
+function MetricNumber({ children }: { children: number | string }) {
+  return <span className="font-serif tabular-nums text-foreground">{children}</span>;
+}
+
 function statusLabel(status: UrlHealthStatus): string {
   switch (status) {
     case 'alive':
@@ -333,16 +337,22 @@ export default function HealthPage({
             ShuHai 只给出筛选建议，不会自动删除书签。删除或替换链接前会先创建备份。
           </Alert>
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{remainingTodayCount}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{remainingTodayCount}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">今日未检</div>
             </div>
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{summary.dead + summary.error}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{summary.dead + summary.error}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">死链/错误</div>
             </div>
-            <div className="rounded-md border border-border p-2">
-              <div className="text-lg font-semibold">{summary.redirected}</div>
+            <div className="rounded-md bg-muted/50 p-2">
+              <div className="text-lg font-semibold">
+                <MetricNumber>{summary.redirected}</MetricNumber>
+              </div>
               <div className="text-[11px] text-muted-foreground">重定向</div>
             </div>
           </div>
@@ -351,10 +361,13 @@ export default function HealthPage({
             <div className="space-y-2 rounded-md border border-border bg-muted/40 p-2">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span>
-                  正在检查 {progress.done}/{progress.total}，预计剩余{' '}
+                  正在检查 <MetricNumber>{progress.done}</MetricNumber>/
+                  <MetricNumber>{progress.total}</MetricNumber>，预计剩余{' '}
                   {formatDuration(progress.remainingMs)}
                 </span>
-                <Badge variant="secondary">{percent}%</Badge>
+                <Badge variant="secondary">
+                  <MetricNumber>{percent}</MetricNumber>%
+                </Badge>
               </div>
               <Progress value={percent} />
               {progress.currentUrl ? (
@@ -395,8 +408,10 @@ export default function HealthPage({
             <div className="min-w-0 text-[13px]">
               <p className="font-medium">本次检查完成</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                正常 {summary.alive} · 死链 {summary.dead} · 错误 {summary.error} · 重定向{' '}
-                {summary.redirected}
+                正常 <MetricNumber>{summary.alive}</MetricNumber> · 死链{' '}
+                <MetricNumber>{summary.dead}</MetricNumber> · 错误{' '}
+                <MetricNumber>{summary.error}</MetricNumber> · 重定向{' '}
+                <MetricNumber>{summary.redirected}</MetricNumber>
               </p>
             </div>
           </CardContent>
@@ -431,7 +446,8 @@ export default function HealthPage({
             value={search}
           />
           <div className="text-[11px] text-muted-foreground">
-            显示 {visibleRecords.length} / {activeRecords.length} 条
+            显示 <MetricNumber>{visibleRecords.length}</MetricNumber> /{' '}
+            <MetricNumber>{activeRecords.length}</MetricNumber> 条
           </div>
         </div>
       ) : null}
@@ -445,7 +461,7 @@ export default function HealthPage({
             size="sm"
             variant="outline"
           >
-            全选当前 {visibleRecords.length}
+            全选当前 <MetricNumber>{visibleRecords.length}</MetricNumber>
           </Button>
           <Button
             disabled={selectedIds.size === 0}

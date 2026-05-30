@@ -46,6 +46,7 @@ import {
 } from '../components/ui/dialog.js';
 import { Progress } from '../components/ui/progress.js';
 import { Alert } from '../components/ui/alert.js';
+import { Separator } from '../components/ui/separator.js';
 import { ToastProvider, useToast } from '../components/ui/toast.js';
 import { ErrorRecovery } from '../components/ErrorRecovery.js';
 import { DEFAULT_SETTINGS, normalizeSettings, saveOnboardingProgress } from '../utils/storage.js';
@@ -85,6 +86,45 @@ const EMPTY_ONBOARDING_PROGRESS: OnboardingProgress = {
 
 function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function BrandMark() {
+  return <span className="shuhai-logomark shrink-0">书</span>;
+}
+
+function TitleWithSerifTail({ children }: { children: string }) {
+  if (children === 'ShuHai') {
+    return (
+      <>
+        Shu<span className="font-serif font-bold">Hai</span>
+      </>
+    );
+  }
+
+  const chars = Array.from(children);
+  let tailIndex = -1;
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    if (/\p{Script=Han}/u.test(chars[index])) {
+      tailIndex = index;
+      break;
+    }
+  }
+
+  if (tailIndex === -1) {
+    return <>{children}</>;
+  }
+
+  return (
+    <>
+      {chars.slice(0, tailIndex).join('')}
+      <span className="font-serif font-bold">{chars[tailIndex]}</span>
+      {chars.slice(tailIndex + 1).join('')}
+    </>
+  );
+}
+
+function MetricNumber({ children }: { children: number | string }) {
+  return <span className="font-serif tabular-nums text-foreground">{children}</span>;
 }
 
 function arrayOrEmpty<T>(value: unknown): T[] {
@@ -425,16 +465,24 @@ function PopupLauncher({
     return (
       <main className="flex h-[600px] flex-col gap-4 bg-background p-4 text-foreground">
         <header className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-base font-semibold tracking-tight">ShuHai</h1>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {bookmarkCount} 个书签 · {folderCount} 个文件夹
-            </p>
+          <div className="flex min-w-0 items-start gap-2">
+            <BrandMark />
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight">
+                <TitleWithSerifTail>ShuHai</TitleWithSerifTail>
+              </h1>
+              <p className="mt-1 text-xs text-muted-foreground">
+                <MetricNumber>{bookmarkCount}</MetricNumber> 个书签 ·{' '}
+                <MetricNumber>{folderCount}</MetricNumber> 个文件夹
+              </p>
+            </div>
           </div>
           {pendingCaptureCount > 0 ? (
-            <Badge variant="success">待入库 {pendingCaptureCount}</Badge>
+            <Badge variant="accent">待入库 {pendingCaptureCount}</Badge>
           ) : null}
         </header>
+
+        <Separator />
 
         <Card className="bg-primary/5" variant="soft">
           <CardContent className="space-y-4 p-4">
@@ -518,12 +566,20 @@ function PopupLauncher({
 
   return (
     <main className="flex h-[600px] flex-col gap-3 bg-background p-3 text-foreground">
-      <header className="space-y-1">
-        <h1 className="text-base font-semibold tracking-tight">ShuHai</h1>
-        <p className="text-xs text-muted-foreground">
-          {bookmarkCount} 书签 · {folderCount} 文件夹
-        </p>
+      <header className="flex items-start gap-2">
+        <BrandMark />
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-base font-semibold tracking-tight">
+            <TitleWithSerifTail>ShuHai</TitleWithSerifTail>
+          </h1>
+          <p className="text-xs text-muted-foreground">
+            <MetricNumber>{bookmarkCount}</MetricNumber> 书签 ·{' '}
+            <MetricNumber>{folderCount}</MetricNumber> 文件夹
+          </p>
+        </div>
       </header>
+
+      <Separator />
 
       {state && !state.onboarded ? (
         <OnboardingChecklist
@@ -555,9 +611,7 @@ function PopupLauncher({
           <Button disabled={busy} onClick={() => onOpenSidePanel('collection')} variant="outline">
             <BookOpen className="h-4 w-4" />
             待入库
-            {pendingCaptureCount > 0 ? (
-              <Badge variant="success">{pendingCaptureCount}</Badge>
-            ) : null}
+            {pendingCaptureCount > 0 ? <Badge variant="accent">{pendingCaptureCount}</Badge> : null}
           </Button>
           <Button disabled={busy} onClick={() => onOpenSidePanel('settings')} variant="outline">
             <SettingsIcon className="h-4 w-4" />
@@ -600,7 +654,7 @@ function PopupLauncher({
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">待入库</span>
-            <Badge variant={pendingCaptureCount > 0 ? 'success' : 'outline'}>
+            <Badge variant={pendingCaptureCount > 0 ? 'accent' : 'outline'}>
               {pendingCaptureCount}
             </Badge>
           </div>
@@ -637,8 +691,11 @@ function ProgressPanel({ progress, onCancel }: ProgressPanelProps) {
         <div className="min-w-0">
           <p className="text-xs font-medium">AI 正在分析你的书签</p>
           <p className="text-[11px] text-muted-foreground">
-            {done}/{total} ({percent}%) · 批次 {progress?.batch ?? 0}/{progress?.totalBatches ?? 0}{' '}
-            · 预计剩余 {formatDuration(progress?.remainingMs)}
+            <MetricNumber>{done}</MetricNumber>/<MetricNumber>{total}</MetricNumber> (
+            <MetricNumber>{percent}</MetricNumber>%) · 批次{' '}
+            <MetricNumber>{progress?.batch ?? 0}</MetricNumber>/
+            <MetricNumber>{progress?.totalBatches ?? 0}</MetricNumber> · 预计剩余{' '}
+            {formatDuration(progress?.remainingMs)}
           </p>
         </div>
         <Button onClick={onCancel} size="sm" variant="outline">
@@ -1512,16 +1569,21 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
   return (
     <main className={`flex ${workspaceClass} flex-col bg-background text-foreground`}>
-      <header className="border-b border-border px-3 py-3">
+      <header className="px-3 py-3">
         <div className="flex items-center justify-between gap-3">
-          {page !== 'home' ? (
-            <Button onClick={() => setPage('home')} size="icon" title="返回首页" variant="ghost">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          ) : null}
-          <div className="min-w-0">
-            <h1 className="text-base font-semibold tracking-tight">{pageTitle[page]}</h1>
-            <p className="truncate text-xs text-muted-foreground">{status}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            {page !== 'home' ? (
+              <Button onClick={() => setPage('home')} size="icon" title="返回首页" variant="ghost">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            ) : null}
+            <BrandMark />
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight">
+                <TitleWithSerifTail>{pageTitle[page]}</TitleWithSerifTail>
+              </h1>
+              <p className="truncate text-xs text-muted-foreground">{status}</p>
+            </div>
           </div>
           {busy ? (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1533,6 +1595,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
         {busyAction === 'plan' ? (
           <ProgressPanel onCancel={cancelClassification} progress={classificationProgress} />
         ) : null}
+        <Separator className="mt-3" />
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2">
@@ -1567,7 +1630,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
           <DialogHeader>
             <DialogTitle>确认移动真实 Chrome 书签？</DialogTitle>
             <DialogDescription>
-              将移动 {selectedCount} 个书签。ShuHai
+              将移动 <MetricNumber>{selectedCount}</MetricNumber> 个书签。ShuHai
               会先备份并支持撤销，但这一步会实际修改当前浏览器书签。
             </DialogDescription>
           </DialogHeader>

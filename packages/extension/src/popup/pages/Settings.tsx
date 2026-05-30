@@ -39,6 +39,7 @@ import {
 import { Input } from '../../components/ui/input.js';
 import { Label } from '../../components/ui/label.js';
 import { ScrollArea } from '../../components/ui/scroll-area.js';
+import { Separator } from '../../components/ui/separator.js';
 import {
   Select,
   SelectContent,
@@ -267,7 +268,7 @@ export default function Settings({
       onOpenChange={(open) => setOpenSections((current) => ({ ...current, [id]: open }))}
       open={Boolean(openSections[id])}
     >
-      <Card>
+      <Card variant="outline">
         <CollapsibleTrigger asChild>
           <button className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left">
             <div className="min-w-0">
@@ -278,7 +279,8 @@ export default function Settings({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <CardContent className="border-t border-border pt-3">{content}</CardContent>
+          <Separator />
+          <CardContent className="pt-3">{content}</CardContent>
         </CollapsibleContent>
       </Card>
     </Collapsible>
@@ -293,7 +295,7 @@ export default function Settings({
         <ScrollArea className="min-h-0 flex-1 pr-2">
           <div className="space-y-3">
             {setupIncomplete ? (
-              <Card className="border-primary/40 bg-primary/5">
+              <Card className="border-primary/30 bg-primary/5" variant="outline">
                 <CardHeader className="pb-2">
                   <CardTitle>开始使用 ShuHai</CardTitle>
                 </CardHeader>
@@ -317,7 +319,7 @@ export default function Settings({
               </Card>
             ) : null}
 
-            <Card>
+            <Card variant="outline">
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2">
                   <FolderOpen className="h-4 w-4 text-primary" />
@@ -363,7 +365,7 @@ export default function Settings({
               </CardContent>
             </Card>
 
-            <Card>
+            <Card variant="outline">
               <CardHeader className="pb-2">
                 <CardTitle>AI 服务商</CardTitle>
               </CardHeader>
