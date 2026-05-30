@@ -171,7 +171,7 @@ export default function MarkdownTemplateEditor({
         <div className="space-y-1.5">
           <Label>Frontmatter</Label>
           <textarea
-            className="min-h-28 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm outline-none focus:ring-2 focus:ring-ring"
+            className="min-h-28 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
             onChange={(event) => updateTemplate({ frontmatter: event.target.value })}
             rows={7}
             spellCheck={false}
@@ -182,7 +182,7 @@ export default function MarkdownTemplateEditor({
         <div className="space-y-1.5">
           <Label>正文模板</Label>
           <textarea
-            className="min-h-36 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs shadow-sm outline-none focus:ring-2 focus:ring-ring"
+            className="min-h-36 w-full resize-y rounded-md border border-input bg-card px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
             onChange={(event) => updateTemplate({ body: event.target.value })}
             rows={8}
             spellCheck={false}

@@ -16,7 +16,7 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 ' +
-            '-translate-y-1/2 rounded-lg border border-border bg-popover p-4 shadow-lg',
+            '-translate-y-1/2 rounded-lg border border-border bg-popover p-4',
           className,
         )}
         {...props}
@@ -25,10 +25,7 @@ export function DialogContent({
   );
 }
 
-export function DialogHeader({
-  className,
-  ...props
-}: ComponentPropsWithoutRef<'div'>) {
+export function DialogHeader({ className, ...props }: ComponentPropsWithoutRef<'div'>) {
   return <div className={cn('flex flex-col gap-1.5', className)} {...props} />;
 }
 
@@ -51,9 +48,6 @@ export function DialogDescription({
   );
 }
 
-export function DialogFooter({
-  className,
-  ...props
-}: ComponentPropsWithoutRef<'div'>) {
+export function DialogFooter({ className, ...props }: ComponentPropsWithoutRef<'div'>) {
   return <div className={cn('mt-4 flex justify-end gap-2', className)} {...props} />;
 }

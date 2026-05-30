@@ -14,18 +14,18 @@ interface ErrorRecoveryProps {
 
 function iconForError(code: StructuredError['code']) {
   if (code.startsWith('AI_KEY')) {
-    return <KeyRound className="h-4 w-4 text-amber-400" />;
+    return <KeyRound className="h-4 w-4 text-accent" />;
   }
 
   if (code.startsWith('VAULT')) {
-    return <FolderOpen className="h-4 w-4 text-amber-400" />;
+    return <FolderOpen className="h-4 w-4 text-accent" />;
   }
 
   if (code.includes('NETWORK') || code.includes('TIMEOUT') || code === 'HEALTH_ABORTED') {
-    return <Network className="h-4 w-4 text-amber-400" />;
+    return <Network className="h-4 w-4 text-accent" />;
   }
 
-  return <AlertTriangle className="h-4 w-4 text-amber-400" />;
+  return <AlertTriangle className="h-4 w-4 text-accent" />;
 }
 
 export function ErrorRecovery({
@@ -55,7 +55,7 @@ export function ErrorRecovery({
   };
 
   return (
-    <Card className="border-amber-800 bg-amber-950/30">
+    <Card className="border border-accent/25 bg-accent-soft" variant="outline">
       <CardContent className="space-y-3 p-3">
         <div className="flex items-start gap-2">
           {iconForError(error.code)}
@@ -63,7 +63,7 @@ export function ErrorRecovery({
             <div className="text-sm font-medium">{error.message}</div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{error.suggestion}</p>
             {error.details ? (
-              <p className="mt-1 break-words text-[11px] text-amber-200/80">{error.details}</p>
+              <p className="mt-1 break-words text-[11px] text-accent">{error.details}</p>
             ) : null}
           </div>
           {onDismiss ? (

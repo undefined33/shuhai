@@ -73,6 +73,10 @@ function captureAuthorLine(capture: CapturedContent): string {
   return [capture.author, capture.handle].filter(Boolean).join(' ');
 }
 
+function MetricNumber({ children }: { children: number | string }) {
+  return <span className="font-serif tabular-nums text-foreground">{children}</span>;
+}
+
 async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
@@ -234,7 +238,7 @@ export default function InlineSavePanel({
   }
 
   return (
-    <Card className={prominent ? 'bg-primary/5' : 'bg-card/70'} variant="soft">
+    <Card className={prominent ? 'bg-primary/5' : 'bg-transparent'} variant="soft">
       <CardContent className="space-y-4 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -243,13 +247,13 @@ export default function InlineSavePanel({
               提取正文，检查后写入 Obsidian Vault。
             </p>
           </div>
-          {capture ? <Badge variant="success">已提取</Badge> : null}
+          {capture ? <Badge variant="accent">已提取</Badge> : null}
         </div>
 
         {savedPath ? (
-          <div className="animate-soft-rise rounded-lg border border-primary/30 bg-primary/10 p-3">
+          <div className="animate-soft-rise rounded-lg border border-accent/25 bg-accent-soft p-3">
             <div className="flex items-start gap-3">
-              <CheckCircle2 className="animate-check-pop mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <CheckCircle2 className="animate-check-pop mt-0.5 h-5 w-5 shrink-0 text-accent" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">已保存到 Vault</p>
                 <p className="mt-1 truncate text-xs text-muted-foreground">{savedPath}</p>
@@ -307,13 +311,16 @@ export default function InlineSavePanel({
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <div className="min-w-0 flex-1 truncate text-sm font-medium">{capture.title}</div>
-                <Badge variant="outline">{sourceLabel(capture.source)}</Badge>
               </div>
               <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                 <span>{capture.siteName ?? hostFromUrl(capture.url)}</span>
                 {captureAuthorLine(capture) ? <span>{captureAuthorLine(capture)}</span> : null}
-                <span>{capture.wordCount ?? 0} 字</span>
-                <span>{capture.media.length} 媒体</span>
+                <span>
+                  <MetricNumber>{capture.wordCount ?? 0}</MetricNumber> 字
+                </span>
+                <span>
+                  <MetricNumber>{capture.media.length}</MetricNumber> 媒体
+                </span>
               </div>
             </div>
 

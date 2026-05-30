@@ -88,7 +88,7 @@ function highlightedText(value: string, keyword: string) {
   return (
     <>
       {value.slice(0, index)}
-      <mark className="rounded bg-amber-200 px-0.5 text-amber-950">
+      <mark className="rounded bg-accent-soft px-0.5 text-accent">
         {value.slice(index, index + keyword.length)}
       </mark>
       {value.slice(index + keyword.length)}

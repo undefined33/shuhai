@@ -4,13 +4,13 @@ import { X } from 'lucide-react';
 import { cn } from '../../lib/utils.js';
 import { Button } from './button.js';
 
-const alertVariants = cva('rounded-lg border p-3 text-sm shadow-sm', {
+const alertVariants = cva('rounded-lg border p-3 text-sm', {
   variants: {
     variant: {
       default: 'border-border bg-card text-card-foreground',
-      success: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
-      warning: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200',
-      destructive: 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200',
+      success: 'border-primary/20 bg-primary/10 text-primary',
+      warning: 'border-accent/25 bg-accent-soft text-accent',
+      destructive: 'border-destructive/25 bg-destructive/10 text-destructive',
     },
   },
   defaultVariants: {
@@ -18,9 +18,7 @@ const alertVariants = cva('rounded-lg border p-3 text-sm shadow-sm', {
   },
 });
 
-interface AlertProps
-  extends HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof alertVariants> {
+interface AlertProps extends HTMLAttributes<HTMLDivElement>, VariantProps<typeof alertVariants> {
   onClose?: () => void;
 }
 

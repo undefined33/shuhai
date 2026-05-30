@@ -2,17 +2,18 @@ import type { HTMLAttributes } from 'react';
 import { cn } from '../../lib/utils.js';
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
-  variant?: 'default' | 'flat' | 'soft';
+  variant?: 'default' | 'flat' | 'soft' | 'outline';
 }
 
-export function Card({ className, variant = 'default', ...props }: CardProps) {
+export function Card({ className, variant = 'flat', ...props }: CardProps) {
   return (
     <div
       className={cn(
         'rounded-lg text-card-foreground',
-        variant === 'default' && 'border border-border bg-card shadow-sm',
+        variant === 'default' && 'bg-card shadow-none',
         variant === 'flat' && 'bg-transparent shadow-none',
-        variant === 'soft' && 'bg-card/70 shadow-none',
+        variant === 'soft' && 'bg-accent-soft shadow-none',
+        variant === 'outline' && 'border border-border bg-card shadow-none',
         className,
       )}
       {...props}
