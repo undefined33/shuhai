@@ -219,3 +219,38 @@ reviewer 独立复跑相关 43/43 测试、精确 ESLint、extension typecheck �
 ### 13.5 043A verdict
 
 最终 verdict：`043A PASS`。Heisenberg 已在最终 actual-diff 复审中确认 P0/P1/P2 均为 0；335 项测试、coverage、完整质量门禁、production audit 0 和第四次全新离线 fixture Chrome E2E 均通过。该结论只授权精确 stage、追加 commit、普通 push、等待 Node 20 CI，以及随后起草 043B v2 合同；不授权生产接线或真实 X 操作。候选仍不证明真实 X selector、登录状态、平台风控、生产 message binding 或真实 Vault 用户旅程，整个 Goal 043 保持 `BLOCKED_BY_REAL_X_EVIDENCE`。
+
+## 14. 043B v2 实施合同独立复审
+
+043B 合同基于提交 `5acdcc7` 后的实际 manifest、service worker、Popup/Side Panel、Vault permission、sync schema/store/coordinator 重新起草，没有把 043A fixture 假设直接当作生产入口事实。复审期间没有修改生产代码、启动浏览器、访问真实 X/Vault、读取用户 profile 或执行安装/进程/端口操作。
+
+### 14.1 首轮 findings
+
+独立 reviewer Gibbs (`019f5ca8-5c9e-7901-b5b7-70ce22aa3270`) 首轮给出 `FAIL`，P0 none：
+
+- P1：不可恢复 pause 没有持久 cancel，active source 可能永久阻塞下一任务。
+- P1：manifest 对 X/Twitter 常驻 host 权限和静态 content script 与 v4 首次最小授权/撤销边界冲突。
+- P2：全部 excluded 仍会落入 Vault 流程，缺少无需目录权限的 no-write completion。
+- P2：catalog classify 与 candidate/checkpoint persistence 分离，存在 TOCTOU 和计数不可证明问题。
+
+独立 reviewer Helmholtz (`019f5cb3-8157-7eb3-a5be-64da95e458d8`) 聚焦算法/迁移复审也给出 `FAIL`，P0 none：
+
+- P1：现有 store API 不能在事务内证明 exact-existing/replay 的 accepted counts/bytes，解除 50 candidate cap 后可能低报其它安全预算。
+- P1：DB2 -> DB3 upgrade 已提交后的 reopen/layout validation 失败无法回滚到 DB2，原合同的原子回滚表述不成立。
+- P2：缺少 50+ existing 仍触发 node/time/byte budget、same-job replay 计费和零 candidate 计数持久化的直接测试。
+- P2：新 finalize/no-write transaction 必须明确只能经专用 revision/stop/item/intent guard 到达，不能由通用 transition 绕过。
+
+### 14.2 修订与最终 verdict
+
+合同修订加入：
+
+- 从必需权限和静态 content script 移除 X/Twitter，首次只申请精确 X host permission，支持撤销；旧单条推文右键提取仅在用户动作下使用 `activeTab` 动态注入。
+- 单事务 `classifyAndPersistScanBatch`，由 store 内部重算 catalog classification、candidate/error/known counts、accepted bytes 和全部预算。
+- 持久化 `cancelJob/abandonWriteJob`，pre-write 可安全释放 active source，post-write 必须 reconcile 且保留实际 outcomes。
+- `completeReviewWithoutWrites`，零候选或全部 excluded 不请求 Vault permission。
+- DB upgrade transaction 失败保留 DB2；提交后 reopen validation 失败则 DB3 fail-closed，不伪造回滚。
+- 对权限、预算、取消、no-write、迁移和 reload 的直接自动化/真实 QA 合同。
+
+Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gibbs 第二轮发现一个新的 P1：包含 `classification=error` 的全 excluded job 既不能诚实 `complete`，也不能进入要求写授权的 `partial`。最终合同增加无写盘 terminal `complete_with_issues`、持久化 `classificationErrorCount`、active-source 释放、UI/reload 语义和专项测试；Gibbs 第三轮给出 `PASS`。
+
+最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。当前只进入 `CONTRACT_PASS_WAITING_MANUAL_GATE`：用户必须在全新项目隔离 Chrome profile 中手动登录专用/测试 X 账号并确认 10-candidate probe 与 disposable Vault 边界，之后才能把生产实现正式置为 `READY/IN_PROGRESS`。

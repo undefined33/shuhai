@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前没有可继续实施的生产 Goal。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。043A 最终修复关闭了 invocation deadline 的迟到事务竞态、adapter 节点低报和 fixture 网络证据夸大问题；335 项测试、完整门禁、依赖审计、全新离线 Chrome fixture E2E 和独立 actual-diff review 均通过。它没有访问真实 X、真实 Vault 或用户 profile，也没有修改 manifest、service worker、content script 或 UI。整个 Goal 043 继续保持 `BLOCKED_BY_REAL_X_EVIDENCE`，当前只允许起草并复审 043B v2 合同。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前没有可继续实施的生产 Goal。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。043A 最终修复关闭了 invocation deadline 的迟到事务竞态、adapter 节点低报和 fixture 网络证据夸大问题；335 项测试、完整门禁、依赖审计、全新离线 Chrome fixture E2E 和独立 actual-diff review 均通过。它没有访问真实 X、真实 Vault 或用户 profile，也没有修改 manifest、service worker、content script 或 UI。043B v2 合同已完成两位独立 reviewer 的多轮复审并最终 `PASS`，关闭最小可撤销 X 权限、单事务预算计数、持久取消、无写盘终态和 DB3 fail-closed 等缺口。整个 Goal 043 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`，当前状态是 `CONTRACT_PASS_WAITING_MANUAL_GATE`；用户完成人工隔离账号门禁前不得修改生产入口。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -75,13 +75,13 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET`    | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                       | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                       | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `BLOCKED_BY_REAL_X_EVIDENCE` | 043A PASS；043B v2 合同尚未起草          |
+|    3 | Goal 043 | `BLOCKED_BY_REAL_X_EVIDENCE` | 043A/043B 合同 PASS；待人工隔离账号门禁  |
 |    4 | Goal 044 | `PLANNED`                    | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                    | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                    | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`              | 根据真实使用决定下一平台                 |
 
-用户已确认 v4 并授权连续完成 041-043。032-040 的旧队列仍停止自动编排；其中有价值的安全工作通过新 Goal 显式继承。
+用户已确认 v4；041/042 已完成，043 当前只完成 fixture 候选与生产合同。人工隔离账号门禁是不可代理的边界，未完成前不得把连续编排授权解释为可启动生产实现。032-040 的旧队列仍停止自动编排；其中有价值的安全工作通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -105,10 +105,11 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 基于实际入口代码起草 043B v2：精确 sender/tab/frame/host/job 绑定、权限差异、回滚、真实 Chrome QA 和文件 allowlist。
-2. 对 v2 合同做独立只读复审；合同 `PASS` 前不得修改生产入口。
-3. 用户醒来后在全新的项目隔离 Chrome profile 中手动登录测试 X 账号并确认扫描上限；agent 不读取密码、验证码、Cookie、localStorage token 或 Authorization。
-4. 真实 Chrome 仍只使用本机已安装浏览器，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
+1. 用户醒来后在当前 Goal worktree 下新建 Git ignored 的隔离 Chrome profile，并由用户本人手动登录专用/测试 X 账号；agent 不读取密码、验证码、Cookie、localStorage token 或 Authorization。
+2. 用户确认首次 `incremental + maxCandidates=10` probe 不写 Vault；遇 CAPTCHA、429、账号限制或 selector 不确定立即停止。
+3. 人工门禁完成后，才把 043B 生产实现正式置为唯一 `READY/IN_PROGRESS` Goal，并严格按 v2 文件 allowlist 实施。
+4. probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
+5. 真实 Chrome 只使用本机已安装浏览器，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
 
 ## 10. 当前文档
 

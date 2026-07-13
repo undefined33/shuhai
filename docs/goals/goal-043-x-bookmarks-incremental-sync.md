@@ -2,7 +2,7 @@
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
 status: BLOCKED_BY_REAL_X_EVIDENCE
-version: 1
+version: 2
 updated: 2026-07-14
 depends_on: [goal-041, goal-042]
 branch: codex/social-sync-v4
@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。整个 Goal 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前 v1 不授权 manifest、UI、service worker、真实 X 或生产接线。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。整个 Goal 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`；用户完成隔离账号人工门禁前，仍不授权生产接线或真实 X 操作。
 
 ## 1. 用户问题
 
@@ -87,14 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 必须先把实际代码事实、准确文件 allowlist、权限变化、测试账号和回滚写入 Goal v2，并再次独立 review。至少需要：
-
-- 本机已安装 Chrome 的项目隔离验证。
-- 专用测试账号或用户明确指定的测试页；不默认扫描主收藏库。
-- sender/tab/frame/host/job 绑定与运行时 message schema。
-- 最小 manifest/content/background/surface 接线和一条真实用户旅程。
-
-没有 v2 精确授权时，043A 实现者不得提前修改这些入口文件。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `CONTRACT_PASS_WAITING_MANUAL_GATE`：合同只授权后续精确实现范围，不等于已经把生产 Goal 置为 `READY/IN_PROGRESS`。用户尚未在新隔离 Chrome profile 手动登录专用/测试 X 账号并确认 probe/Vault 边界，因此不得提前修改任何生产入口文件。
 
 ## 4. 043A 数据与行为合同
 
@@ -343,11 +336,352 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 
 整个 Goal 只有在 043B 真实 Chrome 旅程与最小接线也独立通过后才能 `DONE`。043A 通过但缺真实证据时必须写成 `BLOCKED_BY_REAL_X_EVIDENCE` 或等价明确状态。
 
-## 12. STOP 条件
+## 12. 043A STOP 条件
 
 - 需要 Cookie、token、private GraphQL、MAIN world、任意 fetch、CAPTCHA/429 绕过或后台静默浏览。
 - 需要扫描用户主收藏库作为首次证明，或需要把私人正文/URL写入 repo、日志、截图或 agent 上下文。
-- 需要 manifest/UI/service worker/content/shared/desktop 等 v1 allowlist 外修改。
+- 需要 manifest/UI/service worker/content/shared/desktop 等 043A allowlist 外修改。
 - 工具链精确版本、license、engines、install script、audit 或 lockfile delta 无法证明。
 - 需要下载浏览器、复制日常 Chrome profile、杀未知进程、释放未知端口、操作 Docker 或执行危险命令。
 - 无法持久化 stop reason、精确选择/revision，或无法保持 Goal 042 的幂等/partial/Vault 安全语义。
+
+## 13. 043B v2 实施合同
+
+### 13.1 当前入口事实与权限结论
+
+本合同基于当前提交 `5acdcc7` 的实际代码，而不是旧路线假设：
+
+- `manifest.json` 当前把 `https://x.com/*`、`https://twitter.com/*` 放在必需 `host_permissions`，并静态注入 `content/twitter.js`；这与 v4“首次使用时按平台请求最小站点权限、可撤销”的产品边界冲突。043B 必须执行第 13.2 节限定的权限迁移，不能把现状误写成最终权限模型。
+- `vite.config.ts` 尚未构建 `content/x-bookmarks.js`，必须增加一个独立 build entry。
+- `service-worker.ts` 的旧 `onMessage` 把 TypeScript `ExtensionRequest` 当作运行时验证并忽略 `MessageSender`；043B 只能给新的 X 协议增加 strict runtime route 和 sender 校验，不借机重写全部旧消息。
+- Popup 和 Side Panel 当前共用大型 `App.tsx`，且旧页面偏好使用持久化 `chrome.storage.local`。043B 只增加 X 上下文入口和单任务工作台；X 启动意图必须使用有 TTL、消费一次的 `chrome.storage.session`，不能复用旧持久化 page preference。
+- Vault handle 已由 `utils/vault-writer.ts` 存在 IndexedDB。目录选择和权限请求需要 Side Panel 中的真实用户点击；service worker 不请求文件权限、不接收 handle，也不直接写 Vault。
+- 043A 当前把同 job replay 当作 known frontier，并让 catalog-existing 条目占用 50 条 job ceiling；这会使第二批历史导入停在最上方，且 budget pause 没有合法进入复核的用户动作。043B 必须先修复第 13.3 节的领域语义，再接生产 UI。
+
+`packages/extension/manifest.json` 只允许一个可审计的最小权限迁移：从必需 `host_permissions` 删除 X/Twitter 两项，并删除 X/Twitter 的静态 `content_scripts` 条目；保留既有 `optional_host_permissions`、Weibo 条目和其它字段不变。043B 不新增 named permission、CSP、web-accessible resource 或更宽 host。除该精确差异外，任何 manifest 变化都立即 STOP 并重新做权限与 Web Store 隐私审查。
+
+2026-07-14 重新核对的官方 API 依据：[`permissions.request/remove` 的运行时可选 host 权限](https://developer.chrome.com/docs/extensions/reference/api/permissions)、[`scripting.executeScript` 的 host/`activeTab` 前置条件与 `InjectionResult.documentId/frameId`](https://developer.chrome.com/docs/extensions/reference/api/scripting)、[`tabs.sendMessage` 的 `documentId/frameId` 定向发送](https://developer.chrome.com/docs/extensions/reference/api/tabs)、[内存态且默认不暴露给 content script 的 `storage.session`](https://developer.chrome.com/docs/extensions/reference/api/storage)、[必须由用户动作触发的 `sidePanel.open`](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)与[需要用户手势的 File System permission request](https://developer.chrome.com/docs/capabilities/web-apis/file-system-access)。这些资料只证明 API 能力；本机 Chrome 的实际 sender 字段、权限提示和用户手势传播仍必须由 fixture/真实 QA 验证。
+
+### 13.2 用户旅程与两个明确模式
+
+#### 日常模式：检查新增收藏
+
+1. 用户位于精确 `https://x.com/i/bookmarks`，点击 Popup 唯一主动作 `同步新增收藏`。
+2. service worker 重新查询同一窗口的当前 active tab；Popup 提供的 URL、tab ID 或页面文本均不是授权依据。
+3. Side Panel 显示 `检查新增收藏`、固定本次候选上限、Vault 状态与“只读取当前收藏页，不读取 Cookie/token”的短说明。
+4. 若尚未授权，preflight 只显示 `允许读取 X 收藏页`；Side Panel 在这个真实 click handler 中直接调用 `chrome.permissions.request({ origins: ['https://x.com/*'] })`，不经 runtime message 转发用户手势。拒绝或异常保持 preflight，不创建 job、不注入脚本、不读取 DOM。
+5. 授权后用户点击开始，从页面顶部做受预算扫描；连续命中 20 个 catalog exact-existing ID 时，本次增量扫描可结束为 `known_frontier`。
+6. 结果默认只选择 `new`，并明确标记 `summary_only`；用户再次确认后才写 Vault。
+
+#### 历史模式：继续导入更早收藏
+
+1. 用户在 Side Panel 显式选择 `继续导入更早收藏`；它不是隐藏自动分页，也不与日常模式混用。
+2. 新 backfill job 不因 catalog-existing frontier 自动停止，exact-existing 项不占 50 条候选上限。
+3. backfill 从当前 X 收藏页位置继续向下；同一 document 的 pause/resume 不强制滚回顶部。页面 reload、SPA document 变化或用户回到顶部后会重新经过已入库项，但仍不得重复写入。
+4. 每个 job 最多收集 50 个需要复核的候选。达到上限时文案只能是 `本批达到上限，仍可能有更早收藏`；用户可选择 `使用本批结果`，写完后再启动下一批。
+5. 只有 adapter 观察到并通过真实页面证据证明的明确 end-of-feed marker，才能显示 `已到收藏列表末尾`。known frontier、时间、节点、批次或 50 条预算都不能宣称“全部同步完成”。
+
+`scanMode` 在 job 创建时固定为 `incremental | backfill`，写入 IndexedDB 后不可更改。service worker 重启或 Side Panel 重开时必须从 job 读取模式，不能依靠内存或让 resume 暗中换模式。
+
+#### 平台权限生命周期
+
+- X 同步只请求精确 `https://x.com/*`，不请求 `https://twitter.com/*`、全网 HTTP/S 或其它平台；manifest 中较宽的既有 optional declaration 只是可申请上限，不是实际授权。
+- Side Panel preflight/result 提供 `撤销 X 访问权限`。无 active X job 时可在用户 click handler 中直接调用 `chrome.permissions.remove({ origins: ['https://x.com/*'] })`，同样不经 runtime message；有 pre-writing job 时必须先走显式取消并确认终态，有 pending write intent 或 writing/partial reconciliation 时拒绝撤销并引导先完成恢复。
+- 权限被 Chrome 外部撤销时，扫描在下一次 tab/permission 校验暂停为 `permission_revoked/scanning`；复核数据保留。Vault 写权限与 X host 权限彼此独立，不能借一个权限推导另一个。
+- 删除静态 X/Twitter content script 后，既有单条推文右键提取仍只在用户点击 context menu 时依靠 `activeTab` 动态注入既有 `content/twitter.js`。043B 不修改 `twitter.ts`，但必须增加 manifest/service-worker 回归测试，证明没有常驻 X DOM 读取且右键单条保存仍可用。
+
+### 13.3 扫描状态机、预算与 IndexedDB v3
+
+043B 必须把 IndexedDB 从 2 原子升级到 3。全局 `SYNC_SCHEMA_VERSION=1` 继续保持不变，因为它参与 SocialItem、content hash、Vault frontmatter 和 catalog identity；不得为了 job 字段变化导致所有既有内容被误判 changed。DB v3 以 job/checkpoint 的新 `contractVersion: 2` 区分持久化合同。
+
+新增持久化语义：
+
+- job：`contractVersion: 2`、`scanMode`、可选 `scanCompletion`；job status 新增无写盘终态 `complete_with_issues`。
+- `scanCompletion` 只允许 `trusted_terminal | known_frontier | user_finalized_batch | legacy_migrated`。
+- checkpoint：`contractVersion: 2`、`candidateCount`、`classificationErrorCount`、`catalogExistingObservationCount`；保留既有 `acceptedCount/acceptedBytes/scannedCount/consecutiveKnownIds`。
+- `scannedCount` 计 adapter 返回的受界 item observations；`acceptedCount` 计通过 item schema 和稳定身份一致性检查的 observations，二者都允许因顶部重扫增加，不能当作全局唯一数。跨会话唯一候选仍只看 job items/catalog。
+- `acceptedBytes` 对所有已解析 adapter 输出计费，包括 catalog-existing 和同 job replay，不能因“不写入”绕过 16 MiB 安全预算。
+- `candidateCount` 只计需要持久化复核的 `new/changed/incomplete/error` 唯一条目；exact `existing` 不创建新的 job item、不占 `budgets.maxItems=50`。
+- `catalogExistingObservationCount` 是受预算的观察次数，不冒充全局唯一收藏数；UI 文案使用 `已跳过的已入库观察`。
+- `classificationErrorCount` 只计当前 job 中唯一 `classification=error` candidate rows，必须与 item store 实际行一致；它不能因用户 excluded 而归零。
+- `consecutiveKnownIds` 只由 authoritative catalog exact-existing classification 增加；same-job replay、changed、incomplete、error 或 new 必须重置为 0，不能制造假 frontier。
+
+批次顺序固定为：
+
+```text
+strict parse adapter response
+-> charge observed node / elapsed / byte budgets
+-> reject conflicting same-job replay
+-> classify + split + persist in one readwrite transaction under the invocation deadline
+-> only then request/scroll next batch
+```
+
+每次 content batch 的 raw item 数受剩余 candidate slots 和节点预算共同限制，但 catalog-existing raw items不减少下一批的 candidate slots。调用方不能把 50 candidates、20 batches、200 observed nodes、15 秒、16 MiB 或 20 known frontier 放大；真实 QA 首次 probe 进一步收紧为 10 candidates。
+
+043B 用专用 `classifyAndPersistScanBatch` 替换当前“coordinator 先查 catalog、再调用 `putScanBatch`”的分离路径。该 API 接收 expected job/scan revision、strict-parsed observation 列表、adapter observed-node delta、调用级 deadline/abort guard，而不接受调用方预先算好的 `existing/candidate` 总数或任意 checkpoint。它必须在同一个 `jobs + items + records` readwrite transaction 中：
+
+1. 重新校验 job、lease/revision、mode、旧 checkpoint、每个 observation 的稳定 identity 和 canonical UTF-8 byte length。
+2. 对每个 observation 查询 authoritative catalog，并检查同 job replay 是否同 identity/hash；冲突整批 abort。
+3. 在 transaction 内计算 exact-existing、same-job replay、candidate、known-frontier、`acceptedCount`、`acceptedBytes` 和 `catalogExistingObservationCount` 增量。exact-existing 与 replay 都计 accepted/byte/node/time 安全预算，即使不创建 item row；调用方不能传 scalar 声称少计。
+4. 只给唯一 `new/changed/incomplete/error` 写 candidate row；exact-existing 不写新 row、不消耗 candidate slot；same-job replay 不增加 `candidateCount`，且必须把 `consecutiveKnownIds` 重置为 0。
+5. 校验 batch 前后所有计数、50/200/15s/16MiB/known-frontier 上限、`candidateCount ===` 可复核唯一 item 数及 `classificationErrorCount ===` 唯一 error item 数，再原子写 candidates、checkpoint 和 job aggregates。deadline、abort、权限取消或任一 guard 在 commit 前失效时整批不提交。
+
+这样“越过顶部大量已入库项”只解除 50 条候选上限，不解除节点、时间和字节预算；catalog 在查与写之间变化也不会产生 TOCTOU 分类。
+
+043A 的 `AdapterBatchRequest.jobAcceptedItems`/`acceptedItemsBefore` 不能继续作为 50 条停止依据；043B 将其替换为 coordinator 计算并持久化的 `jobCandidateItems/remainingCandidateSlots`。adapter 仍负责单批 raw output、节点、正文、媒体、时间和字节 ceiling，但不得把尚未 catalog 分类的 raw item 猜成 candidate。
+
+扫描完成与暂停转换：
+
+- 明确 end marker：`scanning -> ready_for_review`，`scanCompletion=trusted_terminal`。
+- incremental 连续 20 个 catalog exact-existing：`scanning -> ready_for_review`，`scanCompletion=known_frontier`。
+- `budget_exceeded` 或 `user_paused`：先持久化 `paused`。只有用户点击 `使用本批结果`，且当前 scan revision、stop reason、无 pending classification 和计数全部匹配时，新的 `finalizePausedScan` transaction 才能转为 `ready_for_review/user_finalized_batch`。
+- `login_required`、`rate_limited`、`structure_changed`、`no_progress`、`tab_changed`、`permission_revoked` 或 `worker_interrupted` 不能用 `使用本批结果` 绕过；必须恢复、重试或取消。
+- ready_for_review 在零候选或用户把全部候选设为 excluded 时，允许新的 `completeReviewWithoutWrites` transaction 以 expected review revision 原子保存 exact empty selection、把剩余 unreviewed 标为 excluded，并在确认无 intent/write result 后诚实结束。它不请求 Vault permission、不创建 write authorization。
+- 该 transaction 必须重算 item store：若 `classificationErrorCount=0`，终态为 `complete`；若 `classificationErrorCount>0`，终态必须为新的 `complete_with_issues`，并保留精确错误计数。两个终态都要求 `selectedCount=0`、所有 write count 为 0、无 intent/result、所有候选已 excluded 且 `scanCompletion` 已持久化；任何有选择或写入痕迹的 `complete` 仍必须绑定 review/write authorization。
+- `complete_with_issues` 是 terminal、释放 `activeSource`，但不代表同步成功、写入 partial 或到达 feed 末尾。schema 只允许上述 no-write 形态，禁止带 write authorization/intent/result；reload 后 UI 必须从持久化 job/items 恢复 `本次已结束，N 条提取或分类错误未保存`。
+
+取消不是 UI 本地隐藏，而是持久化领域操作：
+
+- 新增 strict `cancel` message 和专用 `cancelJob` transaction。`prepared`、`paused/scanning`、`ready_for_review` 可在 expected revision、无 unresolved batch、无 write authorization/intent/result 时取消；正在 scanning 时先设置同 invocation abort flag，coordinator 取得唯一终态权后再提交，不能由 UI 并发写第二个终态。
+- `paused/writing`、`writing` 或 `partial` 只有在先运行既有 reconcile、确认零 pending intent 后才能执行 `abandonWriteJob`；已产生的逐项 outcome、authorization 和 relative path 保留，结果明确显示“任务已停止，已有 N 条可能/已经写入”，不能伪装未写入或回滚文件。
+- cancel/abandon 都只把 job 置为 `cancelled` 并释放 `activeSource`，不删除 job/item/catalog/intent/result，不删除或覆盖 Vault 文件。stale revision、活跃 batch、pending intent 或未知结果必须拒绝取消。
+- 所有不可恢复扫描 pause 都提供 `取消本次任务`；因此用户可以安全释放 active X source 并重新开始，而不被永久卡在旧 job。
+
+v2 -> v3 migration 必须在一个 upgrade transaction 中完成：
+
+- 不删除 store、job、item、record、intent 或 catalog，不创建第二个数据库。
+- 旧 job 固定迁移为 `scanMode=incremental`；旧 scanning job 转为 `paused/worker_interrupted`。
+- `candidateCount` 与 `classificationErrorCount` 从旧 job item classification 计算，`catalogExistingObservationCount` 至少计入旧 `existing` rows；旧 review/writing/history job 使用 `scanCompletion=legacy_migrated`，UI 不声称已到列表末尾。
+- 旧 exact-existing item 可以作为历史 row 保留；新扫描不再创建此类 row。迁移不得重算 SocialItem hash、改 Vault 路径或重写 catalog identity。
+- upgrade transaction 内任一损坏 row、未知字段、预算超限、计数不一致或中途 abort 都必须 abort，数据库仍为 v2 且原数据保持可读；不得清库、猜测或部分迁移。
+- upgrade 已提交后若 reopen/layout validation 失败，数据库已经是 v3，不能谎称回滚到 v2。此时必须 fail closed：禁止继续创建/恢复/写入 job，保留原始数据库供诊断，并报告 `DB3_REOPEN_VALIDATION_FAILED`；只能用修复版本继续打开，不能删除数据库或执行破坏性 down migration。
+
+### 13.4 X runtime message 与 sender/tab/document 绑定
+
+新协议使用独立 discriminator `shuhai:x-sync:v1`，不把 TypeScript union 当验证。`x-sync-messages.ts` 必须在 Zod parse 前执行深度、节点、UTF-8 字节、plain-object、forbidden key、accessor/proxy/prototype 预算；request、response、port message 和 storage intent 全部 `strict`，unknown key fail closed。
+
+#### Extension UI -> service worker
+
+- 只接受 `sender.id === chrome.runtime.id`。
+- sender URL 必须是精确 extension origin 下的 `popup/index.html` 或 `sidepanel/index.html`；其它 extension page、content sender、外部 extension、缺失 URL 均拒绝。
+- launch、start、resume、pause、finalize、cancel、save-selection、complete-without-writes、authorize、get-state 分别使用窄 schema；UI 不得指定 adapter version、Vault path、canonical URL、job budget ceiling、content、catalog record 或 write outcome。X host permission 的 contains/request/remove 由 Side Panel 直接调用 Chrome API；service worker 在创建 job、每批注入和 resume 前仍独立 `permissions.contains`，不能信任 UI 声称已授权。
+- 长扫描使用专用 `shuhai:x-sync:v1` Port。`port.sender` 同样验证；同 source/job 同时只允许一个 invocation。pause 只设置当前 invocation 的受控 abort/pause flag，不并发写第二个终态 transaction。
+
+#### service worker -> content script
+
+- service worker 在用户动作后用 `chrome.scripting.executeScript` 只向 main frame、默认 `ISOLATED` world 注入 `content/x-bookmarks.js`。
+- injection result 必须得到 `frameId=0` 与非空 `documentId`；否则停止为 `structure_changed`。
+- 每个 scan revision 生成新的 cryptographic random nonce，并在内存中绑定 `jobId + scanRevision + tabId + windowId + frameId + documentId + exact URL + nonce`。
+- `chrome.tabs.sendMessage` 必须同时指定绑定的 `documentId` 和 `frameId=0`。content response 严格 echo protocol、job、revision、step、nonce 和 exact `location.href`；任一不匹配整批丢弃并暂停。
+- 每批前重新 `chrome.tabs.get/query` 校验 tab/window/active/exact URL；持久化前和终态转换前还必须向同一个 `documentId/frameId` 发送 strict nonce ping，证明响应对应 document 仍存活。导航、关闭、非 active tab、targeted ping failure 或 path 改变统一 fail closed 为 `tab_changed`。
+- service worker restart 不恢复内存 binding；启动时调用既有 interrupted recovery，把 scanning job 变为 `paused/worker_interrupted`，由用户重新绑定当前页。
+
+content script 只接受来自本扩展 service worker 的消息：`sender.id` 必须匹配且 `sender.tab` 必须为空；service worker 不是 document context，因此 Chrome 若省略 `sender.url/origin` 可以接受，但只要提供就必须匹配本扩展 origin/background URL。协议、nonce、job、revision 和预算全部 strict parse。页面脚本不能访问该 isolated-world listener，但 DOM 和 listener 输入仍按不可信处理。
+
+所有 X runtime 错误只记录枚举 code、phase、revision 和计数。禁止 console/storage/activity/telemetry 记录标题、正文、作者、source item ID、完整 URL、媒体 URL、DOM、selector 命中内容、Cookie、token、Authorization 或页面错误原文。
+
+### 13.5 一次性启动意图
+
+Popup 点击后创建 `chrome.storage.session` intent，固定 key、最大 1 KiB、TTL 60 秒、随机 nonce，并由 service worker 串行消费一次。intent 只包含 protocol、action、mode、server-revalidated window ID、created/expires time 和 nonce；不包含正文、URL、tab ID、Vault path 或账号信息。session storage 保持默认 access level，不暴露给 content script，并接受浏览器/扩展 reload 后自动清除。
+
+`chrome.sidePanel.open()` 必须在 Popup click handler 的同一用户手势中直接发起，前面不得 `await` intent/storage/tab 操作。intent 创建与 panel open 可以并发；Side Panel 只允许在 2 秒内按 nonce 做有限次数等待，超过即显示“启动已过期，请重试”，不能无限轮询或在没有 intent 时自行开始扫描。
+
+Side Panel 消费时 service worker 必须按 intent window 重新查询 active tab 并验证精确 URL。过期、重复消费、storage corruption、窗口消失或 tab 改变均删除/拒绝 intent，不降级读取旧 `chrome.storage.local` preference。Popup/Side Panel 打开失败只留下可过期 intent，不启动扫描。
+
+### 13.6 Content script DOM 与滚动合同
+
+- 只支持字符串完全等于 `https://x.com/i/bookmarks`；拒绝 twitter.com、子域、端口、query/hash 和其它 X path。
+- 不使用 MAIN world、page function、`eval`、inline remote code、fetch/XHR/WebSocket、Cookie API、localStorage/sessionStorage、private GraphQL、动态 query ID 或内置 bearer。
+- DOM reader 只把当前已渲染收藏 card 映射成 043A 的窄 observation port；不读取整页/整 card `innerHTML/outerHTML`，不保存 DOM snapshot，不把页面错误原文传回。
+- 选择器必须限于收藏列表容器、card、status permalink、明确正文/作者/媒体属性。登录、CAPTCHA、rate-limit 和 end marker 只从页面级受限节点判断，不能因为某条帖子正文出现相同文字而触发。
+- 每个 message 最多执行一次受界滚动和一次受界等待；不启动 interval、observer 常驻循环或后台监控。连续三批没有新 stable ID、没有明确 end marker 时返回 `no_progress`。
+- incremental start/resume 明确回到顶部；backfill 在同 document 继续当前页面位置。content script 不持久化像素、Element、Node 或页面对象，重复注入必须通过 isolated-world marker 保证只注册一个 listener，避免重复声明和多 listener 响应。
+- 所有媒体保持普通远程链接，不请求、不下载、不 embed。
+
+### 13.7 Side Panel、复核与 Vault 写入责任
+
+Side Panel 直接在用户上下文中完成 Vault permission 与写入，service worker 只负责扫描和持久化控制：
+
+1. Side Panel 从 store 读取当前 job/items；默认选择只能是 `classification=new`。
+2. 用户取消全部选择时，主动作变为 `结束本次，不写入`，调用 `completeReviewWithoutWrites`；不读取 Vault handle、不请求目录权限。无 classification error 时结果为 `complete`，有 error 时结果为 `complete_with_issues` 并显示未处理数量。
+3. 用户点击 `保存 N 条到 Vault` 后，先在该真实 click 中读取 handle 并调用现有 permission request。无 handle 或 denied 时保持 review 状态，不提前 authorize writing。
+4. permission granted 后，把 expected review revision 和 exact selected IDs 交给 service worker；store 先 `saveReviewSelection`，再以相同精确集合 `authorizeReviewSelection`。
+5. Side Panel 重新打开同一 `SyncStore`，使用现有 `createVaultSyncEngine` 串行写 selected items。service worker 不接收/克隆 handle，不生成第二套 writer。
+6. 每条写入前只读 query permission；若已撤销，在创建下一 intent 前原子暂停为 `permission_revoked/writing`。写入中途异常按现有逐文件 `error` commit，最终状态为 `partial`，不能伪成功。
+7. Side Panel 关闭或崩溃后，reopen 先 reconcile pending intents，再沿用同一 review revision 和同一 relative path 恢复；不得重新选择、覆盖或改路径。
+8. 对实际授权写入的 job，selected 全部得到 outcome 且无 write/classification error 才能 `complete`；否则 `partial`。`partial` 只表达已经进入写协议后的不完整结果，不能用于零选择/no-write。完成页显示 created/already_exists/skipped/error 的精确数量和实际 relative path，不显示“已保存”总 toast 代替逐项结果。
+
+`utils/vault-writer.ts` 只允许新增 query-only permission helper，并让既有 request helper复用它；不得改变默认不覆盖、路径校验、写锁、大小限制或旧导出公开行为。真实 QA 只使用工作区内一次性测试 Vault；用户真实 Vault 仍不在 043B 首次证据范围。
+
+### 13.8 最小 UI 合同
+
+- Popup 在精确 X bookmarks 页只显示一个上下文主动作、上次任务短状态和设置次入口，不加载书签树、健康记录、待入库队列或高级设置。
+- 点击主动作后打开 Side Panel；长任务不留在 420 x 600 Popup 中。
+- Side Panel `XSyncPage` 一次只展示 preflight、scanning、review、writing 或 result 中的一个阶段。preflight 显示 X 权限状态与最小读取范围；模式选择使用 segmented control；pause/cancel 是明确 icon+text action。
+- 正文 13-14 px，辅助文字至少 12 px；不新增卡片套卡片、11 px 重要信息、重复主按钮或装饰性视觉。
+- review 必须显示 new/existing observations/changed/incomplete/error 的真实数量，`summary_only` 可见；changed/incomplete/error 默认不可选。
+- budget、known frontier、trusted terminal、tab changed、login、rate-limit、permission revoked 和 partial 各有不同文案；不把它们折叠成一个 `失败` 或 `已完成`。
+- 任何 `complete/complete_with_issues/cancelled` 结果都依据持久化 `scanCompletion`、selection、classification errors 和 write outcomes 生成文案；普通 `complete` 不能自动显示“已同步全部收藏”，`complete_with_issues` 不能使用成功色或“全部处理”文案。
+- UI state 从 IndexedDB job 恢复，不依赖组件内数组保存选择、scan mode、revision 或完成依据。
+
+本 Goal 不重构普通页面 Popup、书签 Side Panel 或真正独立 Options Page；那仍属于 Goal 046。若接线要求大规模拆分 `App.tsx`，停止并另写 UI 重构 Goal。
+
+### 13.9 精确文件合同
+
+#### Task facts
+
+```text
+Task / Goal: Goal 043B X bookmarks production wiring and isolated real-Chrome QA
+Owner / Role: Implementer + independent Product/Security Reviewer + independent QA
+Base commit: 5acdcc7
+Branch: codex/social-sync-v4
+Absolute cwd: C:\Projects\ShuHai\.worktrees\social-sync-v4
+External network: fixture tests denied; real QA only X page network created by installed Chrome
+Real data: dedicated project Chrome profile and disposable test Vault only after user manual gate
+Risk: R1 implementation; R2 isolated Chrome/test Vault; user real Vault/profile remain forbidden
+```
+
+#### 允许修改生产文件
+
+- `packages/extension/manifest.json`（仅第 13.1 节的 X/Twitter 常驻权限迁移）
+- `packages/extension/src/social/sync-schema.ts`
+- `packages/extension/src/social/sync-store.ts`
+- `packages/extension/src/social/x-sync-coordinator.ts`
+- `packages/extension/src/social/adapters/types.ts`
+- `packages/extension/src/social/adapters/x-bookmarks.ts`
+- `packages/extension/src/social/x-sync-messages.ts`（new）
+- `packages/extension/src/social/x-sync-launch-intent.ts`（new）
+- `packages/extension/src/social/x-sync-runtime.ts`（new）
+- `packages/extension/src/content/x-bookmarks.ts`（new）
+- `packages/extension/src/background/service-worker.ts`
+- `packages/extension/src/utils/vault-writer.ts`（仅 query-only permission helper）
+- `packages/extension/src/popup/App.tsx`
+- `packages/extension/src/popup/pages/XSyncPage.tsx`（new）
+- `packages/extension/src/popup/pages/x-sync-ui-model.ts`（new）
+- `packages/extension/vite.config.ts`（仅增加 content build entry）
+
+#### 允许修改测试与证据文件
+
+- `packages/extension/tests/sync-schema.test.ts`
+- `packages/extension/tests/sync-store.test.ts`
+- `packages/extension/tests/x-bookmarks-adapter.test.ts`
+- `packages/extension/tests/x-sync-coordinator.test.ts`
+- `packages/extension/tests/x-sync-messages.test.ts`（new）
+- `packages/extension/tests/x-sync-launch-intent.test.ts`（new）
+- `packages/extension/tests/x-sync-runtime.test.ts`（new）
+- `packages/extension/tests/x-sync-service-worker.test.ts`（new）
+- `packages/extension/tests/x-sync-ui-model.test.ts`（new）
+- `packages/extension/tests/manifest.test.ts`（仅权限与静态注入回归）
+- `packages/extension/tests/vault-writer.test.ts`
+- `packages/extension/src/content/__tests__/x-bookmarks.test.ts`（new）
+- `packages/extension/e2e/x-bookmarks-fixture.spec.ts`
+- `packages/extension/e2e/x-bookmarks-extension-fixture.spec.ts`（new）
+- `docs/goals/goal-043-x-bookmarks-incremental-sync.md`
+- `docs/reviews/goal-043-x-bookmarks-incremental-sync-review.md`
+- `docs/goals/README.md`
+- `docs/PROJECT_STATUS.md`
+- `docs/workflows/README.md`
+
+#### 只读/禁止
+
+- `packages/extension/src/shared/bookmark-types.ts`、`packages/extension/src/content/twitter.ts`、旧普通网页/微博页面、Options、shared package 和 `packages/desktop/**` 均只读或禁止修改。
+- 不修改 package manifest、lockfile、CI 或依赖；043B 无新依赖。
+- 不修改 Goal 032 候选、其它 Goal、旧路线图和历史 spec。
+- allowlist 外文件需求、超出第 13.1 节的 manifest/permission 变化或第二套 DB/writer 需求立即 STOP 并回到合同 review。
+
+### 13.10 允许命令、Chrome 与真实数据门禁
+
+R0/R1 命令继续遵守第 8 节和 command-safety。所有 pnpm 命令固定使用：
+
+```text
+npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm-cache --registry=https://registry.npmjs.org/ --package=pnpm@10.34.5 -- pnpm ...
+```
+
+不得 install、更新 lock、运行 lifecycle、dev/watch/preview/clean、下载浏览器、操作 Docker、端口或非任务进程。build 中既有 dist 清理只属于已审查的构建产物行为，不授权任何手工递归删除。
+
+真实 Chrome 只有在以下人工门禁全部满足后才允许：
+
+1. 用户醒来后在当前 Goal worktree 下新建且 Git ignored 的 `.pnpm-store/goal-043/chrome-profile/real-<run-id>`，用本机已安装的 Chrome 启动；禁止 Chrome for Testing/Chromium 下载。
+2. 用户本人在该隔离 profile 手动登录专用/测试 X 账号；agent 不读取、转录或截图密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或日常 Chrome 数据。
+3. 首次只运行 `incremental + maxCandidates=10`，不授权 Vault 写入；遇 CAPTCHA、login challenge、429、账号限制、selector 不确定或私人主收藏库风险立即 STOP。
+4. probe 通过后，用户再明确确认一个位于 worktree `.pnpm-store/goal-043/test-vault/<run-id>` 的新 disposable Vault，并在目录选择器中手动授权。首次只选择 1-3 条；不使用真实 Obsidian Vault。
+5. 任务只关闭它亲自启动且 PID/profile/cwd 可证明的 Chrome；不按名称结束 Chrome，不关闭用户日常窗口。profile 与 test Vault 默认保留并报告，不为“清理”递归删除。
+
+真实 X 必然有平台网络，QA 不宣称 Chrome 进程零网络。证据只证明扩展代码没有 fetch/private API/credential 路径；不抓 HAR、trace、DOM snapshot 或网络 Authorization。
+
+### 13.11 测试与 QA 证据
+
+#### 单元/集成
+
+- DB2 -> DB3 成功、upgrade transaction abort 后仍可读 v2、post-commit reopen validation fail-closed、旧 active/terminal job、legacy existing row、未知字段、宽容器、计数和原子性。
+- `classifyAndPersistScanBatch` 的 catalog/classification/candidate/checkpoint 单事务、catalog TOCTOU、commit 前 deadline/abort、整批 rollback 和 stale revision。
+- incremental/backfill、catalog existing 不占 candidate cap、same-job replay 不增加 known frontier、20 known stop、50 candidates 后下一 job 能越过顶部 existing 到第 51 条新内容。
+- 50+ exact-existing 仍触发 node/time/byte budget；same-job replay 增加 scanned/accepted/bytes 且重置 known；零 candidate 时 existing observation counts/bytes 仍原子持久化，不能由 coordinator 低报 scalar 绕过。
+- budget/user pause 显式 finalize；其它 stop reason 拒绝 finalize；零候选及全部 excluded 的 no-write completion 均不请求 Vault permission。无 classification error 得到 `complete`，有 error 得到 `complete_with_issues`；计数、active-source 释放和 close/reopen UI 恢复必须一致。
+- scanning cancel race、paused/ready cancel、post-write reconcile 后 abandon、pending intent/stale revision 拒绝取消，并证明 cancelled job 释放 active source 且不删除历史或文件。
+- runtime message forbidden keys/getter/proxy/prototype/oversize/depth/node/unknown key、UI/content sender spoof、nonce/job/revision/document mismatch。
+- one-shot intent TTL、重复消费、并发消费、session corruption、window/tab change。
+- user pause race、重复 start/resume、service worker interrupted recovery、content duplicate injection、三批 no progress、页面级 challenge 与帖子正文伪 challenge。
+- Vault permission denied/revoked、sidepanel close、pending intent reconcile、1-3 条 partial、重复写和 no overwrite。
+- manifest 不再常驻授予/注入 X/Twitter；X exact optional permission request/deny/contains/remove、active job 撤销保护，以及 context-menu `activeTab` 动态单条推文提取回归。
+
+#### 离线 extension fixture E2E
+
+- 使用本机已安装 Chrome、全新项目 profile和实际 `dist` extension。
+- Playwright route 在精确 `https://x.com/i/bookmarks` 提供脱敏 fixture，context offline，禁止 fixture 远程请求；不加载真实 X。
+- 从 Popup 唯一动作打开 Side Panel，完整走 request exact X permission -> start -> pause/resume -> review -> all-excluded no-write/cancel，并验证 revoke；证明没有 X permission 时不注入、没有真实用户手势/目录授权时不写入。覆盖 reload/SPA navigation、stale document、重复运行、known frontier 和 backfill 第 51 条。File System picker 不用 CDP 或 test-only production backdoor 绕过，实际 disposable Vault outcome 留给人工隔离 QA；writer/engine 的自动化证据使用单元集成中的 fake handle。
+- 截图只允许脱敏 fixture UI，不含真实帖子、URL、账号或 Vault 内容；人工检查 popup、窄 Side Panel、深浅主题、长文本、键盘和 focus。
+
+#### 隔离真实 X QA
+
+- probe 只记录 Chrome/extension version、模式、预算、枚举状态、数量、stop code 和耗时；不把标题、正文、作者、ID、URL 或媒体写入 repo/log/截图/review。
+- 验证 exact page capability、真实 selector、虚拟列表滚动、pause/resume、切离 bookmarks 页得到 `tab_changed`、10-item probe 不夸大 completeness。
+- 用户授权 disposable Vault 后只写 1-3 条；QA 通过 UI outcome 和测试目录文件数量/大小核对，不读取或打印文件名/正文。
+- 第二次 incremental 必须对已写内容返回 existing/skip，文件数不增加；changed/incomplete 不覆盖。
+- 真实页面没有稳定 end marker 时结论必须保持 `LIMITED_GO/batch-only`，不能为了 Goal DONE 伪造 terminal。
+
+#### 最终质量门禁
+
+- `pnpm lint`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm test:coverage`
+- `pnpm --filter @shuhai/extension run build`
+- 精确 Prettier check、`git diff --check`、full/production audit 与 lock SHA 前后相同。
+- 独立 reviewer 检查 actual diff；独立 QA 走 fixture 和隔离真实 X 用户旅程。实现者自测只算 candidate。
+
+### 13.12 043B 验收与回滚
+
+043B 只有同时满足以下条件才可把 Goal 043 标为 `DONE`：
+
+- Popup/Side Panel 生产入口、sender/tab/document/job/revision 绑定和 runtime schema 独立 `PASS`。
+- X/Twitter 不再获得常驻页面读取；X 同步只在用户首次确认后持有精确 X host permission，可撤销，拒绝授权时不创建 job 或注入。
+- 50 candidate/backfill/known frontier/finalize batch 语义没有永久卡住或“全部完成”误报。
+- DB3 upgrade transaction 原子、post-commit validation fail-closed、现有 catalog/Vault identity 不变，失败时不丢数据。
+- 用户精确选择前无文件写入；disposable Vault 1-3 条逐项结果真实，重复运行不新增重复文件。
+- 用户可持久化取消所有 pre-write pause；全部 excluded 可无 Vault 权限结束，且 classification error 不会被误报成功；post-write 只能在 reconcile 后安全停止并保留真实 outcomes。
+- 隔离真实 X probe 没有使用 credential/private API/MAIN world/fetch，也没有触发风控绕过。
+- 完整门禁、Node 20 CI、独立 actual-diff review 与独立 QA 均通过。
+
+代码回滚只允许普通反向 PR，不 reset/force push。DB v3 不提供破坏性 down migration；若生产接线失败，禁用 UI 路由但保留 v3 数据和 catalog。源端取消收藏永不删除本地文件。
+
+### 13.13 043B STOP 条件
+
+- 需要超出第 13.1 节的 manifest/permission/CSP 改动、MAIN world、fetch/private GraphQL、Cookie/token、CAPTCHA/429 绕过或后台自动监控。
+- sender/documentId 在本机 Chrome 无法可靠获得或 bind；不得降级只看 message.type/URL 字符串。
+- exact-existing 仍占 candidate cap、backfill 在已入库前 50 条后无法继续，或 pause batch 仍无诚实进入 review 的状态。
+- DB3 需要重算 hash、改 Vault path、清 catalog、删除旧 job 或猜测 active write。
+- File System permission 只能通过 service worker/非用户手势请求，或需要把 handle/内容发送到不必要上下文。
+- 真实 QA 需要扫描私人主收藏库、读取凭据、记录正文/URL、下载浏览器、杀未知进程、操作 Docker/端口或执行危险命令。
+- X 页面结构无法在 10-item probe 中稳定证明；此时维持 `LIMITED_GO`，回到 adapter 研究，不用放宽选择器或权限制造通过。
+
+### 13.14 043B 合同独立复审结论
+
+合同只读复审由 Gibbs (`019f5ca8-5c9e-7901-b5b7-70ce22aa3270`) 与 Helmholtz (`019f5cb3-8157-7eb3-a5be-64da95e458d8`) 独立完成：
+
+1. Gibbs 首轮 `FAIL` 指出四项缺口：不可恢复 pause 没有持久 cancel；manifest 的常驻 X/Twitter 权限违反 v4 首次最小授权与撤销要求；全部 excluded 没有 no-write completion；catalog 查询与 candidate/checkpoint 持久化不在同一事务。
+2. Helmholtz 首轮 `FAIL` 进一步指出 store 无法在事务内证明 exact-existing/replay 的 accepted count/bytes 预算增量，且“v3 upgrade 已提交后 reopen 失败仍回滚 v2”的说法不可实现；测试也缺少预算不可绕过的直接断言。
+3. 合同据此加入精确 manifest 权限迁移、平台权限生命周期、`classifyAndPersistScanBatch`、`cancelJob/abandonWriteJob`、`completeReviewWithoutWrites`、upgrade abort 与 post-commit fail-closed 的分离语义及专项测试。Helmholtz 第二轮给出 `PASS`，确认原四项聚焦问题全部关闭。
+4. Gibbs 第二轮发现最后一个 P1：含 `classification=error` 的全 excluded job 在 `complete` 与写入型 `partial` 之间冲突。合同新增 terminal `complete_with_issues`、持久化 `classificationErrorCount`、零写入约束、active-source 释放、reload UI 与专项测试后，Gibbs 第三轮给出 `PASS`。
+
+最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。该结论只证明合同足以进入下一道人工作业门禁；没有修改生产代码、没有运行真实 X、没有请求平台/Vault 权限，也不构成实现或真实用户旅程证据。下一状态固定为 `CONTRACT_PASS_WAITING_MANUAL_GATE`。
