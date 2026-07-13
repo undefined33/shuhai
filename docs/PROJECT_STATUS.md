@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-13  
-> 状态：Goal 041/042 已通过，Goal 043 G0 候选独立 diff review 已 PASS，等待 Node 20 CI
+> 状态：Goal 041/042 已通过，Goal 043 G0 pnpm 10 修复候选本地门禁与独立 diff review 已通过，等待 Node 20 CI
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一 `IN_PROGRESS` Goal 为 043。Goal 042 已 `DONE/PASS`；Goal 043 G0 候选已完成 official-registry lock 审计、audit、本地完整门禁和修复后独立 diff review `PASS`。首轮发现的 CI pnpm 9/脚本 P1 仍需提交后的 Node 20 CI 成功才能正式关闭；此前不能进入 043A fixture-only 候选。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一 `IN_PROGRESS` Goal 为 043。Goal 042 已 `DONE/PASS`；draft PR 首次 Node 20 CI 因 pnpm `11.3.0` 要求 Node `>=22.13` 而失败。修复合同三轮独立复审和最终 actual-diff review 均已 `PASS`，当前候选固定 pnpm `10.34.5`：项目内 cache/store、lock 语义与 SHA、full/production audit、唯一工具链版本、lint、typecheck、269 项 test/coverage 和 extension build 均已本地通过；CI 只改为精确 pnpm `10.34.5`。候选仍需追加 commit/push 和实际 Node 20 CI，完成前 G0 不是 `PASS`，不能进入 043A。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -104,10 +104,9 @@ Goal 042 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 精确提交/push G0 候选并创建 draft PR，取得 GitHub Actions Node 20 `PASS`。
-2. 关闭 G0 P1 后才实现 043A。
-3. 043A 通过后再编写 043B v2 的 sender/tab/host/job、生产入口和真实 Chrome QA allowlist。
-4. 真实 Chrome 验证优先使用本机已安装浏览器与项目专属临时 profile，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
+1. 精确 stage、追加 commit/push pnpm `10.34.5` 修复候选到现有 draft PR，取得 GitHub Actions Node 20 `PASS`。
+2. 关闭 G0 后才实现 043A；043A 通过后再编写 043B v2 的 sender/tab/host/job、生产入口和真实 Chrome QA allowlist。
+3. 真实 Chrome 验证优先使用本机已安装浏览器与项目专属临时 profile，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
 
 ## 10. 当前文档
 

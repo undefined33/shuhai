@@ -6,7 +6,7 @@
 >
 > 独立 reviewer：Huygens (`019f5af2-d64e-76b0-91c8-bd9982d801e6`)
 >
-> 最终结论：`PASS`，合同可转 `READY`；G0 尚未实施，不代表工具链已通过
+> 初始合同结论：`PASS`；当前 G0 verdict：`FAIL/BLOCKED_BY_TOOLCHAIN_COMPAT`，pnpm 10 修复合同待独立复审
 
 ## 1. 审查结论
 
@@ -98,3 +98,62 @@ G0 write allowlist 增加且只增加 `.github/workflows/ci.yml`，允许两项�
 同一独立 reviewer 对修订合同给出 `VERDICT: PASS`，P0/P1/P2 均为 none。随后 CI 候选只实施了上述两项修改；当前仍等待实际 diff 复审和提交后的 GitHub Actions Node 20 结果，P1 尚不能提前写成已关闭。
 
 修复后的实际 diff 和全套本地复验再次由该 reviewer 审查，最终 `VERDICT: PASS`，P0/P1/P2 均为 none。该结论只授权精确 stage、commit、push 和创建 draft PR 触发 Node 20 CI；在 CI lane 实际成功前，G0 仍不是最终 `PASS`。
+
+## 10. 实际 Node 20 CI 失败与 pnpm 10 修复合同
+
+候选提交 `8451189` 已 push 到 `codex/social-sync-v4`，draft PR 为 `#5`。GitHub Actions run `29247116212` / job `86806588209` 在 `actions/setup-node` 提供的 Node `20.20.2` 上失败，发生在 workspace install 之前：
+
+- `pnpm/action-setup@v4` 安装的 pnpm `11.3.0` 明确警告最低要求为 Node `22.13`。
+- 随后的 `pnpm store path --silent` 加载 `node:sqlite`，Node 20 返回 `ERR_UNKNOWN_BUILTIN_MODULE`。
+- 因此此前“pnpm 11.3.0 可作为 Node 20 lock/CI 生成器”的合同假设错误。提交前独立 diff `PASS` 不能覆盖真实 CI 证据，G0 verdict 降为 `FAIL/BLOCKED_BY_TOOLCHAIN_COMPAT`。
+
+禁止通过把 CI 提高到 Node 24、设置 `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`、忽略失败、amend/force-push 或重新使用 pnpm 9 来制造绿色结果。项目公开 engines 下界仍是 Node `>=20.17.0`，G0 必须真实证明该下界 lane。
+
+只读官方证据确认修复候选为 pnpm `10.34.5`：npm registry metadata 声明 Node `>=18.12`、MIT、tarball `https://registry.npmjs.org/pnpm/-/pnpm-10.34.5.tgz`、integrity `sha512-pO4F8vc2WCVb1qiYWcBlpFwopX2u+uLIk6Fo7itzFow3uR6D5X6mdlStA/AwMXRkMOi84442LgQmBfuKvIAZLg==`，发布包无 consumer install/preinstall/postinstall hook。pnpm 10.x 官方 settings 文档明确支持根级 `pnpm-workspace.yaml` 的 `overrides` 和 `lockfileIncludeTarballUrl`，所以现有安全配置可以保留。
+
+修复合同按以下顺序执行：
+
+1. 独立 reviewer 先只读复审本节和 Goal 043 的精确 allowlist、版本、integrity、命令与 STOP 条件。
+2. `PASS` 后才允许通过 official registry、`--ignore-scripts` 和精确 `--package=pnpm@10.34.5` 的项目任务命令获取 CLI；npm cache 固定到 `.pnpm-store/goal-043/npm-cache`，pnpm install store 固定到 `.pnpm-store/goal-043/store`，不写用户共享 cache/store、不全局安装或修改全局配置。
+3. 首先只运行 `pnpm --version` 并要求精确输出 `10.34.5`；不匹配立即 STOP。
+4. 使用同一 CLI 重新生成 lock-only；语义比较 package/version/integrity/URL/闭包，不接受无关漂移。
+5. lock review 通过后才 frozen install；除 audit compatibility fallback 外，why、lint、typecheck、test、coverage、extension build 和 Prettier 均使用同一 pnpm 10 前缀，再运行 `git diff --check`。
+6. 独立 reviewer 检查实际修复 diff；`PASS` 后追加 commit/push 到现有 draft PR，等待 Node 20 CI。禁止 amend 或 force-push。
+
+在第 1 步通过前，没有下载或运行 pnpm 10，也没有修改 `.github/workflows/ci.yml`、package manifests、workspace 配置或 lockfile。
+
+### 10.1 首轮修复合同复审 finding
+
+独立 reviewer Euclid (`019f5b58-6049-78a0-8392-683c46a0bd39`) 对首轮修复合同给出 `VERDICT: FAIL`，P0 none，两个 P1：默认 `npm exec` 会写用户 npm cache、pnpm 会写共享 store；同时 pnpm 10 的旧 audit endpoint 若返回 410，原合同没有 `UNKNOWN/BLOCKED` 和只读 fallback 语义。
+
+最小修订为：
+
+- npm cache 与 pnpm store 分别固定到 worktree 已忽略的 `.pnpm-store/goal-043/npm-cache` 和 `.pnpm-store/goal-043/store`。
+- pnpm 10 audit 只有得到可解析的完整 advisory 结果才算有效；410、endpoint/protocol/parse 错误一律 `UNKNOWN/BLOCKED`。
+- 仅该兼容故障允许本机现有 Node `24.14.1` + pnpm `11.3.0` 对同一 lock 做 full/production 只读 audit，前后核对 SHA-256，不 install、不改 lock；fallback 失败不能宣称 0 漏洞。
+- 除 fallback 外，lock/install/why 和完整质量门禁全部使用同一精确 pnpm `10.34.5` npm exec 前缀。
+
+该修订必须再次独立只读复审；复审 `PASS` 前仍不得运行 pnpm 10 或修改 CI/lock。
+
+同一独立 reviewer 对最小修订后的实际文档 diff 完成第二轮只读复审，给出 `VERDICT: PASS`，P0/P1/P2 均为 none。复审确认项目内 npm cache/pnpm store、精确 pnpm `10.34.5`、audit `UNKNOWN/BLOCKED`、只读 fallback 和同版本门禁边界均可执行；当前授权进入 CLI version 核验与后续分阶段 G0 修复，不代表 lock、门禁或 Node 20 CI 已通过。
+
+### 10.2 frozen install 非交互重建门禁
+
+受控 CLI version 精确输出 `10.34.5`。lock-only 成功，结构化 YAML 比较确认前后 4 个 importer、446 个 package、446 个 snapshot 和 446 个 integrity 完全相同，语义 diff 0；mirror/Git/tarball URL 均为 0。文本 diff 仅为 pnpm 10 的 YAML 排版，候选 lock SHA-256 为 `19034D0337743941656D77A4E1ACC0C2E34A8161530832AE9C122805D84ABAB8`。
+
+首次 frozen install 在任何目录删除前返回 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`。原因是当前 `node_modules` 来自先前 store，pnpm 10 在无 TTY 下拒绝自动重建。只读检查确认其为普通 Directory、非 symlink/reparse，解析绝对路径精确为 `C:\Projects\ShuHai\.worktrees\social-sync-v4\node_modules`。
+
+修订合同只允许：独立复审后，对精确 frozen install 命令临时设置 `CI=true`，由已核验 pnpm 重建该 worktree 的可再生 `node_modules` 并写入任务专属 store。禁止 `--force`、手工递归删除、`git clean`、链接目录、仓库外路径或持久化环境变量。该授权不扩展到任何用户数据、其它项目、Chrome、Docker、进程或端口。
+
+同一独立 reviewer 第三轮复审给出 `VERDICT: PASS`，P0/P1/P2 均为 none，并授权临时进程级 `CI=true` 的精确 frozen install。该命令成功重建本 worktree 的 `node_modules`，从 official registry 下载 376 个 lock 固定包到任务专属 store，未运行 lifecycle script；命令结束后环境值恢复。
+
+## 11. pnpm 10 修复候选本地证据
+
+- pnpm `10.34.5` full audit 返回完整 advisory JSON：low 1 / moderate 1 / high 0 / critical 0；production audit 为 0，没有使用 fallback。
+- `pnpm -r why vite vitest @vitest/coverage-v8` 各只出现一个版本：Vite 6.4.3、Vitest 3.2.6、coverage-v8 3.2.6。
+- Prettier 恢复 lock 的原有排版后，SHA-256 回到 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，与提交候选完全相同；最终 lock 无 diff。
+- 所有命令通过同一 pnpm 10 npm exec 前缀运行：lint、typecheck、普通测试 269/269、coverage 33 files / 269 tests、extension build Vite 6.4.3 / 1,899 modules 均通过。
+- `.github/workflows/ci.yml` 只把 `pnpm/action-setup@v4` 的版本从 `11.3.0` 改为 `10.34.5`；Node 20、frozen lock、official registry、`--ignore-scripts` 和其余 CI 结构不变。
+- 未启动 Chrome、Docker、dev/watch/listener，未访问真实 X、Vault、Cookie、用户 profile、其它项目、进程或端口。
+
+独立 reviewer Euclid 对最终实际 diff 给出 `VERDICT: PASS`，P0/P1/P2 均为 none。review 确认实际改动恰好为 CI 和四份文档，lock 无 diff，且所有本地证据与安全边界一致；只授权精确 stage 这五个文件、追加 commit、普通 push 和等待现有 draft PR 的 Node 20 CI，禁止 amend/force。CI 成功前 G0 仍不是最终 `PASS`。

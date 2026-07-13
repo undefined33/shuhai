@@ -46,23 +46,31 @@ Goal 042 只在“不启动监听服务”的窄条件下接受了既有 Vite/Vi
 
 三项候选均为 MIT；`vite@6.4.3` 与 `vitest@3.2.6` 的 engines 为 `^18.0.0 || ^20.0.0 || >=22.0.0`，覆盖项目 `>=20.17.0` 下界。发布包没有 `install`/`postinstall`；metadata 中的 dev/build scripts 不在 consumer install 时执行。禁止升级到要求 Node `>=20.19` 的 Vite 8，也禁止把 Vitest 3 的安全修复扩大成 Vitest 4 major 迁移。
 
-当前 pnpm `11.3.0` 基线完整 audit 为 low 3 / moderate 4 / high 2 / critical 1，production audit 为 0；lockfile SHA-256 为 `E9B4B644828795CE11C70BEB3F8BDBF21460AC2D960133FB7FC4CCC4F9D2869F`。候选必须保存新的 SHA 与 advisory/path 对比，不能只比较总数。
+原始依赖基线完整 audit 为 low 3 / moderate 4 / high 2 / critical 1，production audit 为 0；原始 lockfile SHA-256 为 `E9B4B644828795CE11C70BEB3F8BDBF21460AC2D960133FB7FC4CCC4F9D2869F`。候选必须保存新的 SHA 与 advisory/path 对比，不能只比较总数。
 
 G0 候选必须同时证明：
 
-1. 使用 pnpm `11.3.0`、官方 registry 和 `--ignore-scripts` 生成 lockfile；所有 direct version 精确，无 `^`/`~`。
+1. 使用 pnpm `10.34.5`、官方 registry 和 `--ignore-scripts` 重新生成 lockfile；所有 direct version 精确，无 `^`/`~`。该版本的官方 registry metadata 为 Node `>=18.12`、MIT、integrity `sha512-pO4F8vc2WCVb1qiYWcBlpFwopX2u+uLIk6Fo7itzFow3uR6D5X6mdlStA/AwMXRkMOi84442LgQmBfuKvIAZLg==`，无 consumer install/preinstall/postinstall hook。
 2. `pnpm why vite vitest @vitest/coverage-v8` 只出现 `vite@6.4.3`、`vitest@3.2.6` 和 `@vitest/coverage-v8@3.2.6`。
 3. 完整 audit 的 high/critical 均为 0，不能新增或恶化 low/moderate，production audit 仍为 0。
 4. 运行完整质量门禁、`pnpm test:coverage` 和 extension build；继续禁止 dev/preview/UI/API/browser listener。
 5. 本机当前 Node `24.14.1` 的结果只算当前运行时证据；最终 PR/CI 还必须提供 Node 20 lane，不能把 Node 24 冒充最低支持版本。现有 NVM 只有过低的 20.2.0，不下载或切换到它。
 6. lockfile delta 限于候选工具链解析变化；出现额外二进制、install hook、Git dependency、未知下载或 production advisory 时立即 STOP。
-7. Node 20 CI 必须使用与候选 lock 相同的 pnpm `11.3.0`，并以 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/` 安装；pnpm 9 或允许 lifecycle script 的 CI 结果不能作为 G0 证据。
+7. Node 20 CI 必须使用与候选 lock 相同的 pnpm `10.34.5`，并以 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/` 安装；pnpm 9/11、版本漂移或允许 lifecycle script 的 CI 结果不能作为 G0 证据。
 
 G0 明确允许正常项目依赖下载，但只允许以下窄路径：项目级 `.npmrc` 固定 `https://registry.npmjs.org/` 与严格 TLS；根 `pnpm-workspace.yaml` 设置 `overrides.vite=6.4.3` 和 `lockfileIncludeTarballUrl=false`。先以 `--lockfile-only --ignore-scripts` 解析候选 lock，审查 package/version/integrity/依赖闭包后，再以 `--ignore-scripts --frozen-lockfile` 安装。授权只覆盖上述三项 direct dev upgrade 与它们在候选 lock 中固定 integrity 的依赖闭包；不允许 Git/URL dependency、其它 registry、执行下载内容、额外二进制获取、install/postinstall 或全局安装。已有 content-addressed cache 只有在 integrity 与官方 metadata 完全相同时才能复用。
 
 候选 lock 允许一项额外的纯 provenance 机械变化：删除基线中显式保存的 `registry.npmmirror.com` tarball URL。除三项工具链解析变化外，其它 package version 与 integrity 必须逐项相同；最终 lock 不得出现 npm mirror/taobao、Git 或其它 registry URL。manifest 与 lock 不一致期间禁止运行 `pnpm exec` 或其它会隐式安装的 pnpm 命令，必须先完成 lock-only 阶段。
 
-G0 候选已使用修订后的 official-registry/ignore-scripts 流程生成，完成语义 lock 审计和本地完整门禁。首轮独立实现 review 因 CI 仍使用 pnpm 9 且未禁用 install scripts 给出 `FAIL`；精确 CI 修订合同与修复后的实际 diff 均已独立 `PASS`。当前只允许提交候选并由 draft PR 触发 Node 20 CI；CI 成功前不能写成 G0 已通过或进入 043A。
+第一份 G0 候选已使用 pnpm `11.3.0` 完成 official-registry/ignore-scripts lock 审计、本地完整门禁和提交前独立 diff review，但 draft PR 的 GitHub Actions run `29247116212` 在 Node `20.20.2` 上证实 pnpm 11 不兼容：CLI 要求 Node `>=22.13`，随后因 `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` 在 install 前退出。这份候选不能作为 Node 20 G0 证据，也不得通过提高 CI Node 版本、设置不安全兼容环境变量或忽略失败来绕过项目 `>=20.17.0` 下界。
+
+修复合同固定 pnpm `10.34.5`。pnpm 10.x 官方文档明确支持当前 `pnpm-workspace.yaml` 的根级 `overrides` 与 `lockfileIncludeTarballUrl`，因此不回退安全配置。合同独立 `PASS` 前只允许只读 metadata/docs/audit 查询和本文档状态修改；不得下载/运行 pnpm 10、修改 CI 或重写 lock。合同通过后，允许项目任务范围内的精确 `npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm-cache --registry=https://registry.npmjs.org/ --package=pnpm@10.34.5 -- pnpm ...` 获取并运行已核验 CLI；npm cache 固定在 worktree 已忽略目录，所有 install 额外固定 `--store-dir=.pnpm-store/goal-043/store`，不得写用户级共享 store、全局安装、修改全局配置或执行 package lifecycle script。先核对 CLI 输出为 `10.34.5`，再以同一前缀执行 lock-only，审查 lock 后才执行 frozen install。除明确的只读 audit fallback 外，`why`、lint、typecheck、test、coverage、build 和格式检查也必须通过同一 pnpm 10 前缀运行，确保嵌套脚本中的 `pnpm` 仍解析为 `10.34.5`。最终必须追加提交而非 amend/force-push，并重新取得本地完整门禁、独立 diff review 和实际 Node 20 CI `PASS`。
+
+pnpm 10 首次把现有 `node_modules` 切换到任务专属 store 时可能要求重建 modules directory。只有先用 `Get-Item`/`Resolve-Path` 证明它是非 symlink/reparse、绝对路径精确等于 `C:\Projects\ShuHai\.worktrees\social-sync-v4\node_modules` 后，才允许仅对 frozen install 进程临时设置 `CI=true`，由已核验 pnpm 自行替换这个可再生目录。禁止手工 `Remove-Item`、`git clean`、`--force`、扩大路径或保留环境变量；若目录是链接、越出 worktree 或目标不确定，立即 STOP。
+
+Audit 不能以命令退出码代替语义判断：pnpm 10 返回可解析 advisory JSON 时，即使因发现漏洞而非零退出也按实际 counts/path 处理；若返回 HTTP 410、endpoint/protocol/JSON parse 错误或无完整结果，状态必须写为 `UNKNOWN/BLOCKED`，不得声明 0 漏洞。只在该兼容故障下，允许使用本机现有 Node `24.14.1` + pnpm `11.3.0` 对同一 lock 运行 full/production 只读 audit；fallback 前后分别记录 lock SHA-256，禁止 install、修复或改写 lock。fallback 也失败时 G0 保持 blocked。
+
+当前 pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精确为 `10.34.5`；lock-only 前后语义相同且最终格式化后 SHA-256 保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`；full audit 为 low 1 / moderate 1 / high 0 / critical 0，production audit 为 0；唯一 Vite/Vitest 版本、lint、typecheck、269 项 test/coverage 和 extension build 均通过。当前实际 diff 只剩 CI pnpm `11.3.0 -> 10.34.5` 和状态文档，最终独立 actual-diff review 已 `PASS`；追加 commit/push 与实际 Node 20 CI 仍未完成，因此 G0 仍不是 `PASS`。
 
 ### 3.2 043A：fixture-only 候选
 
@@ -228,7 +236,7 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 
 ### 7.3 G0 允许写入
 
-- `.github/workflows/ci.yml`（仅把 pnpm 固定为 `11.3.0`，并让 install 使用 frozen lock、official registry 和 `--ignore-scripts`）
+- `.github/workflows/ci.yml`（仅把 pnpm 从不兼容 Node 20 的 `11.3.0` 改为精确 `10.34.5`；install 继续使用 frozen lock、official registry 和 `--ignore-scripts`）
 - `package.json`
 - `packages/extension/package.json`
 - `.npmrc`
@@ -270,7 +278,10 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 - R0：`Get-Content`、`Get-ChildItem`、`rg`、`git status/diff/log/show`。
 - R1：精确 `apply_patch`、精确文件 Prettier/ESLint、`tsc --noEmit`、`vitest run`、`vite build`。
 - 质量门禁：`pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm --filter @shuhai/extension run build`。
-- G0：先精确 `apply_patch` `.npmrc`、`pnpm-workspace.yaml` 和 package manifests，再运行 `pnpm install --lockfile-only --ignore-scripts --registry=https://registry.npmjs.org/`；审查候选 lock 后，才允许运行 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/`。只解析/复用 lock 中带 integrity 且与官方 metadata 一致的内容，不执行 lifecycle script。
+- G0 修复合同复审前：只允许 `npm view pnpm@10.34.5 ... --registry=https://registry.npmjs.org/`、官方 pnpm 10.x 文档查询、精确文档 patch 和只读 Git 检查。
+- G0 修复合同独立 `PASS` 后：允许精确 `npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm-cache --registry=https://registry.npmjs.org/ --package=pnpm@10.34.5 -- pnpm --version`；随后用同一前缀运行 `pnpm install --store-dir=.pnpm-store/goal-043/store --lockfile-only --ignore-scripts --registry=https://registry.npmjs.org/`，审查候选 lock 后才允许同参数 frozen install。所有后续 `why` 和质量门禁使用同一 npm exec/pnpm 10 前缀。只解析/复用 lock 中带 integrity 且与官方 metadata 一致的内容，不执行 lifecycle script、不写用户 npm cache/共享 pnpm store、不全局安装、不修改全局 npm/pnpm 配置。
+- 若 frozen install 返回 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`：先核实 `node_modules` 是 worktree 内精确普通目录，再只对该条命令临时设置 `$env:CI='true'` 后重试；命令完成后恢复/移除该进程环境值。不得使用 `--force`、手工删除或处理任何其它目录。
+- Audit 先使用上述 pnpm 10 前缀；有效 advisory JSON 按实际结果验收。仅遇 410/endpoint/protocol/parse 兼容错误时，允许用已安装的 Node `24.14.1` + pnpm `11.3.0` 对同一 lock 执行 full/production 只读 audit，并用 `Get-FileHash pnpm-lock.yaml -Algorithm SHA256` 证明前后未变；任一 audit 无有效结果即 `UNKNOWN/BLOCKED`。
 - 浏览器命令必须等 G0 和 043A 实现 review，通过后按第 6 节补充精确 executable/profile/PID 合同；当前不得启动。
 
 禁止运行 `pnpm clean`、dev/watch/preview/UI/API/browser server、`--host`、未知下载命令、全局安装、危险命令或任何非本任务进程/端口操作。
