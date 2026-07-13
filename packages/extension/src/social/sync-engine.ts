@@ -208,6 +208,15 @@ export class SyncEngine {
     if (!sameSocialItem(persistedJobItem.item, parsedItem)) {
       throw new Error('Social item does not match the persisted sync job item');
     }
+    if (
+      job.authorizedReviewRevision === undefined ||
+      job.authorizedReviewRevision !== job.reviewRevision ||
+      persistedJobItem.reviewDecision !== 'selected' ||
+      persistedJobItem.reviewRevision !== job.authorizedReviewRevision ||
+      persistedJobItem.classification !== 'new'
+    ) {
+      throw new Error('Social item is not covered by the persisted review authorization');
+    }
     const item = persistedJobItem.item;
     const recordKey = makeSyncRecordKey(item.source, item.sourceItemId);
     const existingRecord = await this.store.getRecordByKey(recordKey);
@@ -236,7 +245,8 @@ export class SyncEngine {
       if (
         (existingRecord !== undefined &&
           pendingIntent.relativePath !== existingRecord.relativePath) ||
-        !intentMatchesSocialItem(pendingIntent, item)
+        !intentMatchesSocialItem(pendingIntent, item) ||
+        pendingIntent.reviewRevision !== job.authorizedReviewRevision
       ) {
         throw new Error('Pending write intent does not match the persisted sync item');
       }
@@ -275,6 +285,7 @@ export class SyncEngine {
       jobId,
       sourceItemId: item.sourceItemId,
       relativePath,
+      reviewRevision: job.authorizedReviewRevision,
       createdAt: this.now().toISOString(),
     });
 
@@ -292,6 +303,7 @@ export class SyncEngine {
     intent: WriteIntent,
     prepared: PreparedSyncContent,
   ): Promise<SyncEngineResult> {
+    await this.assertIntentAuthorized(intent);
     let writerResult: VaultFileOutcome;
     try {
       writerResult = await this.writer.write(prepared!.pathSegments, prepared!.markdown);
@@ -368,6 +380,7 @@ export class SyncEngine {
     intent: WriteIntent,
     record: SyncRecord,
   ): Promise<SyncEngineResult> {
+    await this.assertIntentAuthorized(intent);
     if (
       record.canonicalUrl !== intent.canonicalUrl ||
       record.contentHash !== intent.contentHash ||
@@ -442,6 +455,7 @@ export class SyncEngine {
   }
 
   private async reconcileIntent(intent: WriteIntent): Promise<SyncEngineResult> {
+    await this.assertIntentAuthorized(intent);
     let markdownPrefix: string | null;
     try {
       markdownPrefix = await this.writer.readPrefix(
@@ -494,6 +508,27 @@ export class SyncEngine {
 
   private async commitIntent(intent: WriteIntent, outcome: WriteOutcome): Promise<void> {
     await this.store.commitWriteIntent(intent.id, outcome, this.now().toISOString());
+  }
+
+  private async assertIntentAuthorized(intent: WriteIntent): Promise<void> {
+    const [job, item] = await Promise.all([
+      this.store.getJob(intent.jobId),
+      this.store.getJobItem(intent.jobId, intent.sourceItemId),
+    ]);
+    if (!job || !item) {
+      throw new Error('Write intent authorization state was not found');
+    }
+    if (
+      job.status !== 'writing' ||
+      job.authorizedReviewRevision !== intent.reviewRevision ||
+      job.reviewRevision !== intent.reviewRevision ||
+      item.reviewDecision !== 'selected' ||
+      item.reviewRevision !== intent.reviewRevision ||
+      item.classification !== 'new' ||
+      !intentMatchesSocialItem(intent, item.item)
+    ) {
+      throw new Error('Write intent is not covered by the persisted review authorization');
+    }
   }
 }
 

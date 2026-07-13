@@ -6,7 +6,7 @@
 >
 > 独立 reviewer：Huygens (`019f5af2-d64e-76b0-91c8-bd9982d801e6`)
 >
-> 初始合同结论：`PASS`；当前 G0 verdict：`FAIL/BLOCKED_BY_TOOLCHAIN_COMPAT`，pnpm 10 修复合同待独立复审
+> 初始合同结论：`PASS`；G0 verdict：`PASS`；043A fixture-only verdict：`PASS`；整个 Goal 043 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`
 
 ## 1. 审查结论
 
@@ -163,3 +163,59 @@ G0 write allowlist 增加且只增加 `.github/workflows/ci.yml`，允许两项�
 修复提交 `b8a0b95` 已普通 push 到 `codex/social-sync-v4`。现有 draft PR `#5` 触发 GitHub Actions run `29252734846` / job `86825006096`，在 Node `20.20.2` 和 pnpm `10.34.5` 下于 50 秒内 `PASS`；workflow 的 frozen lock、official registry、`--ignore-scripts`、lint、typecheck、coverage 和 extension build 全部成功。
 
 最终 verdict：`G0 PASS`。该结论只关闭工具链/供应链门禁并允许 043A fixture-only 实现；不代表 X adapter 已实现，不授权真实 X、Chrome E2E、manifest/content/background/UI 接线，也不把整个 Goal 043 写成完成。
+
+## 13. 043A 实现、独立复审与 fixture Chrome 证据
+
+### 13.1 实现范围
+
+043A 只修改 Goal v1 白名单中的 social schema/store/engine、X adapter/coordinator、fixture 与测试；没有修改 manifest、content script、service worker、Popup、Side Panel、Options、shared、desktop 或生产路由，也没有新增依赖。
+
+候选实现提供：
+
+- schema/database v2 的 strict runtime parse、typed stop record、scan/review revision 和精确选择授权。
+- v1 -> v2 原子迁移；逐 store cursor 读取，30,000 行、16 MiB、500,000 全库节点、单行深度/节点上限，任何不安全历史写状态或迁移超限都保留 v1 原库。
+- selected/excluded/unreviewed 持久化语义；selected item、job 和 write intent 必须绑定同一 review revision，未尝试的 selected item 不能伪装成 `partial`。
+- 只接受精确 `https://x.com/i/bookmarks` 和合法 status permalink 的纯 X DOM adapter；正文/媒体/字节/节点/时间均受固定上限，扫描期间导航改变会丢弃整批。
+- 顶部重扫、跨批去重、catalog 分类、persist-before-next、真实墙钟 adapter deadline、typed pause/resume 和 Goal 042 mock Vault 端到端选择写入。
+
+### 13.2 独立 actual-diff review
+
+独立 reviewer Aristotle (`019f5c1d-3f2b-72d0-ac3b-881ef871f1ff`) 对实际工作树进行了多轮只读审查：
+
+1. 首轮 `FAIL` 找到四个 P1：迁移在全量 materialize 后才检查总预算、`partial` 可包含 selected-but-not-requested、挂起 adapter/超额 metrics 未 fail closed、扫描期间未重复校验页面；另有 persist rejection 缺测试的 P2。
+2. 修复后第二轮关闭后三项和 persist P2，但发现低字节宽容器可绕过迁移内存预算的一个 P1，以及 deadline 精确 5 ms 断言的 P2。
+3. 增加 500,000 全库节点上限、双层累计校验、123 x 4,090 null 宽数组攻击测试和 deadline 范围断言后，第三轮最终结论为 `PASS`，P0/P1/P2 均为 0。
+4. 首次 fixture E2E 暴露缺少 fake IndexedDB globals 后，唯一测试入口修复 `import 'fake-indexeddb/auto'` 又经同一 reviewer 独立 `PASS`；该文件不进入 TypeScript/Vite 生产入口。
+5. 最终提交前 reviewer Heisenberg (`019f5c61-480c-7ca0-b524-7fa9cc9f3682`) 给出 `FAIL`：15 秒 deadline 只覆盖 adapter、不可信 adapter 可低报 observed-node 数，以及页面 route 证据不能证明整个 Chrome 进程零网络。
+6. 修复候选使用统一 invocation deadline 包住 adapter、hash parse、catalog、batch persistence、classification 和 finish transition；新增挂起 catalog、挂起 persistence、挂起 finish 与节点低报四项回归。Chrome fixture 增加 offline context、阻止 service worker、禁用后台网络能力和 host resolver fail-closed；证据表述收紧为“fixture 页面 route 观察 0 请求”，不再宣称 OS 级 Chrome 进程抓包。
+7. Heisenberg 复审关闭节点计量和网络证据 P1，但发现 `Promise.race` 不能取消迟到的 `finishScan` 事务，以及状态页仍有一处过早写成 043A 已通过。最终修复给 finish transaction 传入 `AbortSignal` 和提交前 wall-clock guard；store 测试证明过期终态写入原子回滚，coordinator 测试在超时后实际延迟调用原始 `finishScan` 并再次确认 job 保持 `paused`。状态顺序修正后，同一 reviewer 最终给出 `PASS`，P0/P1/P2 均为 0。
+
+reviewer 独立复跑相关 43/43 测试、精确 ESLint、extension typecheck 和 `git diff --check` 均通过。review 全程没有修改文件、启动浏览器、安装依赖或访问网络。
+
+### 13.3 本地门禁与审计
+
+所有命令继续使用合同固定的 pnpm `10.34.5` npm-exec 前缀、项目内 npm cache 和任务专属 store：
+
+- `pnpm lint`：PASS。
+- `pnpm typecheck`：PASS。
+- `pnpm test`：PASS，335/335（extension 309、desktop 25、shared 1）。
+- `pnpm test:coverage`：PASS，35 files / 335 tests；social store/coordinator/adapter 语句覆盖率分别为 81.5% / 81.48% / 82.67%。
+- `pnpm --filter @shuhai/extension run build`：PASS，Vite `6.4.3` 转换 1,899 modules。
+- Prettier check 与 `git diff --check`：PASS。
+- full audit：low 1 / moderate 1 / high 0 / critical 0；仍是既有 dev-only `@eslint/plugin-kit` 与 `js-yaml` advisory。production audit：0。
+
+### 13.4 fixture Chrome E2E
+
+浏览器预检确认使用本机已安装的 Chrome `150.0.7871.101`，可执行文件为 `C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`。每次运行都先证明 profile/output 是当前 worktree `.pnpm-store/goal-043/` 下尚不存在且被 Git 忽略的新目录；没有下载 Chrome、复制日常 profile、读取登录数据、操作端口或按名称结束进程。
+
+- 首次 profile `fixture-20260714-003041` 在打开 fake IndexedDB 时因缺少全局 `IDBRequest` 失败；Chrome PID `35156` 由 Playwright graceful close，exit code 0。该 profile 没有复用或删除。
+- 测试入口最小修复经独立 review 后，使用另一个全新 profile `fixture-20260714-003653` 重跑；1/1 PASS，测试本体 1.5 秒。Chrome PID `37124` graceful close，exit code 0。
+- 最终 P1 修复后使用第三个全新 profile `fixture-20260714-010509` 重跑；offline context、service worker block、后台网络禁用参数和 `MAP * ~NOTFOUND` host resolver 均启用，1/1 PASS，测试本体 1.4 秒。
+- 迟到终态事务修复并取得独立 `PASS` 后，使用第四个全新 profile `fixture-20260714-012902` 重跑；同样保持 offline/service-worker/host-resolver 边界，1/1 PASS，测试本体 1.5 秒，Playwright-owned Chrome 随 context 正常关闭。
+- 断言证明 50 条 fixture 在第一次 budget pause、store close/reopen、顶部重扫和第二个 scan revision 后恰好保持 50 个唯一 source item；scanned count 大于 50，说明重叠节点确实被重扫，最终页面只保留 10 个回收节点。
+- fixture 容器中 `img`、`iframe`、`script` 为 0，攻击文本保持惰性；在 context 建立后注册的 Playwright page route 记录 outbound request 为 0。该断言证明 fixture 页面没有发出请求，不证明 Chrome 启动前后的 OS 级进程网络为 0。
+- 最新非空截图为被忽略的 `.pnpm-store/goal-043/playwright-output-20260714-012902/.../fixture-final.png`（30,813 bytes），人工检查只含脱敏 fixture 41-50，没有真实帖子、URL、账号或 Vault 数据。
+
+### 13.5 043A verdict
+
+最终 verdict：`043A PASS`。Heisenberg 已在最终 actual-diff 复审中确认 P0/P1/P2 均为 0；335 项测试、coverage、完整质量门禁、production audit 0 和第四次全新离线 fixture Chrome E2E 均通过。该结论只授权精确 stage、追加 commit、普通 push、等待 Node 20 CI，以及随后起草 043B v2 合同；不授权生产接线或真实 X 操作。候选仍不证明真实 X selector、登录状态、平台风控、生产 message binding 或真实 Vault 用户旅程，整个 Goal 043 保持 `BLOCKED_BY_REAL_X_EVIDENCE`。

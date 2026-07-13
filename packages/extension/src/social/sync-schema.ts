@@ -34,6 +34,8 @@ export const SYNC_LIMITS = {
   structuredNodes: 2_048,
   maxItemsPerJob: 10_000,
   maxCatalogBatch: 10_000,
+  maxAcceptedBytesPerJob: 16 * 1_024 * 1_024,
+  checkpointBytes: 64 * 1_024,
 } as const;
 
 interface StructuredInputLimits {
@@ -417,6 +419,7 @@ const persistedInputLimits: StructuredInputLimits = {
 };
 
 const countSchema = z.number().int().min(0).max(1_000_000);
+const revisionSchema = z.number().int().min(0).max(1_000_000);
 const positiveVersionSchema = z.number().int().min(1).max(1_000_000);
 export const SourceItemIdSchema = boundedString(SYNC_LIMITS.sourceItemIdBytes, 1).refine(
   isSafeIdentifier,
@@ -520,6 +523,44 @@ export const SyncJobStatusSchema = z.enum([
 ]);
 export type SyncJobStatus = z.infer<typeof SyncJobStatusSchema>;
 
+export const SyncStopReasonSchema = z.enum([
+  'user_paused',
+  'budget_exceeded',
+  'login_required',
+  'rate_limited',
+  'structure_changed',
+  'tab_changed',
+  'permission_revoked',
+  'worker_interrupted',
+]);
+export type SyncStopReason = z.infer<typeof SyncStopReasonSchema>;
+
+export const SyncStopPhaseSchema = z.enum(['scanning', 'writing']);
+export type SyncStopPhase = z.infer<typeof SyncStopPhaseSchema>;
+
+export const SyncStopRecordSchema = budgetedSchema(
+  z
+    .strictObject({
+      code: SyncStopReasonSchema,
+      stoppedAt: IsoTimestampSchema,
+      phase: SyncStopPhaseSchema,
+      scanRevision: revisionSchema,
+      scannedCount: countSchema,
+      acceptedCount: countSchema,
+    })
+    .superRefine((stopRecord, context) => {
+      if (stopRecord.acceptedCount > stopRecord.scannedCount) {
+        context.addIssue({
+          code: 'custom',
+          path: ['acceptedCount'],
+          message: 'acceptedCount cannot exceed scannedCount',
+        });
+      }
+    }),
+  persistedInputLimits,
+);
+export type SyncStopRecord = z.infer<typeof SyncStopRecordSchema>;
+
 export const ACTIVE_SYNC_JOB_STATUSES: ReadonlySet<SyncJobStatus> = new Set([
   'prepared',
   'scanning',
@@ -545,8 +586,10 @@ const syncCheckpointObjectSchema = z
   .strictObject({
     schemaVersion: z.literal(SYNC_SCHEMA_VERSION),
     adapterVersion: positiveVersionSchema,
+    scanRevision: revisionSchema,
     scannedCount: countSchema,
     acceptedCount: countSchema,
+    acceptedBytes: z.number().int().min(0).max(SYNC_LIMITS.maxAcceptedBytesPerJob),
     consecutiveKnownIds: countSchema,
     cursor: boundedString(SYNC_LIMITS.cursorBytes, 1).refine(isSafeIdentifier).optional(),
     updatedAt: IsoTimestampSchema,
@@ -567,10 +610,11 @@ const syncCheckpointObjectSchema = z
       });
     }
   });
-export const SyncCheckpointSchema = budgetedSchema(
-  syncCheckpointObjectSchema,
-  persistedInputLimits,
-);
+export const SyncCheckpointSchema = budgetedSchema(syncCheckpointObjectSchema, {
+  maxBytes: SYNC_LIMITS.checkpointBytes,
+  maxDepth: SYNC_LIMITS.structuredDepth,
+  maxNodes: SYNC_LIMITS.structuredNodes,
+});
 export type SyncCheckpoint = z.infer<typeof SyncCheckpointSchema>;
 
 export const SyncJobSummarySchema = z
@@ -578,11 +622,15 @@ export const SyncJobSummarySchema = z
     scannedCount: countSchema,
     uniqueItemCount: countSchema,
     pendingReviewCount: countSchema,
+    classificationErrorCount: countSchema,
+    unreviewedCount: countSchema,
+    selectedCount: countSchema,
+    excludedCount: countSchema,
     writePendingCount: countSchema,
     createdCount: countSchema,
     alreadyExistsCount: countSchema,
     skippedCount: countSchema,
-    errorCount: countSchema,
+    writeErrorCount: countSchema,
   })
   .superRefine((summary, context) => {
     if (summary.uniqueItemCount > summary.scannedCount) {
@@ -599,18 +647,33 @@ export const SyncJobSummarySchema = z
         message: 'pendingReviewCount cannot exceed uniqueItemCount',
       });
     }
-    const accountedItemCount =
-      summary.pendingReviewCount +
+    if (summary.classificationErrorCount > summary.uniqueItemCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['classificationErrorCount'],
+        message: 'classificationErrorCount cannot exceed uniqueItemCount',
+      });
+    }
+    const reviewedItemCount =
+      summary.unreviewedCount + summary.selectedCount + summary.excludedCount;
+    if (reviewedItemCount !== summary.uniqueItemCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['unreviewedCount'],
+        message: 'Review decision counts must account for every unique item',
+      });
+    }
+    const accountedSelectedCount =
       summary.writePendingCount +
       summary.createdCount +
       summary.alreadyExistsCount +
       summary.skippedCount +
-      summary.errorCount;
-    if (accountedItemCount > summary.uniqueItemCount) {
+      summary.writeErrorCount;
+    if (accountedSelectedCount > summary.selectedCount) {
       context.addIssue({
         code: 'custom',
-        path: ['uniqueItemCount'],
-        message: 'Pending, write, and error counts cannot exceed uniqueItemCount',
+        path: ['selectedCount'],
+        message: 'Write result counts cannot exceed selectedCount',
       });
     }
   });
@@ -620,11 +683,15 @@ export const EMPTY_SYNC_JOB_SUMMARY: Readonly<SyncJobSummary> = Object.freeze({
   scannedCount: 0,
   uniqueItemCount: 0,
   pendingReviewCount: 0,
+  classificationErrorCount: 0,
+  unreviewedCount: 0,
+  selectedCount: 0,
+  excludedCount: 0,
   writePendingCount: 0,
   createdCount: 0,
   alreadyExistsCount: 0,
   skippedCount: 0,
-  errorCount: 0,
+  writeErrorCount: 0,
 });
 
 const syncJobShape = {
@@ -633,9 +700,13 @@ const syncJobShape = {
   source: SocialSourceSchema,
   status: SyncJobStatusSchema,
   adapterVersion: positiveVersionSchema,
+  scanRevision: revisionSchema,
+  reviewRevision: revisionSchema,
+  authorizedReviewRevision: positiveVersionSchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
   writeAuthorizedAt: IsoTimestampSchema.optional(),
+  stopRecord: SyncStopRecordSchema.optional(),
   checkpoint: SyncCheckpointSchema.optional(),
   budgets: SyncBudgetsSchema,
   summary: SyncJobSummarySchema,
@@ -664,16 +735,19 @@ function validateSyncJob(
     });
   }
   const requiresWriteAuthorization = ['writing', 'partial', 'complete'].includes(job.status);
-  if (requiresWriteAuthorization && !job.writeAuthorizedAt) {
+  if (
+    requiresWriteAuthorization &&
+    (!job.writeAuthorizedAt || job.authorizedReviewRevision === undefined)
+  ) {
     context.addIssue({
       code: 'custom',
       path: ['writeAuthorizedAt'],
-      message: 'Writing and completed jobs require explicit write authorization',
+      message: 'Writing and completed jobs require revision-bound write authorization',
     });
   }
   if (
     ['prepared', 'scanning', 'ready_for_review'].includes(job.status) &&
-    job.writeAuthorizedAt !== undefined
+    (job.writeAuthorizedAt !== undefined || job.authorizedReviewRevision !== undefined)
   ) {
     context.addIssue({
       code: 'custom',
@@ -681,11 +755,74 @@ function validateSyncJob(
       message: 'A job cannot be write-authorized before review is complete',
     });
   }
+  if ((job.writeAuthorizedAt === undefined) !== (job.authorizedReviewRevision === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['authorizedReviewRevision'],
+      message: 'Write authorization timestamp and revision must be stored together',
+    });
+  }
+  if (
+    job.authorizedReviewRevision !== undefined &&
+    job.authorizedReviewRevision !== job.reviewRevision
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['authorizedReviewRevision'],
+      message: 'Write authorization must bind the current review revision',
+    });
+  }
+  if (job.status === 'paused') {
+    if (!job.stopRecord) {
+      context.addIssue({
+        code: 'custom',
+        path: ['stopRecord'],
+        message: 'Paused jobs require a typed stop record',
+      });
+    } else if ((job.stopRecord.phase === 'writing') !== (job.writeAuthorizedAt !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['stopRecord', 'phase'],
+        message: 'Paused job phase must match its write authorization state',
+      });
+    }
+  } else if (job.stopRecord !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['stopRecord'],
+      message: 'Only paused jobs may retain a stop record',
+    });
+  }
+  if (job.stopRecord && job.stopRecord.scanRevision !== job.scanRevision) {
+    context.addIssue({
+      code: 'custom',
+      path: ['stopRecord', 'scanRevision'],
+      message: 'Stop record must bind the current scan revision',
+    });
+  }
+  if (
+    job.stopRecord &&
+    (job.stopRecord.scannedCount !== (job.checkpoint?.scannedCount ?? 0) ||
+      job.stopRecord.acceptedCount !== (job.checkpoint?.acceptedCount ?? 0))
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['stopRecord'],
+      message: 'Stop record counts must match the persisted checkpoint',
+    });
+  }
   if (job.checkpoint && job.checkpoint.adapterVersion !== job.adapterVersion) {
     context.addIssue({
       code: 'custom',
       path: ['checkpoint', 'adapterVersion'],
       message: 'Checkpoint adapterVersion must match the job adapterVersion',
+    });
+  }
+  if (job.checkpoint && job.checkpoint.scanRevision !== job.scanRevision) {
+    context.addIssue({
+      code: 'custom',
+      path: ['checkpoint', 'scanRevision'],
+      message: 'Checkpoint must bind the current scan revision',
     });
   }
   if (job.summary.uniqueItemCount > job.budgets.maxItems) {
@@ -727,8 +864,10 @@ function validateSyncJob(
   if (
     job.status === 'complete' &&
     (job.summary.pendingReviewCount !== 0 ||
+      job.summary.classificationErrorCount !== 0 ||
+      job.summary.unreviewedCount !== 0 ||
       job.summary.writePendingCount !== 0 ||
-      job.summary.errorCount !== 0)
+      job.summary.writeErrorCount !== 0)
   ) {
     context.addIssue({
       code: 'custom',
@@ -739,7 +878,7 @@ function validateSyncJob(
   if (
     job.status === 'complete' &&
     job.summary.createdCount + job.summary.alreadyExistsCount + job.summary.skippedCount !==
-      job.summary.uniqueItemCount
+      job.summary.selectedCount
   ) {
     context.addIssue({
       code: 'custom',
@@ -789,6 +928,9 @@ export const SyncItemClassificationSchema = z.enum([
 ]);
 export type SyncItemClassification = z.infer<typeof SyncItemClassificationSchema>;
 
+export const SyncReviewDecisionSchema = z.enum(['unreviewed', 'selected', 'excluded']);
+export type SyncReviewDecision = z.infer<typeof SyncReviewDecisionSchema>;
+
 export const WriteOutcomeSchema = budgetedSchema(
   z.discriminatedUnion('status', [
     z.strictObject({
@@ -835,6 +977,8 @@ const syncJobItemShape = {
   sourceItemId: SourceItemIdSchema,
   item: SocialItemSchema,
   classification: SyncItemClassificationSchema,
+  reviewDecision: SyncReviewDecisionSchema,
+  reviewRevision: revisionSchema,
   writeStatus: SyncItemWriteStatusSchema,
   outcome: WriteOutcomeSchema.optional(),
   discoveredAt: IsoTimestampSchema,
@@ -891,6 +1035,45 @@ function validateSyncJobItem(
       code: 'custom',
       path: ['writeStatus'],
       message: 'Classification errors cannot enter the write protocol',
+    });
+  }
+  if (row.reviewDecision === 'unreviewed') {
+    if (row.reviewRevision !== 0 || row.writeStatus !== 'not_requested') {
+      context.addIssue({
+        code: 'custom',
+        path: ['reviewDecision'],
+        message: 'Unreviewed items must remain at revision zero and outside the write protocol',
+      });
+    }
+  } else if (row.reviewRevision < 1) {
+    context.addIssue({
+      code: 'custom',
+      path: ['reviewRevision'],
+      message: 'Reviewed items require a positive review revision',
+    });
+  }
+  if (row.reviewDecision === 'excluded' && row.writeStatus !== 'not_requested') {
+    context.addIssue({
+      code: 'custom',
+      path: ['writeStatus'],
+      message: 'Excluded items cannot enter the write protocol',
+    });
+  }
+  if (row.reviewDecision !== 'selected' && row.writeStatus !== 'not_requested') {
+    context.addIssue({
+      code: 'custom',
+      path: ['reviewDecision'],
+      message: 'Only selected items may enter the write protocol',
+    });
+  }
+  if (
+    row.reviewDecision === 'selected' &&
+    (row.classification === 'pending' || row.classification === 'error')
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['classification'],
+      message: 'Pending and invalid items cannot be selected',
     });
   }
 }
@@ -972,6 +1155,7 @@ const writeIntentObjectSchema = z
     relativePath: RelativeMarkdownPathSchema,
     completeness: CaptureCompletenessSchema,
     extractorVersion: positiveVersionSchema,
+    reviewRevision: positiveVersionSchema,
     createdAt: IsoTimestampSchema,
   })
   .superRefine((intent, context) => {
@@ -998,7 +1182,7 @@ export const SyncMetaSchema = budgetedSchema(
   z.strictObject({
     key: z.literal('schema'),
     schemaVersion: z.literal(SYNC_SCHEMA_VERSION),
-    databaseVersion: z.literal(1),
+    databaseVersion: z.literal(2),
   }),
   persistedInputLimits,
 );

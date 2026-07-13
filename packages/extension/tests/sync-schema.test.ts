@@ -8,6 +8,7 @@ import {
   SyncJobItemRowSchema,
   SyncJobSchema,
   SyncRecordSchema,
+  SyncStopRecordSchema,
   WriteIntentSchema,
   WriteOutcomeSchema,
   WeiboSourceItemIdSchema,
@@ -229,6 +230,27 @@ describe('SocialItemSchema', () => {
 });
 
 describe('persisted sync schemas', () => {
+  it('keeps stop records typed, minimal, and free of page diagnostics', () => {
+    const stopRecord = {
+      code: 'worker_interrupted',
+      stoppedAt: '2026-07-13T00:00:01Z',
+      phase: 'scanning',
+      scanRevision: 2,
+      scannedCount: 10,
+      acceptedCount: 8,
+    };
+    expect(SyncStopRecordSchema.safeParse(stopRecord).success).toBe(true);
+    expect(SyncStopRecordSchema.safeParse({ ...stopRecord, code: 'captcha_bypass' }).success).toBe(
+      false,
+    );
+    expect(
+      SyncStopRecordSchema.safeParse({
+        ...stopRecord,
+        rawError: 'https://x.com/private/status/123 token=secret',
+      }).success,
+    ).toBe(false);
+  });
+
   it('keeps job objects strict and enforces complete summary invariants', () => {
     const job = {
       schemaVersion: 1,
@@ -236,14 +258,19 @@ describe('persisted sync schemas', () => {
       source: 'x',
       status: 'complete',
       adapterVersion: 1,
+      scanRevision: 1,
+      reviewRevision: 1,
+      authorizedReviewRevision: 1,
       createdAt: '2026-07-13T00:00:00Z',
       updatedAt: '2026-07-13T00:00:01Z',
       writeAuthorizedAt: '2026-07-13T00:00:01Z',
       checkpoint: {
         schemaVersion: 1,
         adapterVersion: 1,
+        scanRevision: 1,
         scannedCount: 1,
         acceptedCount: 1,
+        acceptedBytes: 100,
         consecutiveKnownIds: 0,
         updatedAt: '2026-07-13T00:00:01Z',
       },
@@ -258,11 +285,15 @@ describe('persisted sync schemas', () => {
         scannedCount: 1,
         uniqueItemCount: 1,
         pendingReviewCount: 0,
+        classificationErrorCount: 0,
+        unreviewedCount: 0,
+        selectedCount: 1,
+        excludedCount: 0,
         writePendingCount: 0,
         createdCount: 1,
         alreadyExistsCount: 0,
         skippedCount: 0,
-        errorCount: 0,
+        writeErrorCount: 0,
       },
     };
 
@@ -334,6 +365,7 @@ describe('persisted sync schemas', () => {
       relativePath: record.relativePath,
       completeness: 'summary_only',
       extractorVersion: 1,
+      reviewRevision: 1,
       createdAt: record.importedAt,
     };
     expect(WriteIntentSchema.safeParse(intent).success).toBe(true);
@@ -356,11 +388,28 @@ describe('persisted sync schemas', () => {
       sourceItemId,
       item: socialItem({ sourceItemId, canonicalUrl: record.canonicalUrl }),
       classification: 'new',
+      reviewDecision: 'unreviewed',
+      reviewRevision: 0,
       writeStatus: 'not_requested',
       discoveredAt: record.importedAt,
       updatedAt: record.importedAt,
     };
     expect(SyncJobItemRowSchema.safeParse(row).success).toBe(true);
+    expect(
+      SyncJobItemRowSchema.safeParse({
+        ...row,
+        reviewDecision: 'selected',
+        reviewRevision: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      SyncJobItemRowSchema.safeParse({
+        ...row,
+        reviewDecision: 'excluded',
+        reviewRevision: 1,
+        writeStatus: 'pending',
+      }).success,
+    ).toBe(false);
     expect(SyncJobItemRowSchema.safeParse({ ...row, key: 'wrong:item:key' }).success).toBe(false);
     expect(
       SyncJobItemRowSchema.safeParse({
@@ -390,8 +439,10 @@ describe('persisted sync schemas', () => {
     const hostileCheckpoint = Object.assign(Object.create({ inherited: true }), {
       schemaVersion: 1,
       adapterVersion: 1,
+      scanRevision: 1,
       scannedCount: 1,
       acceptedCount: 1,
+      acceptedBytes: 100,
       consecutiveKnownIds: 0,
       updatedAt: '2026-07-13T00:00:01Z',
     });

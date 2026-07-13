@@ -1,16 +1,16 @@
 ---
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
-status: IN_PROGRESS
+status: BLOCKED_BY_REAL_X_EVIDENCE
 version: 1
-updated: 2026-07-13
+updated: 2026-07-14
 depends_on: [goal-041, goal-042]
 branch: codex/social-sync-v4
 ---
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。本 Goal 分成 043A fixture-only 候选和 043B 真实 Chrome QA/最小接线；当前 v1 只允许 043A 与工具链门禁，不能据此修改 manifest、UI、service worker 或访问真实 X。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。整个 Goal 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前 v1 不授权 manifest、UI、service worker、真实 X 或生产接线。
 
 ## 1. 用户问题
 
@@ -82,6 +82,8 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 - 无网络的单元/集成测试；工具链门禁通过后才允许运行本地 fixture 浏览器 E2E。
 
 043A 不改 manifest、content script、service worker、Popup、Side Panel，不访问 x.com，不宣称真实平台可用。独立 `PASS` 后只能进入 043B，不能把整个 Goal 写成 `DONE`。
+
+当前结论：043A 为 `PASS`。实现包含严格 runtime schema、IndexedDB v1 -> v2 原子迁移、持久化复核 revision、受预算约束的 X fixture adapter/coordinator、Goal 042 mock Vault 端到端选择写入，以及 typed pause/resume。最终修复把 15 秒 invocation deadline 扩展到 adapter、解析、catalog、store 和分类边界，以 `AbortSignal` 和提交前 guard 阻止迟到的终态事务，并拒绝 adapter 低报 observed-node 数；335 项测试、完整门禁、依赖审计、独立 actual-diff review 和本机 Chrome `150.0.7871.101` 的全新离线 fixture E2E 均通过。该结论不代表真实 X 或生产入口可用，完整证据见 [`goal-043-x-bookmarks-incremental-sync-review.md`](../reviews/goal-043-x-bookmarks-incremental-sync-review.md#13-043a-实现独立复审与-fixture-chrome-证据)。
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
@@ -205,7 +207,7 @@ LOCAL_CHROME_FIRST / NO_DOWNLOAD / PROJECT_SCOPED
 
 - 优先使用本机已经安装、此前项目测试实际使用过的 Chrome；可以只读定位并执行其可执行文件，不把“位于用户目录”误判为禁止使用。
 - 禁止下载 Chrome for Testing、Chromium zip、provisioner 替代品或其它浏览器；工具找不到时先核对本机安装和 Codex Chrome 能力，仍不可用才报告。
-- 自动化使用 `C:\Projects\ShuHai\.tmp\goal-043\chrome-profile` 下任务专属全新 profile；不得复制、读取或修改日常 Chrome profile、Cookies、密码、历史、书签和登录数据。
+- 自动化使用当前 Goal worktree 内已由 Git 忽略的 `.pnpm-store/goal-043/chrome-profile/<run-id>` 任务专属全新 profile；不得写入主 checkout 的 `.tmp`，不得复制、读取或修改日常 Chrome profile、Cookies、密码、历史、书签和登录数据。
 - 若真实 X 需要登录，由用户在专用 profile 中手工完成；agent 不读取密码、验证码、Cookie、localStorage token 或网络 Authorization。
 - 启动时记录 cwd、profile、PID 和用途；只停止本任务亲自启动且 PID/命令/cwd 均匹配的 Chrome。不得按名称杀进程、关闭用户 Chrome 或释放未知端口。
 - 若用户明确指定当前 Chrome 的某个测试 tab，可通过 Chrome 控制能力只操作该 tab；不枚举无关页面或把该授权泛化到整个 profile。
@@ -282,7 +284,7 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 - G0 修复合同独立 `PASS` 后：允许精确 `npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm-cache --registry=https://registry.npmjs.org/ --package=pnpm@10.34.5 -- pnpm --version`；随后用同一前缀运行 `pnpm install --store-dir=.pnpm-store/goal-043/store --lockfile-only --ignore-scripts --registry=https://registry.npmjs.org/`，审查候选 lock 后才允许同参数 frozen install。所有后续 `why` 和质量门禁使用同一 npm exec/pnpm 10 前缀。只解析/复用 lock 中带 integrity 且与官方 metadata 一致的内容，不执行 lifecycle script、不写用户 npm cache/共享 pnpm store、不全局安装、不修改全局 npm/pnpm 配置。
 - 若 frozen install 返回 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`：先核实 `node_modules` 是 worktree 内精确普通目录，再只对该条命令临时设置 `$env:CI='true'` 后重试；命令完成后恢复/移除该进程环境值。不得使用 `--force`、手工删除或处理任何其它目录。
 - Audit 先使用上述 pnpm 10 前缀；有效 advisory JSON 按实际结果验收。仅遇 410/endpoint/protocol/parse 兼容错误时，允许用已安装的 Node `24.14.1` + pnpm `11.3.0` 对同一 lock 执行 full/production 只读 audit，并用 `Get-FileHash pnpm-lock.yaml -Algorithm SHA256` 证明前后未变；任一 audit 无有效结果即 `UNKNOWN/BLOCKED`。
-- 浏览器命令必须等 G0 和 043A 实现 review，通过后按第 6 节补充精确 executable/profile/PID 合同；当前不得启动。
+- 浏览器命令必须等 G0 和 043A 实现 review，通过后按第 6 节补充精确 executable/profile/PID 合同；043A 只已授权并完成隔离 fixture 证据，不授权真实 X 或 043B 浏览器操作。
 
 禁止运行 `pnpm clean`、dev/watch/preview/UI/API/browser server、`--host`、未知下载命令、全局安装、危险命令或任何非本任务进程/端口操作。
 
@@ -312,7 +314,7 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 
 ### 浏览器证据
 
-- 043A fixture E2E：本机 Chrome + 全新项目 profile、外部网络 0、虚拟节点回收、pause/resume。
+- 043A fixture E2E：本机 Chrome + 全新项目 profile、离线 context、fixture 页面 outbound request 0、虚拟节点回收、pause/resume。该证据不冒充 OS 级 Chrome 进程抓包。
 - 043B 真实 X：由 v2 定义测试账号、条目上限、截图/DOM 断言、无正文入 repo、无凭据日志和停止条件。
 
 ## 10. QA Delta

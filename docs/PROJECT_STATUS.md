@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
-> 最后更新：2026-07-13  
-> 状态：Goal 041/042 与 Goal 043 G0 已通过，当前进入 043A fixture-only 候选
+> 最后更新：2026-07-14
+> 状态：Goal 041/042 与 Goal 043A fixture-only 候选已通过；Goal 043 等待真实 X 证据
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一 `IN_PROGRESS` Goal 为 043。Goal 042 已 `DONE/PASS`；Goal 043 G0 修复提交 `b8a0b95` 使用 pnpm `10.34.5`，本地完整门禁、三轮合同复审、最终 actual-diff review 和 GitHub Actions Node `20.20.2` run `29252734846` / job `86825006096` 均已 `PASS`。G0 正式关闭，当前允许进入 043A fixture-only adapter/coordinator 候选；仍禁止真实 X、生产接线、manifest、service worker、UI 和浏览器运行。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前没有可继续实施的生产 Goal。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。043A 最终修复关闭了 invocation deadline 的迟到事务竞态、adapter 节点低报和 fixture 网络证据夸大问题；335 项测试、完整门禁、依赖审计、全新离线 Chrome fixture E2E 和独立 actual-diff review 均通过。它没有访问真实 X、真实 Vault 或用户 profile，也没有修改 manifest、service worker、content script 或 UI。整个 Goal 043 继续保持 `BLOCKED_BY_REAL_X_EVIDENCE`，当前只允许起草并复审 043B v2 合同。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -46,16 +46,17 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 - File System Access API Vault 目录授权和写入。
 - AI Provider、规则、模板、活动、备份和诊断。
 
-Goal 042 已独立通过但尚未接入生产路由的基础模块：
+Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 - runtime SocialItem/SyncJob/record/intent schema 与版本化 `shuhai-sync` IndexedDB。
 - SyncCatalog、checkpoint、崩溃恢复、跨会话 `source + sourceItemId` 去重。
 - 安全 Markdown、受限 Vault 索引重建、逐文件结果与默认不覆盖 writer。
+- X fixture adapter、顶部重扫 coordinator、持久化 review revision、typed stop reason 和固定预算。
 
 尚未实现：
 
-- X/微博收藏页全量或增量枚举。
-- X adapter 与上述同步底座的生产接线、持久化复核选择和 typed stop reason。
+- X/微博收藏页的生产枚举和真实页面证据。
+- X adapter 与上述同步底座的 manifest/content/background/UI 接线。
 - 真正独立的 Popup、Side Panel、Options 构建和按需状态加载。
 
 ## 5. 冻结中的 Goal 032
@@ -69,16 +70,16 @@ Goal 042 已独立通过但尚未接入生产路由的基础模块：
 
 ## 6. 新路线队列
 
-| 顺序 | Goal     | 状态                      | 目的                                     |
-| ---: | -------- | ------------------------- | ---------------------------------------- |
-|    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
-|    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
-|    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | X 收藏增量同步 MVP                       |
-|    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
-|    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
-|    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
-|    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
+| 顺序 | Goal     | 状态                         | 目的                                     |
+| ---: | -------- | ---------------------------- | ---------------------------------------- |
+|    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET`    | 保留书签 operation journal 候选实现      |
+|    1 | Goal 041 | `DONE`                       | X LIMITED_GO、微博 NO_GO                 |
+|    2 | Goal 042 | `DONE`                       | SyncJob、catalog、schema、Vault 安全基础 |
+|    3 | Goal 043 | `BLOCKED_BY_REAL_X_EVIDENCE` | 043A PASS；043B v2 合同尚未起草          |
+|    4 | Goal 044 | `PLANNED`                    | 微博收藏增量同步 MVP                     |
+|    5 | Goal 045 | `PLANNED`                    | 书签整理流程收缩及 Goal 032 安全收口     |
+|    6 | Goal 046 | `PLANNED`                    | 极简界面、E2E 和两周 dogfood             |
+|    7 | Goal 047 | `RESEARCH_GATE`              | 根据真实使用决定下一平台                 |
 
 用户已确认 v4 并授权连续完成 041-043。032-040 的旧队列仍停止自动编排；其中有价值的安全工作通过新 Goal 显式继承。
 
@@ -104,9 +105,10 @@ Goal 042 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 按 Goal 043 v1 精确白名单实现 043A schema/store/adapter/coordinator 和 mock/fixture 测试。
-2. 043A 本地门禁与独立 review 通过后，才编写 043B v2 的 sender/tab/host/job、生产入口和真实 Chrome QA allowlist。
-3. 真实 Chrome 验证优先使用本机已安装浏览器与项目专属临时 profile，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
+1. 基于实际入口代码起草 043B v2：精确 sender/tab/frame/host/job 绑定、权限差异、回滚、真实 Chrome QA 和文件 allowlist。
+2. 对 v2 合同做独立只读复审；合同 `PASS` 前不得修改生产入口。
+3. 用户醒来后在全新的项目隔离 Chrome profile 中手动登录测试 X 账号并确认扫描上限；agent 不读取密码、验证码、Cookie、localStorage token 或 Authorization。
+4. 真实 Chrome 仍只使用本机已安装浏览器，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
 
 ## 10. 当前文档
 

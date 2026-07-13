@@ -26,6 +26,7 @@ class TestClock {
 class MemoryWriter {
   readonly files = new Map<string, string>();
   writeCalls = 0;
+  readCalls = 0;
   nextOutcome?: VaultFileOutcome;
 
   async write(pathSegments: readonly string[], markdown: string): Promise<VaultFileOutcome> {
@@ -44,6 +45,7 @@ class MemoryWriter {
   }
 
   async readPrefix(pathSegments: readonly string[], maxBytes: number): Promise<string | null> {
+    this.readCalls += 1;
     const markdown = this.files.get(pathSegments.join('/'));
     if (markdown === undefined) {
       return null;
@@ -88,7 +90,6 @@ async function prepareWritingJob(
   clock: TestClock,
   jobId: string,
   items: readonly SocialItem[],
-  classification: 'new' | 'existing' | 'changed' = 'new',
 ): Promise<void> {
   await store.createJob({
     id: jobId,
@@ -97,25 +98,32 @@ async function prepareWritingJob(
     budgets: BUDGETS,
     createdAt: clock.nextIso(),
   });
-  await store.transitionJob(jobId, 'scanning', clock.nextIso());
-  await store.putScanBatch(jobId, items, {
+  await store.claimScanRevision(jobId, 0, clock.nextIso());
+  await store.putScanBatch(jobId, 1, items, {
     schemaVersion: 1,
     adapterVersion: 1,
+    scanRevision: 1,
     scannedCount: items.length,
     acceptedCount: items.length,
+    acceptedBytes: items.reduce(
+      (sum, item) => sum + new TextEncoder().encode(JSON.stringify(item)).byteLength,
+      0,
+    ),
     consecutiveKnownIds: 0,
     updatedAt: clock.nextIso(),
   });
   for (const item of items) {
-    await store.updateJobItemClassification(
-      jobId,
-      item.sourceItemId,
-      classification,
-      clock.nextIso(),
-    );
+    await store.updateJobItemClassification(jobId, item.sourceItemId, 'new', 1, clock.nextIso());
   }
-  await store.transitionJob(jobId, 'ready_for_review', clock.nextIso());
-  await store.transitionJob(jobId, 'writing', clock.nextIso());
+  await store.finishScan(jobId, 1, clock.nextIso());
+  const selectedIds = items.map((item) => item.sourceItemId);
+  const selection = await store.saveReviewSelection(jobId, 0, selectedIds, clock.nextIso());
+  await store.authorizeReviewSelection(
+    jobId,
+    selection.job.reviewRevision,
+    selectedIds,
+    clock.nextIso(),
+  );
 }
 
 function engine(store: SyncEngineStorePort, writer: MemoryWriter, clock: TestClock): SyncEngine {
@@ -187,6 +195,57 @@ describe('SyncEngine', () => {
     store.close();
   });
 
+  it('does not touch the writer for an excluded or unauthorized item', async () => {
+    const clock = new TestClock();
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'engine-review-authorization',
+    });
+    const item = socialItem(90);
+    await store.createJob({
+      id: 'job-excluded',
+      source: 'x',
+      adapterVersion: 1,
+      budgets: BUDGETS,
+      createdAt: clock.nextIso(),
+    });
+    await store.claimScanRevision('job-excluded', 0, clock.nextIso());
+    const acceptedBytes = new TextEncoder().encode(JSON.stringify(item)).byteLength;
+    await store.putScanBatch('job-excluded', 1, [item], {
+      schemaVersion: 1,
+      adapterVersion: 1,
+      scanRevision: 1,
+      scannedCount: 1,
+      acceptedCount: 1,
+      acceptedBytes,
+      consecutiveKnownIds: 0,
+      updatedAt: clock.nextIso(),
+    });
+    await store.updateJobItemClassification(
+      'job-excluded',
+      item.sourceItemId,
+      'existing',
+      1,
+      clock.nextIso(),
+    );
+    await store.finishScan('job-excluded', 1, clock.nextIso());
+    const selection = await store.saveReviewSelection('job-excluded', 0, [], clock.nextIso());
+    await store.authorizeReviewSelection(
+      'job-excluded',
+      selection.job.reviewRevision,
+      [],
+      clock.nextIso(),
+    );
+    const writer = new MemoryWriter();
+
+    await expect(
+      engine(store, writer, clock).writeItem('job-excluded', item, 'ShuHai'),
+    ).rejects.toThrow('persisted review authorization');
+    expect(writer.writeCalls).toBe(0);
+    await expect(store.listWriteIntents({ jobId: 'job-excluded' })).resolves.toEqual([]);
+    store.close();
+  });
+
   it('does not rewrite an existing catalog item and marks source changes for review', async () => {
     const clock = new TestClock();
     const store = await openSyncStore({
@@ -200,14 +259,14 @@ describe('SyncEngine', () => {
     await engine(store, writer, clock).writeItem('job-first', item, 'ShuHai');
     await store.transitionJob('job-first', 'complete', clock.nextIso());
 
-    await prepareWritingJob(store, clock, 'job-existing', [item], 'existing');
+    await prepareWritingJob(store, clock, 'job-existing', [item]);
     const existing = await engine(store, writer, clock).writeItem('job-existing', item, 'ShuHai');
     expect(existing.outcome.status).toBe('already_exists');
     expect(writer.writeCalls).toBe(1);
     await store.transitionJob('job-existing', 'complete', clock.nextIso());
 
     const changedItem = socialItem(2, { contentHash: 'f'.repeat(64) });
-    await prepareWritingJob(store, clock, 'job-changed', [changedItem], 'changed');
+    await prepareWritingJob(store, clock, 'job-changed', [changedItem]);
     const changed = await engine(store, writer, clock).writeItem(
       'job-changed',
       changedItem,
@@ -300,13 +359,13 @@ describe('SyncEngine', () => {
     await expect(syncEngine.writeItem('job-retry', item, 'ShuHai')).rejects.toThrow(
       'not in the writing state',
     );
-    await store.transitionJob('job-retry', 'writing', clock.nextIso());
+    await store.authorizeReviewSelection('job-retry', 1, [item.sourceItemId], clock.nextIso());
     await expect(syncEngine.writeItem('job-retry', item, 'ShuHai')).resolves.toMatchObject({
       outcome: { status: 'created' },
       intentPending: false,
     });
     await expect(store.getJob('job-retry')).resolves.toMatchObject({
-      summary: { createdCount: 1, errorCount: 0, writePendingCount: 0 },
+      summary: { createdCount: 1, writeErrorCount: 0, writePendingCount: 0 },
     });
     expect([...writer.files.keys()]).toEqual([generatedPath(item)]);
     store.close();
@@ -333,7 +392,7 @@ describe('SyncEngine', () => {
       importedAt: clock.nextIso(),
       lastSeenAt: clock.nextIso(),
     });
-    await prepareWritingJob(store, clock, 'job-catalog-conflict', [item], 'existing');
+    await prepareWritingJob(store, clock, 'job-catalog-conflict', [item]);
     const writer = new MemoryWriter();
     writer.files.set(`ShuHai/x/${item.sourceItemId}.md`, renderSafeSocialMarkdown(other));
 
@@ -359,6 +418,7 @@ describe('SyncEngine', () => {
       jobId: 'job-pending',
       sourceItemId: item.sourceItemId,
       relativePath: `ShuHai/x/${item.sourceItemId}.md`,
+      reviewRevision: 1,
       createdAt: clock.nextIso(),
     });
 
@@ -371,6 +431,40 @@ describe('SyncEngine', () => {
       intentPending: true,
     });
     await expect(store.listWriteIntents({ jobId: 'job-pending' })).resolves.toHaveLength(1);
+    store.close();
+  });
+
+  it('does not read or write the Vault while a writing job is paused', async () => {
+    const clock = new TestClock();
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'engine-paused-writing',
+    });
+    const item = socialItem(14);
+    await prepareWritingJob(store, clock, 'job-paused-writing', [item]);
+    await store.putWriteIntent({
+      id: 'intent-paused-writing',
+      jobId: 'job-paused-writing',
+      sourceItemId: item.sourceItemId,
+      relativePath: `ShuHai/x/${item.sourceItemId}.md`,
+      reviewRevision: 1,
+      createdAt: clock.nextIso(),
+    });
+    await store.pauseJobWithStopRecord(
+      'job-paused-writing',
+      1,
+      'permission_revoked',
+      'writing',
+      clock.nextIso(),
+    );
+    const writer = new MemoryWriter();
+
+    await expect(
+      engine(store, writer, clock).reconcilePendingIntents('job-paused-writing'),
+    ).rejects.toThrow('persisted review authorization');
+    expect(writer.readCalls).toBe(0);
+    expect(writer.writeCalls).toBe(0);
+    await expect(store.listWriteIntents({ jobId: 'job-paused-writing' })).resolves.toHaveLength(1);
     store.close();
   });
 
@@ -387,6 +481,7 @@ describe('SyncEngine', () => {
       jobId: 'job-before-file',
       sourceItemId: item.sourceItemId,
       relativePath: `ShuHai/x/${item.sourceItemId}.md`,
+      reviewRevision: 1,
       createdAt: clock.nextIso(),
     });
     const writer = new MemoryWriter();

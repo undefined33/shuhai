@@ -1,10 +1,9 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ActiveSyncJobExistsError,
   CorruptSyncRowError,
-  InvalidSyncJobTransitionError,
   SyncStoreConflictError,
   openSyncStore,
   type SyncStore,
@@ -75,8 +74,10 @@ function checkpoint(
   return {
     schemaVersion: 1,
     adapterVersion: 1,
+    scanRevision: 1,
     scannedCount,
     acceptedCount: scannedCount,
+    acceptedBytes: scannedCount * 1_024,
     consecutiveKnownIds: 0,
     updatedAt,
     ...overrides,
@@ -119,7 +120,58 @@ async function createScanningJob(
     budgets: budgets(),
     createdAt: timestamp(0),
   });
-  await store.transitionJob(id, 'scanning', timestamp(1));
+  await store.claimScanRevision(id, 0, timestamp(1));
+}
+
+async function persistScanBatch(
+  store: SyncStore,
+  jobId: string,
+  items: readonly SocialItem[],
+  nextCheckpoint: SyncCheckpoint,
+) {
+  return store.putScanBatch(jobId, nextCheckpoint.scanRevision, items, nextCheckpoint);
+}
+
+async function classifyItem(
+  store: SyncStore,
+  jobId: string,
+  sourceItemId: string,
+  classification: 'new' | 'existing' | 'changed' | 'incomplete' | 'error',
+  updatedAt: string,
+) {
+  const job = await store.getJob(jobId);
+  if (!job) {
+    throw new Error('Test job missing');
+  }
+  return store.updateJobItemClassification(
+    jobId,
+    sourceItemId,
+    classification,
+    job.scanRevision,
+    updatedAt,
+  );
+}
+
+async function prepareWritingJob(
+  store: SyncStore,
+  jobId: string,
+  selectedSourceItemIds: readonly string[],
+  finishAt: string,
+  selectAt: string,
+  authorizeAt: string,
+) {
+  const scanning = await store.getJob(jobId);
+  if (!scanning) {
+    throw new Error('Test job missing');
+  }
+  await store.finishScan(jobId, scanning.scanRevision, finishAt);
+  const selection = await store.saveReviewSelection(jobId, 0, selectedSourceItemIds, selectAt);
+  return store.authorizeReviewSelection(
+    jobId,
+    selection.job.reviewRevision,
+    selectedSourceItemIds,
+    authorizeAt,
+  );
 }
 
 function openNativeDatabase(
@@ -142,6 +194,108 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
     transaction.addEventListener('abort', () => reject(transaction.error));
     transaction.addEventListener('error', () => reject(transaction.error));
   });
+}
+
+function createLegacyV1Layout(database: IDBDatabase): void {
+  const jobs = database.createObjectStore('jobs', { keyPath: 'id' });
+  jobs.createIndex('by-source', 'source');
+  jobs.createIndex('by-status', 'status');
+  jobs.createIndex('by-active-source', 'activeSource', { unique: true });
+
+  const items = database.createObjectStore('items', { keyPath: 'key' });
+  items.createIndex('by-job-id', 'jobId');
+  items.createIndex('by-job-source-item', ['jobId', 'sourceItemId'], { unique: true });
+  items.createIndex('by-job-classification', ['jobId', 'classification']);
+  items.createIndex('by-job-write-status', ['jobId', 'writeStatus']);
+
+  const records = database.createObjectStore('records', { keyPath: 'key' });
+  records.createIndex('by-source', 'source');
+  records.createIndex('by-canonical-url', 'canonicalUrl');
+  records.createIndex('by-content-hash', 'contentHash');
+
+  const intents = database.createObjectStore('intents', { keyPath: 'id' });
+  intents.createIndex('by-job-id', 'jobId');
+  intents.createIndex('by-item-key', 'itemKey', { unique: true });
+  intents.createIndex('by-record-key', 'recordKey');
+
+  const meta = database.createObjectStore('meta', { keyPath: 'key' });
+  meta.put({ key: 'schema', schemaVersion: 1, databaseVersion: 1 });
+}
+
+async function seedLegacyV1Database(
+  factory: IDBFactory,
+  dbName: string,
+  rows: Partial<Record<'jobs' | 'items' | 'records' | 'intents', readonly unknown[]>>,
+): Promise<void> {
+  const database = await openNativeDatabase(factory, dbName, 1, createLegacyV1Layout);
+  const storeNames = Object.keys(rows) as Array<'jobs' | 'items' | 'records' | 'intents'>;
+  if (storeNames.length > 0) {
+    const transaction = database.transaction(storeNames, 'readwrite');
+    for (const storeName of storeNames) {
+      for (const row of rows[storeName] ?? []) {
+        transaction.objectStore(storeName).put(row);
+      }
+    }
+    await transactionDone(transaction);
+  }
+  database.close();
+}
+
+function legacyJob(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const job: Record<string, unknown> = {
+    schemaVersion: 1,
+    id: 'legacy-job',
+    source: 'x',
+    status: 'scanning',
+    adapterVersion: 1,
+    createdAt: timestamp(0),
+    updatedAt: timestamp(2),
+    checkpoint: {
+      schemaVersion: 1,
+      adapterVersion: 1,
+      scannedCount: 1,
+      acceptedCount: 1,
+      consecutiveKnownIds: 0,
+      updatedAt: timestamp(2),
+    },
+    budgets: budgets(),
+    summary: {
+      scannedCount: 1,
+      uniqueItemCount: 1,
+      pendingReviewCount: 0,
+      writePendingCount: 0,
+      createdCount: 0,
+      alreadyExistsCount: 0,
+      skippedCount: 0,
+      errorCount: 0,
+    },
+    activeSource: 'x',
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete job[key];
+    }
+  }
+  return job;
+}
+
+function legacyItem(
+  item: SocialItem,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    key: `${'legacy-job'.length}:legacy-job:${item.sourceItemId}`,
+    schemaVersion: 1,
+    jobId: 'legacy-job',
+    sourceItemId: item.sourceItemId,
+    item,
+    classification: 'new',
+    writeStatus: 'not_requested',
+    discoveredAt: timestamp(2),
+    updatedAt: timestamp(2),
+    ...overrides,
+  };
 }
 
 function factoryWithBlockedOpen(factory: IDBFactory): IDBFactory {
@@ -168,14 +322,14 @@ function factoryWithBlockedOpen(factory: IDBFactory): IDBFactory {
 }
 
 describe('SyncStore database and jobs', () => {
-  it('creates the isolated shuhai-sync schema v1 and exposes metadata', async () => {
+  it('creates the isolated shuhai-sync schema v2 and exposes metadata', async () => {
     const factory = new IDBFactory();
     const store = await openSyncStore({ indexedDB: factory, dbName: 'sync-layout' });
 
     await expect(store.getMeta()).resolves.toEqual({
       key: 'schema',
       schemaVersion: 1,
-      databaseVersion: 1,
+      databaseVersion: 2,
     });
     await expect(store.listJobs()).resolves.toEqual([]);
     await expect(store.listRecords()).resolves.toEqual([]);
@@ -185,7 +339,7 @@ describe('SyncStore database and jobs', () => {
 
   it('fails closed for newer versions and malformed schema-v1 layouts', async () => {
     const newerFactory = new IDBFactory();
-    const newer = await openNativeDatabase(newerFactory, 'sync-newer', 2);
+    const newer = await openNativeDatabase(newerFactory, 'sync-newer', 3);
     newer.close();
     await expect(
       openSyncStore({ indexedDB: newerFactory, dbName: 'sync-newer' }),
@@ -214,7 +368,7 @@ describe('SyncStore database and jobs', () => {
         onBlocked: (event) => blockedEvents.push(event),
       }),
     ).rejects.toMatchObject({ code: 'open_blocked' });
-    expect(blockedEvents).toEqual([{ currentVersion: 1, requestedVersion: 1 }]);
+    expect(blockedEvents).toEqual([{ currentVersion: 1, requestedVersion: 2 }]);
   });
 
   it('closes the store on versionchange even when the observer throws', async () => {
@@ -230,7 +384,7 @@ describe('SyncStore database and jobs', () => {
       },
     });
 
-    const upgraded = await openNativeDatabase(factory, dbName, 2);
+    const upgraded = await openNativeDatabase(factory, dbName, 3);
     expect(observed).toBe(1);
     await expect(store.getMeta()).rejects.toMatchObject({ code: 'transaction_failed' });
     upgraded.close();
@@ -248,7 +402,7 @@ describe('SyncStore database and jobs', () => {
       createdAt: timestamp(0),
     });
 
-    const native = await openNativeDatabase(factory, dbName, 1);
+    const native = await openNativeDatabase(factory, dbName, 2);
     const transaction = native.transaction('jobs', 'readwrite');
     transaction.objectStore('jobs').put({
       id: 'job-corrupt',
@@ -315,11 +469,11 @@ describe('SyncStore database and jobs', () => {
       ActiveSyncJobExistsError,
     );
     await expect(store.transitionJob('job-x-1', 'writing', timestamp(1))).rejects.toBeInstanceOf(
-      InvalidSyncJobTransitionError,
+      SyncStoreConflictError,
     );
 
     await store.createJob({ ...input, id: 'job-weibo-1', source: 'weibo' });
-    await store.transitionJob('job-x-1', 'scanning', timestamp(1));
+    await store.claimScanRevision('job-x-1', 0, timestamp(1));
     await store.transitionJob('job-x-1', 'cancelled', timestamp(2));
     await expect(store.createJob({ ...input, id: 'job-x-2' })).resolves.toMatchObject({
       id: 'job-x-2',
@@ -335,28 +489,292 @@ describe('SyncStore database and jobs', () => {
       dbName: 'sync-paused-phase',
     });
     await createScanningJob(store);
-    await store.transitionJob('job-1', 'paused', timestamp(2));
-    await expect(store.transitionJob('job-1', 'writing', timestamp(3))).rejects.toBeInstanceOf(
-      SyncStoreConflictError,
-    );
-    await store.transitionJob('job-1', 'scanning', timestamp(3));
+    await store.pauseJobWithStopRecord('job-1', 1, 'user_paused', 'scanning', timestamp(2));
+    await expect(
+      store.authorizeReviewSelection('job-1', 0, [], timestamp(3)),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await store.claimScanRevision('job-1', 1, timestamp(3));
 
     const item = socialItem(99);
-    await store.putJobItem('job-1', item, checkpoint(1, timestamp(4)));
-    await store.updateJobItemClassification('job-1', item.sourceItemId, 'new', timestamp(5));
-    await store.transitionJob('job-1', 'ready_for_review', timestamp(6));
-    await expect(store.transitionJob('job-1', 'writing', timestamp(7))).resolves.toMatchObject({
-      writeAuthorizedAt: timestamp(7),
+    const resumedCheckpoint = checkpoint(1, timestamp(4), { scanRevision: 2 });
+    await store.putJobItem('job-1', 2, item, resumedCheckpoint);
+    await store.updateJobItemClassification('job-1', item.sourceItemId, 'new', 2, timestamp(5));
+    await store.finishScan('job-1', 2, timestamp(6));
+    await store.saveReviewSelection('job-1', 0, [item.sourceItemId], timestamp(7));
+    await expect(
+      store.authorizeReviewSelection('job-1', 1, [item.sourceItemId], timestamp(8)),
+    ).resolves.toMatchObject({
+      writeAuthorizedAt: timestamp(8),
     });
-    await store.transitionJob('job-1', 'paused', timestamp(8));
-    await expect(store.transitionJob('job-1', 'scanning', timestamp(9))).rejects.toBeInstanceOf(
+    await store.pauseJobWithStopRecord('job-1', 2, 'user_paused', 'writing', timestamp(9));
+    await expect(store.claimScanRevision('job-1', 2, timestamp(10))).rejects.toBeInstanceOf(
       SyncStoreConflictError,
     );
-    await expect(store.transitionJob('job-1', 'writing', timestamp(9))).resolves.toMatchObject({
-      writeAuthorizedAt: timestamp(7),
+    await expect(
+      store.authorizeReviewSelection('job-1', 1, [item.sourceItemId], timestamp(10)),
+    ).resolves.toMatchObject({ writeAuthorizedAt: timestamp(10) });
+    store.close();
+  });
+
+  it('rolls back the terminal scan transition when its commit guard expires', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-finish-commit-guard',
+    });
+    await createScanningJob(store);
+    const item = socialItem(100);
+    await persistScanBatch(store, 'job-1', [item], checkpoint(1, timestamp(2)));
+    await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+
+    await expect(
+      store.finishScan('job-1', 1, timestamp(4), { beforeCommit: () => false }),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await expect(store.getJob('job-1')).resolves.toMatchObject({
+      status: 'scanning',
+      scanRevision: 1,
+      summary: { uniqueItemCount: 1, pendingReviewCount: 0 },
     });
     store.close();
   });
+});
+
+describe('SyncStore v1 to v2 migration', () => {
+  it('migrates interrupted scanning data as unreviewed and explicitly paused', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-scanning';
+    const item = socialItem(301);
+    await seedLegacyV1Database(factory, dbName, {
+      jobs: [legacyJob()],
+      items: [legacyItem(item)],
+    });
+
+    const store = await openSyncStore({ indexedDB: factory, dbName });
+    await expect(store.getMeta()).resolves.toEqual({
+      key: 'schema',
+      schemaVersion: 1,
+      databaseVersion: 2,
+    });
+    await expect(store.getJob('legacy-job')).resolves.toMatchObject({
+      status: 'paused',
+      scanRevision: 0,
+      reviewRevision: 0,
+      stopRecord: {
+        code: 'worker_interrupted',
+        phase: 'scanning',
+        scanRevision: 0,
+      },
+      checkpoint: { scanRevision: 0 },
+      summary: { unreviewedCount: 1, selectedCount: 0, excludedCount: 0 },
+    });
+    await expect(store.getJobItem('legacy-job', item.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'unreviewed',
+      reviewRevision: 0,
+      writeStatus: 'not_requested',
+    });
+    store.close();
+  });
+
+  it('preserves terminal history without making excluded items writable', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-terminal';
+    const written = socialItem(302);
+    const excluded = socialItem(303);
+    const relativePath = 'Social/x/legacy-written.md';
+    const record: SyncRecord = {
+      schemaVersion: 1,
+      key: makeSyncRecordKey('x', written.sourceItemId),
+      source: 'x',
+      sourceItemId: written.sourceItemId,
+      canonicalUrl: written.canonicalUrl,
+      contentHash: written.contentHash,
+      relativePath,
+      completeness: written.completeness,
+      extractorVersion: written.extractorVersion,
+      importedAt: timestamp(2),
+      lastSeenAt: timestamp(2),
+    };
+    await seedLegacyV1Database(factory, dbName, {
+      jobs: [
+        legacyJob({
+          status: 'cancelled',
+          activeSource: undefined,
+          writeAuthorizedAt: timestamp(2),
+          checkpoint: {
+            schemaVersion: 1,
+            adapterVersion: 1,
+            scannedCount: 2,
+            acceptedCount: 2,
+            consecutiveKnownIds: 0,
+            updatedAt: timestamp(2),
+          },
+          summary: {
+            scannedCount: 2,
+            uniqueItemCount: 2,
+            pendingReviewCount: 0,
+            writePendingCount: 0,
+            createdCount: 1,
+            alreadyExistsCount: 0,
+            skippedCount: 0,
+            errorCount: 0,
+          },
+        }),
+      ],
+      items: [
+        legacyItem(written, {
+          writeStatus: 'created',
+          outcome: { status: 'created', relativePath, bytes: 42 },
+        }),
+        legacyItem(excluded, {
+          key: `${'legacy-job'.length}:legacy-job:${excluded.sourceItemId}`,
+          sourceItemId: excluded.sourceItemId,
+          item: excluded,
+        }),
+      ],
+      records: [record],
+    });
+
+    const store = await openSyncStore({ indexedDB: factory, dbName });
+    await expect(store.getJob('legacy-job')).resolves.toMatchObject({
+      status: 'cancelled',
+      reviewRevision: 1,
+      authorizedReviewRevision: 1,
+      summary: { selectedCount: 1, excludedCount: 1, unreviewedCount: 0 },
+    });
+    await expect(store.getJobItem('legacy-job', written.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'selected',
+      reviewRevision: 1,
+      writeStatus: 'created',
+    });
+    await expect(store.getJobItem('legacy-job', excluded.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'excluded',
+      reviewRevision: 1,
+      writeStatus: 'not_requested',
+    });
+    store.close();
+  });
+
+  it('atomically aborts unsafe active writes and leaves the v1 database unchanged', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-active-write';
+    const item = socialItem(304);
+    await seedLegacyV1Database(factory, dbName, {
+      jobs: [
+        legacyJob({
+          status: 'writing',
+          writeAuthorizedAt: timestamp(2),
+          summary: {
+            scannedCount: 1,
+            uniqueItemCount: 1,
+            pendingReviewCount: 0,
+            writePendingCount: 1,
+            createdCount: 0,
+            alreadyExistsCount: 0,
+            skippedCount: 0,
+            errorCount: 0,
+          },
+        }),
+      ],
+      items: [legacyItem(item, { writeStatus: 'pending' })],
+    });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'unsafe_migration_state',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 1);
+    expect(raw.version).toBe(1);
+    const transaction = raw.transaction(['jobs', 'meta'], 'readonly');
+    const done = transactionDone(transaction);
+    await expect(
+      new Promise((resolve, reject) => {
+        const request = transaction.objectStore('jobs').get('legacy-job');
+        request.addEventListener('success', () => resolve(request.result));
+        request.addEventListener('error', () => reject(request.error));
+      }),
+    ).resolves.toMatchObject({ status: 'writing' });
+    await done;
+    raw.close();
+  });
+
+  it('aborts before parsing oversized v1 content and preserves version 1', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-byte-budget';
+    await seedLegacyV1Database(factory, dbName, {
+      records: [{ key: 'oversized', payload: 'x'.repeat(16 * MIB + 1) }],
+    });
+    const getAllSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll');
+    try {
+      await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+        code: 'migration_budget_exceeded',
+      });
+      expect(getAllSpy).not.toHaveBeenCalled();
+      const raw = await openNativeDatabase(factory, dbName, 1);
+      expect(raw.version).toBe(1);
+      raw.close();
+    } finally {
+      getAllSpy.mockRestore();
+    }
+  });
+
+  it('bounds cumulative zero-byte container nodes before retaining all v1 rows', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-structure-budget';
+    const rows = Array.from({ length: 123 }, (_, index) => ({
+      key: `wide-${index}`,
+      payload: Array.from({ length: 4_090 }, () => null),
+    }));
+    await seedLegacyV1Database(factory, dbName, { records: rows });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'migration_budget_exceeded',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 1);
+    expect(raw.version).toBe(1);
+    raw.close();
+  }, 20_000);
+
+  it('rejects any unresolved v1 intent without inspecting its payload', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-unresolved-intent';
+    await seedLegacyV1Database(factory, dbName, {
+      intents: [{ id: 'legacy-intent', unexpected: 'untrusted' }],
+    });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'unsafe_migration_state',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 1);
+    expect(raw.version).toBe(1);
+    raw.close();
+  });
+
+  it('rejects unknown v1 fields instead of silently dropping them', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-unknown-field';
+    await seedLegacyV1Database(factory, dbName, {
+      jobs: [legacyJob({ unexpectedAuthorization: true })],
+    });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'unsafe_migration_state',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 1);
+    expect(raw.version).toBe(1);
+    raw.close();
+  });
+
+  it('aborts when the v1 row-count migration budget is exceeded', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-row-budget';
+    const rows = Array.from({ length: 30_000 }, (_, index) => ({ key: `row-${index}` }));
+    await seedLegacyV1Database(factory, dbName, { records: rows });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'migration_budget_exceeded',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 1);
+    expect(raw.version).toBe(1);
+    raw.close();
+  }, 20_000);
 });
 
 describe('SyncStore checkpoint and item recovery', () => {
@@ -369,6 +787,7 @@ describe('SyncStore checkpoint and item recovery', () => {
     const second = socialItem(2);
     const third = socialItem(3);
     let checkpointAccessorInvoked = false;
+    let batchAccessorInvoked = false;
     const hostileCheckpoint: Record<string, unknown> = {
       schemaVersion: 1,
       adapterVersion: 1,
@@ -383,17 +802,35 @@ describe('SyncStore checkpoint and item recovery', () => {
         return timestamp(2);
       },
     });
+    const hostileBatch: unknown[] = [];
+    Object.defineProperty(hostileBatch, '0', {
+      enumerable: true,
+      get: () => {
+        batchAccessorInvoked = true;
+        return first;
+      },
+    });
 
-    await expect(store.putScanBatch('job-1', [], hostileCheckpoint)).rejects.toBeTruthy();
+    await expect(store.putScanBatch('job-1', 1, [], hostileCheckpoint)).rejects.toBeTruthy();
     expect(checkpointAccessorInvoked).toBe(false);
+    await expect(
+      store.putScanBatch('job-1', 1, hostileBatch, checkpoint(1, timestamp(2))),
+    ).rejects.toBeTruthy();
+    expect(batchAccessorInvoked).toBe(false);
 
     await expect(
-      store.putScanBatch('job-1', {} as unknown as readonly unknown[], checkpoint(0, timestamp(2))),
+      store.putScanBatch(
+        'job-1',
+        1,
+        {} as unknown as readonly unknown[],
+        checkpoint(0, timestamp(2)),
+      ),
     ).rejects.toThrow(TypeError);
 
     await expect(
       store.putScanBatch(
         'job-1',
+        1,
         [first, second],
         checkpoint(2, timestamp(2), { cursor: 'page-1' }),
       ),
@@ -402,6 +839,7 @@ describe('SyncStore checkpoint and item recovery', () => {
     await expect(
       store.putScanBatch(
         'job-1',
+        1,
         [third, { ...first, title: 'Conflicting replay' }],
         checkpoint(4, timestamp(3), { cursor: 'page-2' }),
       ),
@@ -414,15 +852,25 @@ describe('SyncStore checkpoint and item recovery', () => {
 
     store.close();
     store = await openSyncStore({ indexedDB: factory, dbName });
-    await expect(store.getJob('job-1')).resolves.toMatchObject({
+    await expect(store.recoverInterruptedScanningJobs(timestamp(4))).resolves.toHaveLength(1);
+    await expect(store.claimScanRevision('job-1', 1, timestamp(5))).resolves.toMatchObject({
       status: 'scanning',
-      checkpoint: { scannedCount: 2, cursor: 'page-1' },
+      scanRevision: 2,
+      checkpoint: { scannedCount: 2, cursor: 'page-1', scanRevision: 2 },
     });
+    await expect(
+      store.putScanBatch('job-1', 1, [third], checkpoint(3, timestamp(6), { scanRevision: 1 })),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
     await expect(
       store.putScanBatch(
         'job-1',
+        2,
         [first, second, third],
-        checkpoint(5, timestamp(4), { cursor: 'page-2', consecutiveKnownIds: 2 }),
+        checkpoint(5, timestamp(6), {
+          scanRevision: 2,
+          cursor: 'page-2',
+          consecutiveKnownIds: 2,
+        }),
       ),
     ).resolves.toMatchObject({ inserted: 1, existing: 2 });
     await expect(store.listJobItems('job-1')).resolves.toHaveLength(3);
@@ -433,12 +881,17 @@ describe('SyncStore checkpoint and item recovery', () => {
     await expect(
       store.putCheckpoint(
         'job-1',
-        checkpoint(6, timestamp(5), { acceptedCount: 5, cursor: 'page-2' }),
+        2,
+        checkpoint(6, timestamp(7), {
+          scanRevision: 2,
+          acceptedCount: 5,
+          cursor: 'page-2',
+        }),
       ),
     ).resolves.toMatchObject({ checkpoint: { scannedCount: 6, acceptedCount: 5 } });
-    await expect(store.putCheckpoint('job-1', checkpoint(5, timestamp(6)))).rejects.toBeInstanceOf(
-      SyncStoreConflictError,
-    );
+    await expect(
+      store.putCheckpoint('job-1', 2, checkpoint(5, timestamp(8), { scanRevision: 2 })),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
     store.close();
   });
 
@@ -450,15 +903,114 @@ describe('SyncStore checkpoint and item recovery', () => {
     await createScanningJob(store);
     const first = socialItem(20);
     const second = socialItem(21);
-    await store.putScanBatch('job-1', [first, second], checkpoint(2, timestamp(2)));
-    await store.updateJobItemClassification('job-1', first.sourceItemId, 'new', timestamp(4));
+    await persistScanBatch(store, 'job-1', [first, second], checkpoint(2, timestamp(2)));
+    await classifyItem(store, 'job-1', first.sourceItemId, 'new', timestamp(4));
     await expect(
-      store.updateJobItemClassification('job-1', second.sourceItemId, 'new', timestamp(3)),
+      classifyItem(store, 'job-1', second.sourceItemId, 'new', timestamp(3)),
     ).rejects.toBeInstanceOf(SyncStoreConflictError);
     await expect(store.getJob('job-1')).resolves.toMatchObject({
       updatedAt: timestamp(4),
       summary: { pendingReviewCount: 1 },
     });
+    store.close();
+  });
+});
+
+describe('SyncStore persisted review selection', () => {
+  it('binds exact selected IDs to a monotonic revision across reopen', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-review-selection';
+    let store = await openSyncStore({ indexedDB: factory, dbName });
+    await createScanningJob(store);
+    const selectedItem = socialItem(401);
+    const excludedItem = socialItem(402);
+    await persistScanBatch(
+      store,
+      'job-1',
+      [selectedItem, excludedItem],
+      checkpoint(2, timestamp(2)),
+    );
+    await classifyItem(store, 'job-1', selectedItem.sourceItemId, 'new', timestamp(3));
+    await classifyItem(store, 'job-1', excludedItem.sourceItemId, 'existing', timestamp(3));
+    await store.finishScan('job-1', 1, timestamp(4));
+
+    let selectionAccessorInvoked = false;
+    const hostileSelection: string[] = [];
+    Object.defineProperty(hostileSelection, '0', {
+      enumerable: true,
+      get: () => {
+        selectionAccessorInvoked = true;
+        return selectedItem.sourceItemId;
+      },
+    });
+    await expect(
+      store.saveReviewSelection('job-1', 0, hostileSelection, timestamp(5)),
+    ).rejects.toBeTruthy();
+    expect(selectionAccessorInvoked).toBe(false);
+
+    await expect(
+      store.saveReviewSelection(
+        'job-1',
+        0,
+        [selectedItem.sourceItemId, selectedItem.sourceItemId],
+        timestamp(5),
+      ),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await expect(
+      store.saveReviewSelection('job-1', 0, ['9999999999999999999'], timestamp(5)),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await expect(
+      store.saveReviewSelection('job-1', 0, [excludedItem.sourceItemId], timestamp(5)),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+
+    const saved = await store.saveReviewSelection(
+      'job-1',
+      0,
+      [selectedItem.sourceItemId],
+      timestamp(5),
+    );
+    expect(saved.job).toMatchObject({
+      reviewRevision: 1,
+      summary: { selectedCount: 1, excludedCount: 1, unreviewedCount: 0 },
+    });
+    store.close();
+
+    store = await openSyncStore({ indexedDB: factory, dbName });
+    await expect(store.getJobItem('job-1', selectedItem.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'selected',
+      reviewRevision: 1,
+    });
+    await expect(store.getJobItem('job-1', excludedItem.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'excluded',
+      reviewRevision: 1,
+    });
+    await expect(
+      store.saveReviewSelection('job-1', 0, [selectedItem.sourceItemId], timestamp(6)),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await expect(
+      store.authorizeReviewSelection('job-1', 1, [], timestamp(6)),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await store.authorizeReviewSelection('job-1', 1, [selectedItem.sourceItemId], timestamp(6));
+    await expect(
+      store.putWriteIntent({
+        id: 'intent-excluded',
+        jobId: 'job-1',
+        sourceItemId: excludedItem.sourceItemId,
+        relativePath: 'Social/x/excluded.md',
+        reviewRevision: 1,
+        createdAt: timestamp(7),
+      }),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+    await expect(
+      store.putWriteIntent({
+        id: 'intent-selected',
+        jobId: 'job-1',
+        sourceItemId: selectedItem.sourceItemId,
+        relativePath: 'Social/x/selected.md',
+        reviewRevision: 1,
+        createdAt: timestamp(7),
+      }),
+    ).resolves.toMatchObject({ reviewRevision: 1 });
     store.close();
   });
 });
@@ -470,15 +1022,22 @@ describe('SyncStore write intents', () => {
     let store = await openSyncStore({ indexedDB: factory, dbName });
     await createScanningJob(store);
     const item = socialItem(7, 'x', { contentHash: HASH });
-    await store.putJobItem('job-1', item, checkpoint(1, timestamp(2)));
-    await store.updateJobItemClassification('job-1', item.sourceItemId, 'new', timestamp(3));
-    await store.transitionJob('job-1', 'ready_for_review', timestamp(4));
-    await store.transitionJob('job-1', 'writing', timestamp(5));
+    await store.putJobItem('job-1', 1, item, checkpoint(1, timestamp(2)));
+    await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+    await prepareWritingJob(
+      store,
+      'job-1',
+      [item.sourceItemId],
+      timestamp(4),
+      timestamp(4),
+      timestamp(5),
+    );
     await store.putWriteIntent({
       id: 'intent-1',
       jobId: 'job-1',
       sourceItemId: item.sourceItemId,
       relativePath: 'Social/x/item-7.md',
+      reviewRevision: 1,
       createdAt: timestamp(6),
     });
     await expect(store.getJobItem('job-1', item.sourceItemId)).resolves.toMatchObject({
@@ -549,10 +1108,16 @@ describe('SyncStore write intents', () => {
     });
     await createScanningJob(store);
     const item = socialItem(8, 'x', { contentHash: HASH });
-    await store.putJobItem('job-1', item, checkpoint(1, timestamp(2)));
-    await store.updateJobItemClassification('job-1', item.sourceItemId, 'new', timestamp(3));
-    await store.transitionJob('job-1', 'ready_for_review', timestamp(4));
-    await store.transitionJob('job-1', 'writing', timestamp(5));
+    await store.putJobItem('job-1', 1, item, checkpoint(1, timestamp(2)));
+    await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+    await prepareWritingJob(
+      store,
+      'job-1',
+      [item.sourceItemId],
+      timestamp(4),
+      timestamp(4),
+      timestamp(5),
+    );
 
     await expect(store.transitionJob('job-1', 'complete', timestamp(6))).rejects.toBeInstanceOf(
       SyncStoreConflictError,
@@ -565,6 +1130,7 @@ describe('SyncStore write intents', () => {
       jobId: 'job-1',
       sourceItemId: item.sourceItemId,
       relativePath: 'Social/x/item-8.md',
+      reviewRevision: 1,
       createdAt: timestamp(7),
     });
     await store.commitWriteIntent(
@@ -578,18 +1144,19 @@ describe('SyncStore write intents', () => {
         jobId: 'job-1',
         sourceItemId: item.sourceItemId,
         relativePath: 'Social/x/item-8.md',
+        reviewRevision: 1,
         createdAt: timestamp(9),
       }),
     ).rejects.toBeInstanceOf(SyncStoreConflictError);
     await expect(store.getJob('job-1')).resolves.toMatchObject({
       status: 'writing',
-      summary: { errorCount: 1, writePendingCount: 0 },
+      summary: { writeErrorCount: 1, writePendingCount: 0 },
     });
     await expect(store.getJobItem('job-1', item.sourceItemId)).resolves.toMatchObject({
       writeStatus: 'error',
     });
     await store.transitionJob('job-1', 'partial', timestamp(9));
-    await store.transitionJob('job-1', 'writing', timestamp(10));
+    await store.authorizeReviewSelection('job-1', 1, [item.sourceItemId], timestamp(10));
 
     await expect(
       store.putWriteIntent({
@@ -597,6 +1164,7 @@ describe('SyncStore write intents', () => {
         jobId: 'job-1',
         sourceItemId: item.sourceItemId,
         relativePath: 'Social/x/different-item-8.md',
+        reviewRevision: 1,
         createdAt: timestamp(11),
       }),
     ).rejects.toBeInstanceOf(SyncStoreConflictError);
@@ -605,10 +1173,11 @@ describe('SyncStore write intents', () => {
       jobId: 'job-1',
       sourceItemId: item.sourceItemId,
       relativePath: 'Social/x/item-8.md',
+      reviewRevision: 1,
       createdAt: timestamp(11),
     });
     await expect(store.getJob('job-1')).resolves.toMatchObject({
-      summary: { errorCount: 0, writePendingCount: 1 },
+      summary: { writeErrorCount: 0, writePendingCount: 1 },
     });
     const retriedItem = await store.getJobItem('job-1', item.sourceItemId);
     expect(retriedItem).toMatchObject({ writeStatus: 'pending' });
@@ -620,7 +1189,7 @@ describe('SyncStore write intents', () => {
     );
     await expect(store.transitionJob('job-1', 'complete', timestamp(13))).resolves.toMatchObject({
       status: 'complete',
-      summary: { createdCount: 1, errorCount: 0 },
+      summary: { createdCount: 1, writeErrorCount: 0 },
     });
     store.close();
   });
@@ -633,16 +1202,23 @@ describe('SyncStore write intents', () => {
     await createScanningJob(store);
     const failedItem = socialItem(18, 'x');
     const pendingItem = socialItem(19, 'x');
-    await store.putScanBatch('job-1', [failedItem, pendingItem], checkpoint(2, timestamp(2)));
-    await store.updateJobItemClassification('job-1', failedItem.sourceItemId, 'new', timestamp(3));
-    await store.updateJobItemClassification('job-1', pendingItem.sourceItemId, 'new', timestamp(3));
-    await store.transitionJob('job-1', 'ready_for_review', timestamp(4));
-    await store.transitionJob('job-1', 'writing', timestamp(5));
+    await persistScanBatch(store, 'job-1', [failedItem, pendingItem], checkpoint(2, timestamp(2)));
+    await classifyItem(store, 'job-1', failedItem.sourceItemId, 'new', timestamp(3));
+    await classifyItem(store, 'job-1', pendingItem.sourceItemId, 'new', timestamp(3));
+    await prepareWritingJob(
+      store,
+      'job-1',
+      [failedItem.sourceItemId, pendingItem.sourceItemId],
+      timestamp(4),
+      timestamp(4),
+      timestamp(5),
+    );
     await store.putWriteIntent({
       id: 'intent-failed-item',
       jobId: 'job-1',
       sourceItemId: failedItem.sourceItemId,
       relativePath: 'Social/x/failed-item.md',
+      reviewRevision: 1,
       createdAt: timestamp(6),
     });
     await store.commitWriteIntent(
@@ -655,6 +1231,7 @@ describe('SyncStore write intents', () => {
       jobId: 'job-1',
       sourceItemId: pendingItem.sourceItemId,
       relativePath: 'Social/x/pending-item.md',
+      reviewRevision: 1,
       createdAt: timestamp(8),
     });
 
@@ -663,7 +1240,55 @@ describe('SyncStore write intents', () => {
     );
     await expect(store.getJob('job-1')).resolves.toMatchObject({
       status: 'writing',
-      summary: { errorCount: 1, writePendingCount: 1 },
+      summary: { writeErrorCount: 1, writePendingCount: 1 },
+    });
+    store.close();
+  });
+
+  it('rejects partial while a selected item has not entered the write protocol', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-partial-unattempted-selected-item',
+    });
+    await createScanningJob(store);
+    const failedItem = socialItem(20, 'x');
+    const untouchedItem = socialItem(21, 'x');
+    await persistScanBatch(
+      store,
+      'job-1',
+      [failedItem, untouchedItem],
+      checkpoint(2, timestamp(2)),
+    );
+    await classifyItem(store, 'job-1', failedItem.sourceItemId, 'new', timestamp(3));
+    await classifyItem(store, 'job-1', untouchedItem.sourceItemId, 'new', timestamp(3));
+    await prepareWritingJob(
+      store,
+      'job-1',
+      [failedItem.sourceItemId, untouchedItem.sourceItemId],
+      timestamp(4),
+      timestamp(4),
+      timestamp(5),
+    );
+    await store.putWriteIntent({
+      id: 'intent-only-failed-item',
+      jobId: 'job-1',
+      sourceItemId: failedItem.sourceItemId,
+      relativePath: 'Social/x/failed-only.md',
+      reviewRevision: 1,
+      createdAt: timestamp(6),
+    });
+    await store.commitWriteIntent(
+      'intent-only-failed-item',
+      { status: 'error', relativePath: 'Social/x/failed-only.md', code: 'write_failed' },
+      timestamp(7),
+    );
+
+    await expect(store.transitionJob('job-1', 'partial', timestamp(8))).rejects.toBeInstanceOf(
+      SyncStoreConflictError,
+    );
+    await expect(store.getJobItem('job-1', untouchedItem.sourceItemId)).resolves.toMatchObject({
+      reviewDecision: 'selected',
+      writeStatus: 'not_requested',
     });
     store.close();
   });
@@ -675,18 +1300,25 @@ describe('SyncStore write intents', () => {
     });
     await createScanningJob(store);
     const item = socialItem(9, 'x', { contentHash: HASH });
-    await store.putJobItem('job-1', item, checkpoint(1, timestamp(2)));
-    await store.updateJobItemClassification('job-1', item.sourceItemId, 'new', timestamp(3));
-    await store.transitionJob('job-1', 'ready_for_review', timestamp(4));
-    await store.transitionJob('job-1', 'writing', timestamp(5));
+    await store.putJobItem('job-1', 1, item, checkpoint(1, timestamp(2)));
+    await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+    await prepareWritingJob(
+      store,
+      'job-1',
+      [item.sourceItemId],
+      timestamp(4),
+      timestamp(4),
+      timestamp(5),
+    );
     await store.putWriteIntent({
       id: 'intent-stale',
       jobId: 'job-1',
       sourceItemId: item.sourceItemId,
       relativePath: 'Social/x/item-9.md',
+      reviewRevision: 1,
       createdAt: timestamp(6),
     });
-    await store.transitionJob('job-1', 'paused', timestamp(7));
+    await store.pauseJobWithStopRecord('job-1', 1, 'user_paused', 'writing', timestamp(7));
 
     await expect(
       store.commitWriteIntent(
