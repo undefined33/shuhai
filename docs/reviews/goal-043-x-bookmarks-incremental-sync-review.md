@@ -253,4 +253,14 @@ reviewer 独立复跑相关 43/43 测试、精确 ESLint、extension typecheck �
 
 Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gibbs 第二轮发现一个新的 P1：包含 `classification=error` 的全 excluded job 既不能诚实 `complete`，也不能进入要求写授权的 `partial`。最终合同增加无写盘 terminal `complete_with_issues`、持久化 `classificationErrorCount`、active-source 释放、UI/reload 语义和专项测试；Gibbs 第三轮给出 `PASS`。
 
-最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。当前只进入 `CONTRACT_PASS_WAITING_MANUAL_GATE`：用户必须在全新项目隔离 Chrome profile 中手动登录专用/测试 X 账号并确认 10-candidate probe 与 disposable Vault 边界，之后才能把生产实现正式置为 `READY/IN_PROGRESS`。
+最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。项目隔离 Chrome profile 优先；隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为例外。用户已授权日常 Chrome 只操作 X 并要求限制并发，项目把首次真实 QA 固定为 10-candidate、最多 5 次滚动、批次至少间隔 2 秒、单 tab/job/invocation/outstanding request、no-Vault 及 STOP 条件，因此 043B 已进入 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`。真实 probe 位于实现、离线门禁和独立 actual-diff review 之后，不因 Codex Chrome 暂不可用而阻塞离线生产实现。
+
+## 15. 2026-07-14 深度漂移自检与人工门禁修订
+
+本轮在不修改生产代码的前提下重新核对当前 worktree、`origin/main`、draft PR、工具链、现行路线、Goal 看板、043B 合同和真实 Chrome 门禁。代码和工具链事实未发现漂移：候选分支仍基于当前 `origin/main`，既有 PR/CI、pnpm `10.34.5`、lock SHA-256、335 项测试和 extension build 证据保持有效；本轮只修改当前状态/合同文档。
+
+自检发现并修正四类文档漂移：路线图仍把 Goal 042/043 写成旧状态；人工门禁一度要求尚未接线的 043B 先完成真实 probe，形成循环；Goal 032 主工作区与 Goal 043 worktree 的描述容易混淆；X 合同缺少跨 job/tab 的单 invocation、单 outstanding request、2,000 ms 最短批次间隔、首次最多 5 次滚动和 429/challenge 零自动重试硬边界。
+
+隔离测试账号随后无法登录，用户明确授权日常 Chrome 只操作 X，并要求限制并发。项目把该授权收窄为后续真实 QA 只绑定或新建单个 `https://x.com/i/bookmarks` 标签，不枚举、读取、切换、刷新或关闭其它标签，不读取整个 profile，不扩展到其它站点；并固定 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试。Codex Chrome 插件当前出现注册存在但核心运行文件不完整的外部门禁；恢复只允许使用插件 UI 和正常应用重启，不手工删除缓存、不下载 CRX/浏览器，也不以其它自动化绕过。该故障只阻塞实现后的真实 probe，不阻塞离线生产实现。
+
+独立只读 reviewer Hubble (`019f5dbb-d072-7193-babb-38c6c64beb29`) 对首轮状态、门禁顺序、日常 Chrome 单标签例外和 X 限速合同给出 `PASS`。用户随后指出 Chrome 连接不应被误设为离线实现的串行前置，本轮据此修正为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`；最终实际文档 diff 仍需在格式、链接和状态一致性门禁后复核。该状态只授权 043B 合同内离线生产实现，不授权真实页面读取、真实 probe 或 Vault 写入。

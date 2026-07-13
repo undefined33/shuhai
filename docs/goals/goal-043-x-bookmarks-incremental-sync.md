@@ -1,7 +1,7 @@
 ---
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
-status: BLOCKED_BY_REAL_X_EVIDENCE
+status: IN_PROGRESS
 version: 2
 updated: 2026-07-14
 depends_on: [goal-041, goal-042]
@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。整个 Goal 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`；用户完成隔离账号人工门禁前，仍不授权生产接线或真实 X 操作。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。用户明确授权日常 Chrome 只操作 X 并要求限制并发后，043B 已转为唯一 `IN_PROGRESS` Goal；当前只实施生产接线、测试和离线 fixture E2E，不读取真实 X、不请求 Vault。项目隔离 profile 优先；隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外。真正的真实 X probe 必须在生产实现和离线验收之后运行，不能作为实现自己的前置证据。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `CONTRACT_PASS_WAITING_MANUAL_GATE`：合同只授权后续精确实现范围，不等于已经把生产 Goal 置为 `READY/IN_PROGRESS`。用户尚未在新隔离 Chrome profile 手动登录专用/测试 X 账号并确认 probe/Vault 边界，因此不得提前修改任何生产入口文件。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`：用户已授权日常 Chrome 只操作 X 并要求限制并发，项目将边界固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及 STOP 条件。该授权现在只启动不接触真实 X 的生产实现、测试与离线 E2E；真实 probe 仍必须等待实现门禁、独立 review 和 Codex Chrome 连接恢复。
 
 ## 4. 043A 数据与行为合同
 
@@ -318,7 +318,7 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 新增信任边界: X DOM batch -> runtime schema -> persistent coordinator
 新增单元测试: adapter/schema/store/selection/stop reason/攻击 fixture
 新增集成测试: coordinator + Goal 042 engine + mock Vault
-需要的 Chrome 旅程: G0 后 fixture；043B 才是隔离真实 X
+需要的 Chrome 旅程: G0 后 fixture；043B 才是受界真实 X
 不在 043A 验证的风险: 真实选择器、账号风控、平台条款变化、生产 UI/message wiring
 ```
 
@@ -416,7 +416,7 @@ strict parse adapter response
 -> only then request/scroll next batch
 ```
 
-每次 content batch 的 raw item 数受剩余 candidate slots 和节点预算共同限制，但 catalog-existing raw items不减少下一批的 candidate slots。调用方不能把 50 candidates、20 batches、200 observed nodes、15 秒、16 MiB 或 20 known frontier 放大；真实 QA 首次 probe 进一步收紧为 10 candidates。
+每次 content batch 的 raw item 数受剩余 candidate slots 和节点预算共同限制，但 catalog-existing raw items不减少下一批的 candidate slots。调用方不能把 50 candidates、20 batches、200 observed nodes、15 秒、16 MiB、20 known frontier、单一 X invocation 或批次间最短 2,000 ms 间隔放大；真实 QA 首次 probe 进一步收紧为 10 candidates 和最多 5 次滚动动作。
 
 043B 用专用 `classifyAndPersistScanBatch` 替换当前“coordinator 先查 catalog、再调用 `putScanBatch`”的分离路径。该 API 接收 expected job/scan revision、strict-parsed observation 列表、adapter observed-node delta、调用级 deadline/abort guard，而不接受调用方预先算好的 `existing/candidate` 总数或任意 checkpoint。它必须在同一个 `jobs + items + records` readwrite transaction 中：
 
@@ -465,7 +465,7 @@ v2 -> v3 migration 必须在一个 upgrade transaction 中完成：
 - 只接受 `sender.id === chrome.runtime.id`。
 - sender URL 必须是精确 extension origin 下的 `popup/index.html` 或 `sidepanel/index.html`；其它 extension page、content sender、外部 extension、缺失 URL 均拒绝。
 - launch、start、resume、pause、finalize、cancel、save-selection、complete-without-writes、authorize、get-state 分别使用窄 schema；UI 不得指定 adapter version、Vault path、canonical URL、job budget ceiling、content、catalog record 或 write outcome。X host permission 的 contains/request/remove 由 Side Panel 直接调用 Chrome API；service worker 在创建 job、每批注入和 resume 前仍独立 `permissions.contains`，不能信任 UI 声称已授权。
-- 长扫描使用专用 `shuhai:x-sync:v1` Port。`port.sender` 同样验证；同 source/job 同时只允许一个 invocation。pause 只设置当前 invocation 的受控 abort/pause flag，不并发写第二个终态 transaction。
+- 长扫描使用专用 `shuhai:x-sync:v1` Port。`port.sender` 同样验证；整个 source `x` 同时只允许一个 active job、一个绑定 tab/document、一个 invocation 和一个 outstanding content request，而不只是“同一 job 内不并发”。第二个 start/resume 必须返回 typed conflict，不能另开并发扫描。pause 只设置当前 invocation 的受控 abort/pause flag，不并发写第二个终态 transaction。
 
 #### service worker -> content script
 
@@ -494,7 +494,8 @@ Side Panel 消费时 service worker 必须按 intent window 重新查询 active 
 - 不使用 MAIN world、page function、`eval`、inline remote code、fetch/XHR/WebSocket、Cookie API、localStorage/sessionStorage、private GraphQL、动态 query ID 或内置 bearer。
 - DOM reader 只把当前已渲染收藏 card 映射成 043A 的窄 observation port；不读取整页/整 card `innerHTML/outerHTML`，不保存 DOM snapshot，不把页面错误原文传回。
 - 选择器必须限于收藏列表容器、card、status permalink、明确正文/作者/媒体属性。登录、CAPTCHA、rate-limit 和 end marker 只从页面级受限节点判断，不能因为某条帖子正文出现相同文字而触发。
-- 每个 message 最多执行一次受界滚动和一次受界等待；不启动 interval、observer 常驻循环或后台监控。连续三批没有新 stable ID、没有明确 end marker 时返回 `no_progress`。
+- 每个 message 最多执行一次受界滚动和一次受界等待；不启动 interval、observer 常驻循环或后台监控。coordinator 只有在前一 content response 已严格校验并原子持久化、且距离上一次滚动完成至少 2,000 ms 后，才可发送下一批请求；该间隔使用 monotonic clock/fake-clock 可测试，调用方不能缩短。连续三批没有新 stable ID、没有明确 end marker 时返回 `no_progress`。
+- 429、rate-limit banner、登录挑战、CAPTCHA 或账号限制只允许立即持久化 pause；不自动 retry、不指数并发、不刷新页面、不切换 tab/profile 绕过。普通 resume 也必须由用户重新点击，并继续遵守单 invocation 和 2 秒间隔。
 - incremental start/resume 明确回到顶部；backfill 在同 document 继续当前页面位置。content script 不持久化像素、Element、Node 或页面对象，重复注入必须通过 isolated-world marker 保证只注册一个 listener，避免重复声明和多 listener 响应。
 - 所有媒体保持普通远程链接，不请求、不下载、不 embed。
 
@@ -531,14 +532,14 @@ Side Panel 直接在用户上下文中完成 Vault permission 与写入，servic
 #### Task facts
 
 ```text
-Task / Goal: Goal 043B X bookmarks production wiring and isolated real-Chrome QA
+Task / Goal: Goal 043B X bookmarks production wiring and bounded real-Chrome QA
 Owner / Role: Implementer + independent Product/Security Reviewer + independent QA
 Base commit: 5acdcc7
 Branch: codex/social-sync-v4
 Absolute cwd: C:\Projects\ShuHai\.worktrees\social-sync-v4
 External network: fixture tests denied; real QA only X page network created by installed Chrome
-Real data: dedicated project Chrome profile and disposable test Vault only after user manual gate
-Risk: R1 implementation; R2 isolated Chrome/test Vault; user real Vault/profile remain forbidden
+Real data: dedicated project Chrome profile preferred; exact user-designated daily X bookmarks tab allowed only after isolated-account login failure; disposable test Vault only after manual gate
+Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test Vault; unrelated tabs, the rest of the daily profile, and the user real Vault remain forbidden
 ```
 
 #### 允许修改生产文件
@@ -599,13 +600,15 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 
 不得 install、更新 lock、运行 lifecycle、dev/watch/preview/clean、下载浏览器、操作 Docker、端口或非任务进程。build 中既有 dist 清理只属于已审查的构建产物行为，不授权任何手工递归删除。
 
-真实 Chrome 只有在以下人工门禁全部满足后才允许：
+人工门禁与真实 QA 必须按以下顺序，不能形成“先有实现还是先有 probe”的循环：
 
-1. 用户醒来后在当前 Goal worktree 下新建且 Git ignored 的 `.pnpm-store/goal-043/chrome-profile/real-<run-id>`，用本机已安装的 Chrome 启动；禁止 Chrome for Testing/Chromium 下载。
-2. 用户本人在该隔离 profile 手动登录专用/测试 X 账号；agent 不读取、转录或截图密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或日常 Chrome 数据。
-3. 首次只运行 `incremental + maxCandidates=10`，不授权 Vault 写入；遇 CAPTCHA、login challenge、429、账号限制、selector 不确定或私人主收藏库风险立即 STOP。
-4. probe 通过后，用户再明确确认一个位于 worktree `.pnpm-store/goal-043/test-vault/<run-id>` 的新 disposable Vault，并在目录选择器中手动授权。首次只选择 1-3 条；不使用真实 Obsidian Vault。
-5. 任务只关闭它亲自启动且 PID/profile/cwd 可证明的 Chrome；不按名称结束 Chrome，不关闭用户日常窗口。profile 与 test Vault 默认保留并报告，不为“清理”递归删除。
+1. 首选当前 Goal worktree 下 Git ignored 的 `.pnpm-store/goal-043/chrome-profile/real-<run-id>`，由本机已安装 Chrome 启动；禁止 Chrome for Testing/Chromium 下载。
+2. 用户本人在该隔离 profile 手动登录专用/测试 X 账号；agent 不读取、转录或截图密码、验证码、Cookie、localStorage/sessionStorage token 或 Authorization。
+3. 若专用/测试账号在隔离 profile 确实无法登录，只有用户明确指定日常 Chrome 中的单个 `https://x.com/i/bookmarks` 标签后，才允许把该标签作为 R2 例外；不得枚举、读取、切换、刷新或关闭其它标签，不得读取整个日常 profile，也不得把授权扩展到其它站点。
+4. 用户已授权日常 Chrome 只操作 X 并要求限制并发；项目据此固定后续真实 QA 为 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动完成到下一批请求至少 2,000 ms，且不授权 Vault 写入。遇 CAPTCHA、login challenge、429、账号限制、selector 不确定或私人主收藏库风险立即 STOP 且不自动重试。该授权已满足离线实现开工门禁，不要求 Codex Chrome 此时可连接，也不读取页面或执行 probe。
+5. 043B 生产实现先通过单元/集成、离线 extension fixture E2E、完整质量门禁和独立 actual-diff review；只有这些候选证据通过且 Codex Chrome 连接恢复后，才在受界 Chrome 标签执行首次 10-candidate no-Vault 真实 X probe。
+6. probe 通过后，用户再明确确认一个位于 worktree `.pnpm-store/goal-043/test-vault/<run-id>` 的新 disposable Vault，并在目录选择器中手动授权。首次只选择 1-3 条；不使用真实 Obsidian Vault。
+7. 任务只关闭它亲自启动且 PID/profile/cwd 可证明的 Chrome；不按名称结束 Chrome，不关闭用户日常窗口。profile 与 test Vault 默认保留并报告，不为“清理”递归删除。
 
 真实 X 必然有平台网络，QA 不宣称 Chrome 进程零网络。证据只证明扩展代码没有 fetch/private API/credential 路径；不抓 HAR、trace、DOM snapshot 或网络 Authorization。
 
@@ -622,6 +625,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - runtime message forbidden keys/getter/proxy/prototype/oversize/depth/node/unknown key、UI/content sender spoof、nonce/job/revision/document mismatch。
 - one-shot intent TTL、重复消费、并发消费、session corruption、window/tab change。
 - user pause race、重复 start/resume、service worker interrupted recovery、content duplicate injection、三批 no progress、页面级 challenge 与帖子正文伪 challenge。
+- 同一 X source 的并发 start/resume fail closed、最多一个 outstanding content request、fake clock 证明滚动完成到下一批请求至少 2,000 ms、首次 probe 最多 5 次滚动，429/challenge 后无自动 retry。
 - Vault permission denied/revoked、sidepanel close、pending intent reconcile、1-3 条 partial、重复写和 no overwrite。
 - manifest 不再常驻授予/注入 X/Twitter；X exact optional permission request/deny/contains/remove、active job 撤销保护，以及 context-menu `activeTab` 动态单条推文提取回归。
 
@@ -632,7 +636,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - 从 Popup 唯一动作打开 Side Panel，完整走 request exact X permission -> start -> pause/resume -> review -> all-excluded no-write/cancel，并验证 revoke；证明没有 X permission 时不注入、没有真实用户手势/目录授权时不写入。覆盖 reload/SPA navigation、stale document、重复运行、known frontier 和 backfill 第 51 条。File System picker 不用 CDP 或 test-only production backdoor 绕过，实际 disposable Vault outcome 留给人工隔离 QA；writer/engine 的自动化证据使用单元集成中的 fake handle。
 - 截图只允许脱敏 fixture UI，不含真实帖子、URL、账号或 Vault 内容；人工检查 popup、窄 Side Panel、深浅主题、长文本、键盘和 focus。
 
-#### 隔离真实 X QA
+#### 受界真实 X QA
 
 - probe 只记录 Chrome/extension version、模式、预算、枚举状态、数量、stop code 和耗时；不把标题、正文、作者、ID、URL 或媒体写入 repo/log/截图/review。
 - 验证 exact page capability、真实 selector、虚拟列表滚动、pause/resume、切离 bookmarks 页得到 `tab_changed`、10-item probe 不夸大 completeness。
@@ -648,7 +652,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - `pnpm test:coverage`
 - `pnpm --filter @shuhai/extension run build`
 - 精确 Prettier check、`git diff --check`、full/production audit 与 lock SHA 前后相同。
-- 独立 reviewer 检查 actual diff；独立 QA 走 fixture 和隔离真实 X 用户旅程。实现者自测只算 candidate。
+- 独立 reviewer 检查 actual diff；独立 QA 走 fixture 和受界真实 X 用户旅程。实现者自测只算 candidate。
 
 ### 13.12 043B 验收与回滚
 
@@ -660,7 +664,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - DB3 upgrade transaction 原子、post-commit validation fail-closed、现有 catalog/Vault identity 不变，失败时不丢数据。
 - 用户精确选择前无文件写入；disposable Vault 1-3 条逐项结果真实，重复运行不新增重复文件。
 - 用户可持久化取消所有 pre-write pause；全部 excluded 可无 Vault 权限结束，且 classification error 不会被误报成功；post-write 只能在 reconcile 后安全停止并保留真实 outcomes。
-- 隔离真实 X probe 没有使用 credential/private API/MAIN world/fetch，也没有触发风控绕过。
+- 受界真实 X probe 没有使用 credential/private API/MAIN world/fetch，也没有触发风控绕过。
 - 完整门禁、Node 20 CI、独立 actual-diff review 与独立 QA 均通过。
 
 代码回滚只允许普通反向 PR，不 reset/force push。DB v3 不提供破坏性 down migration；若生产接线失败，禁用 UI 路由但保留 v3 数据和 catalog。源端取消收藏永不删除本地文件。
@@ -674,6 +678,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - File System permission 只能通过 service worker/非用户手势请求，或需要把 handle/内容发送到不必要上下文。
 - 真实 QA 需要扫描私人主收藏库、读取凭据、记录正文/URL、下载浏览器、杀未知进程、操作 Docker/端口或执行危险命令。
 - X 页面结构无法在 10-item probe 中稳定证明；此时维持 `LIMITED_GO`，回到 adapter 研究，不用放宽选择器或权限制造通过。
+- 无法证明单 X job/tab/invocation、单 outstanding request、2 秒滚动间隔或 429 零自动重试；不得用提高并发、缩短间隔或自动刷新制造速度。
 
 ### 13.14 043B 合同独立复审结论
 
@@ -684,4 +689,4 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 3. 合同据此加入精确 manifest 权限迁移、平台权限生命周期、`classifyAndPersistScanBatch`、`cancelJob/abandonWriteJob`、`completeReviewWithoutWrites`、upgrade abort 与 post-commit fail-closed 的分离语义及专项测试。Helmholtz 第二轮给出 `PASS`，确认原四项聚焦问题全部关闭。
 4. Gibbs 第二轮发现最后一个 P1：含 `classification=error` 的全 excluded job 在 `complete` 与写入型 `partial` 之间冲突。合同新增 terminal `complete_with_issues`、持久化 `classificationErrorCount`、零写入约束、active-source 释放、reload UI 与专项测试后，Gibbs 第三轮给出 `PASS`。
 
-最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。该结论只证明合同足以进入下一道人工作业门禁；没有修改生产代码、没有运行真实 X、没有请求平台/Vault 权限，也不构成实现或真实用户旅程证据。下一状态固定为 `CONTRACT_PASS_WAITING_MANUAL_GATE`。
+最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。该结论只证明合同足以进入下一道人工作业门禁；没有修改生产代码、没有运行真实 X、没有请求平台/Vault 权限，也不构成实现或真实用户旅程证据。合同通过时进入 `CONTRACT_PASS_WAITING_MANUAL_GATE`；用户随后授权日常 Chrome 只操作 X 并要求限制并发，当前已按第 3.3 和 13.10 节转为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`，真实 probe 与 Vault 仍未授权。
