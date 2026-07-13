@@ -206,3 +206,17 @@ git push 当前 feature/fix 分支（用户已授权的工作流内）
 ```
 
 即使在白名单中，参数一旦扩大到其它项目、未知路径、未知进程或全局状态，立即失去白名单资格。
+
+### 9.1 已安装应用不是禁区
+
+安全边界不得被解释成“不能使用本机 Chrome、Docker 或其它正常开发工具”。在 Goal 合同范围内，以下动作属于正常能力：
+
+```text
+只读定位并运行本机已安装 Chrome
+使用仓库内全新临时 profile 做本项目 Chrome 测试
+操作用户精确指定的当前测试 tab
+调用 Docker CLI 操作合同点名、ownership 可证明的 ShuHai container/network/volume
+运行已安装的 Node、pnpm、Git 和项目锁定工具
+```
+
+这不是对用户数据或全局环境的授权。禁止读取日常 Chrome profile、Cookie、密码和历史；禁止自行下载 Chrome for Testing/Chromium 作为替代；禁止修改应用安装目录；禁止操作其它项目的容器、网络、卷、进程和端口；只能停止本任务亲自启动并精确记录 PID/ownership 的实例。

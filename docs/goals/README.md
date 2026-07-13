@@ -1,19 +1,20 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-13  
-> 当前状态：Goal 041/042 已独立通过，正在编写 Goal 043 可执行合同
+> 当前状态：Goal 041/042 已独立通过，Goal 043 合同已独立 PASS 并进入 READY
 > 执行规则：只有 `READY` Goal 可以开工；当前没有 `IN_PROGRESS` 实施 Goal。
 
 ## 当前编排状态
 
-| Lane     | 状态                      | 说明                                     | 恢复条件                        |
-| -------- | ------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在当前分支，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| 043-046  | `PLANNED`                 | X adapter、书签和 UI                     | 前置 Goal 验收并另写可执行 spec |
-| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `ACTIVE`                  | 041/042 已收口，下一步细化并推进 043     | 当前用户已授权持续编排          |
+| Lane     | 状态                      | 说明                                      | 恢复条件                        |
+| -------- | ------------------------- | ----------------------------------------- | ------------------------------- |
+| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在当前分支，尚未完成独立验收  | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                  | 四轮独立 review 最终 PASS       |
+| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础     | 独立 review PASS                |
+| Goal 043 | `READY`                   | X fixture adapter、真实 Chrome 分阶段 MVP | 先实施并验收 G0 工具链门禁      |
+| 044-046  | `PLANNED`                 | 微博、书签和 UI                           | 按各自前置另写可执行 spec       |
+| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台            | 两周 dogfood 证明真实需求       |
+| workflow | `ACTIVE`                  | 041/042 已收口，下一步细化并推进 043      | 当前用户已授权持续编排          |
 
 ## v4 当前队列
 
@@ -22,7 +23,7 @@
 | [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现             | Goal 045 重新审计                |
 | [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性             | 独立 PASS                        |
 | [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS                 |
-| 043                                                    | `PLANNED`                 | X 收藏增量同步 MVP                        | 编写分阶段合同与工具链门禁       |
+| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `READY`                   | X 收藏增量同步 MVP                        | 合同 PASS；先实施 G0             |
 | 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | Goal 041 微博结论 + Goal 042/043 |
 | 045                                                    | `PLANNED`                 | 书签整理收缩和 Goal 032 安全收口          | v4 确认；独立 review 方案        |
 | 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收           |

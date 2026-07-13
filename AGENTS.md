@@ -83,6 +83,7 @@ main <- PR <- feat/<name> or fix/<name>
 - 所有角色，包括当前 Integrator、Implementer、Reviewer、QA 和 sub-agent，都必须遵守 [`docs/workflows/command-safety.md`](./docs/workflows/command-safety.md) 和 [`docs/workflows/dangerous-command-denylist.md`](./docs/workflows/dangerous-command-denylist.md)。
 - 禁止 `git reset --hard`、`git clean`、覆盖式 checkout/restore、宽泛递归删除或移动、通配符清理、下载即执行和全局包/系统配置修改。
 - 不得修改、删除、移动或格式化 `C:\Projects\ShuHai` 以外的文件；用户明确点名的参考项目只读，除非另有精确写入授权。
+- 上述目录边界保护的是文件和私人数据，不禁止正常调用本机已安装工具。Goal 需要时，可以只读定位并运行 Chrome、Docker CLI、Node、Git 等既有程序，但只能操作本项目明确拥有或用户精确指定的 tab、profile、容器、网络、卷、进程和文件；不得因此下载替代程序、读取日常 profile、修改安装目录或影响其它项目资源。
 - 不得停止、重启或批量杀死非本任务启动的进程、服务、容器或浏览器；不得占用、释放或干扰其他项目端口。端口冲突时选择新端口或报告，不杀占用者。
 - 只有本任务创建、路径已解析并确认位于仓库内的临时产物可以窄清理；任何目标不确定、为空、为根目录、含通配符或越出 allowlist 时立即 STOP。
 - 正常项目命令不应被误判为危险：仓库内只读检查、精确 `apply_patch`、Goal 允许的 lint/typecheck/test/build、精确文件 stage 和非破坏性 Git 查看可直接执行。
