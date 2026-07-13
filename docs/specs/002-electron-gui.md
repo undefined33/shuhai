@@ -1,11 +1,14 @@
 ---
 version: 1
 assignee: codex
-status: ready
-issue: "TBD"
+status: superseded
+superseded_by: ../product-roadmap-v4.md
+issue: 'TBD'
 ---
 
 # Electron 桌面应用框架 + 基础 GUI
+
+> **历史 spec：不得执行。** ShuHai 已切换为纯 Chrome Extension，Electron 不再是产品主线。参见 [`../PROJECT_STATUS.md`](../PROJECT_STATUS.md) 和当前 [`../product-roadmap-v4.md`](../product-roadmap-v4.md)；v3 仍保留产品演进过程。
 
 ## 目标
 
@@ -32,13 +35,13 @@ issue: "TBD"
 
 ### 依赖（已安装或待安装）
 
-| 包 | 版本 | 用途 |
-|----|------|------|
-| electron | 41.6.1 | 桌面框架 |
-| react | 19.1.0 | UI 框架 |
-| react-dom | 19.1.0 | React DOM |
-| vite | 6.3.5 | 渲染进程构建 |
-| @vitejs/plugin-react | 4.4.1 | React JSX 支持 |
+| 包                   | 版本   | 用途           |
+| -------------------- | ------ | -------------- |
+| electron             | 41.6.1 | 桌面框架       |
+| react                | 19.1.0 | UI 框架        |
+| react-dom            | 19.1.0 | React DOM      |
+| vite                 | 6.3.5  | 渲染进程构建   |
+| @vitejs/plugin-react | 4.4.1  | React JSX 支持 |
 
 **注意**: 安装新依赖前 MUST 检查供应链安全（见 CLAUDE.md）
 
@@ -79,25 +82,25 @@ packages/desktop/
 
 ## 文件清单
 
-| 操作 | 路径 | 说明 |
-|------|------|------|
-| 重写 | `packages/desktop/src/main/index.ts` | Electron app 启动、创建窗口、注册 IPC |
-| 新建 | `packages/desktop/src/main/window.ts` | BrowserWindow 创建和管理 |
-| 新建 | `packages/desktop/src/main/tray.ts` | 系统托盘图标 + 右键菜单 |
-| 新建 | `packages/desktop/src/main/ipc.ts` | IPC handlers: 读书签、分类、导出 |
-| 新建 | `packages/desktop/src/preload.ts` | contextBridge 暴露 API |
-| 新建 | `packages/desktop/src/renderer/index.html` | HTML 入口 |
-| 新建 | `packages/desktop/src/renderer/main.tsx` | React 挂载 |
-| 新建 | `packages/desktop/src/renderer/App.tsx` | 路由 + 页面切换 |
-| 新建 | `packages/desktop/src/renderer/pages/BookmarkList.tsx` | 书签列表 |
-| 新建 | `packages/desktop/src/renderer/pages/Settings.tsx` | 配置页 |
-| 新建 | `packages/desktop/src/renderer/pages/Setup.tsx` | 首次向导 |
-| 新建 | `packages/desktop/src/renderer/components/BookmarkCard.tsx` | 书签卡片 |
-| 新建 | `packages/desktop/src/renderer/components/StatusBadge.tsx` | 状态标记 |
-| 新建 | `packages/desktop/src/renderer/components/Layout.tsx` | 布局 |
-| 新建 | `packages/desktop/vite.config.ts` | Vite 渲染进程配置 |
-| 修改 | `packages/desktop/package.json` | 更新 scripts (dev/build/start) |
-| 修改 | `packages/desktop/tsconfig.json` | 添加 JSX 支持 |
+| 操作 | 路径                                                        | 说明                                  |
+| ---- | ----------------------------------------------------------- | ------------------------------------- |
+| 重写 | `packages/desktop/src/main/index.ts`                        | Electron app 启动、创建窗口、注册 IPC |
+| 新建 | `packages/desktop/src/main/window.ts`                       | BrowserWindow 创建和管理              |
+| 新建 | `packages/desktop/src/main/tray.ts`                         | 系统托盘图标 + 右键菜单               |
+| 新建 | `packages/desktop/src/main/ipc.ts`                          | IPC handlers: 读书签、分类、导出      |
+| 新建 | `packages/desktop/src/preload.ts`                           | contextBridge 暴露 API                |
+| 新建 | `packages/desktop/src/renderer/index.html`                  | HTML 入口                             |
+| 新建 | `packages/desktop/src/renderer/main.tsx`                    | React 挂载                            |
+| 新建 | `packages/desktop/src/renderer/App.tsx`                     | 路由 + 页面切换                       |
+| 新建 | `packages/desktop/src/renderer/pages/BookmarkList.tsx`      | 书签列表                              |
+| 新建 | `packages/desktop/src/renderer/pages/Settings.tsx`          | 配置页                                |
+| 新建 | `packages/desktop/src/renderer/pages/Setup.tsx`             | 首次向导                              |
+| 新建 | `packages/desktop/src/renderer/components/BookmarkCard.tsx` | 书签卡片                              |
+| 新建 | `packages/desktop/src/renderer/components/StatusBadge.tsx`  | 状态标记                              |
+| 新建 | `packages/desktop/src/renderer/components/Layout.tsx`       | 布局                                  |
+| 新建 | `packages/desktop/vite.config.ts`                           | Vite 渲染进程配置                     |
+| 修改 | `packages/desktop/package.json`                             | 更新 scripts (dev/build/start)        |
+| 修改 | `packages/desktop/tsconfig.json`                            | 添加 JSX 支持                         |
 
 ## IPC 通信接口
 
@@ -116,8 +119,8 @@ interface ShuHaiAPI {
   setConfig(config: Partial<AppConfig>): Promise<void>;
 
   // 系统
-  selectDirectory(): Promise<string | null>;  // 打开文件夹选择对话框
-  getChromeProfiles(): Promise<string[]>;     // 检测可用的 Chrome Profile
+  selectDirectory(): Promise<string | null>; // 打开文件夹选择对话框
+  getChromeProfiles(): Promise<string[]>; // 检测可用的 Chrome Profile
 }
 
 interface AppConfig {
@@ -161,6 +164,7 @@ interface AppConfig {
 ## 样式方案
 
 SHOULD 使用简洁的 CSS（不强制 Tailwind）。要求：
+
 - 跟随系统暗色/亮色模式（`prefers-color-scheme`）
 - 中文字体优先：`-apple-system, "Microsoft YaHei", sans-serif`
 - 紧凑布局，适合桌面应用

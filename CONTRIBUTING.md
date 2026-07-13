@@ -1,47 +1,128 @@
 # Contributing to ShuHai
 
-## Development Setup
+## 1. 开始前
+
+按顺序阅读：
+
+1. [`AGENTS.md`](./AGENTS.md)
+2. [`docs/PROJECT_STATUS.md`](./docs/PROJECT_STATUS.md)
+3. [`docs/product-roadmap-v4.md`](./docs/product-roadmap-v4.md)
+4. [`docs/goals/README.md`](./docs/goals/README.md)
+5. 当前唯一标记为 `READY` 的 Goal
+
+旧 Electron spec 和 Goal 001-031 只用于追溯，不是当前任务队列。
+
+## 2. Development Setup
+
+要求：Node.js `>=20.17.0`、pnpm `>=9.0.0`。
 
 ```bash
-# Prerequisites: Node.js 20+, pnpm 9+
-git clone https://github.com/<owner>/shuhai.git
-cd shuhai
 pnpm install
-pnpm test
+pnpm --filter @shuhai/extension run build
 ```
 
-## Adding a New Bookmark Source (Adapter)
+在 `chrome://extensions` 加载 `packages/extension/dist`。开发时运行：
 
-1. Implement `BookmarkSource` interface from `@shuhai/shared`
-2. Place in `packages/desktop/src/main/readers/`
-3. Register in the pipeline configuration
-4. Add tests in `packages/desktop/tests/`
+```bash
+pnpm --filter @shuhai/extension run dev
+```
 
-## Adding a New Exporter
+## 3. 工作流
 
-1. Implement `Exporter` interface from `@shuhai/shared`
-2. Place in `packages/desktop/src/main/exporters/`
-3. Add tests
+1. 从最新 `main` 创建 `feat/<goal-name>` 或 `fix/<name>` 分支。
+2. 只实现 `docs/goals/README.md` 中标记为 `READY` 的 Goal。
+3. 在修改前记录当前 `git status`，保留用户和其他会话已有改动。
+4. 严格遵守 Goal 的文件范围、非目标、迁移和测试要求。
+5. 运行全部质量门禁并记录手工验证证据。
+6. 提交并 push feature branch，创建 PR 到 `main`。
+7. CI、代码审查和必要的真实 Chrome 验证通过后才能 merge。
 
-## Adding a New LLM Provider
+仓库当前没有有效 `dev` 集成分支；旧文档中的 `feature -> dev -> main` 流程已废止。
 
-1. Implement `LLMProvider` interface from `@shuhai/shared`
-2. Place in `packages/desktop/src/main/ai/`
-3. Add provider option to `AIConfig`
+## 4. 代码范围
 
-## Code Standards
+### 当前产品
 
-- TypeScript strict mode
-- All exports must have JSDoc comments
-- Tests required for new features
-- Run `pnpm lint && pnpm typecheck` before committing
+- `packages/extension/src/background/`：命令、持久化任务、Chrome API、AI、健康检测。
+- `packages/extension/src/content/`：当前页面 adapter 与页面内反馈。
+- `packages/extension/src/popup/`：保存当前页面。
+- `packages/extension/src/sidepanel/`：书签整理工作台。
+- `packages/extension/src/components/`：共享 UI primitives。
+- `packages/extension/src/lib/`、`utils/`、`shared/`：领域服务和边界策略。
+- `packages/extension/tests/`：扩展测试。
+- `packages/shared/`：确实跨包使用的稳定模型；不要为了方便扩大共享层。
 
-## Commit Messages
+### 历史代码
 
-Use conventional commits:
-- `feat:` new feature
-- `fix:` bug fix
-- `refactor:` code restructuring
-- `docs:` documentation only
-- `test:` adding/updating tests
-- `chore:` tooling, deps, config
+`packages/desktop/` 是旧 Electron 实现。除非当前用户和 `READY` Goal 明确要求，否则不要修复、扩展或把新功能同时实现两遍。
+
+## 5. Engineering Standards
+
+- TypeScript strict mode；不使用无解释的 `any`。
+- 在所有外部边界做运行时校验，不能把 TypeScript 类型当作运行时安全。
+- 页面、书签、AI、存储和导入数据均视为不可信。
+- 破坏性操作必须有确认、逐项结果、部分失败和恢复语义。
+- 网络请求必须有协议/地址策略、超时、取消、无凭据和重定向复核。
+- 不在日志中记录 API Key、Cookie、Authorization、完整正文或未经必要性论证的完整 URL。
+- UI 文案说明用户结果，不暴露内部状态机名或模块名。
+- 新注释只解释非显然的约束和安全原因。
+- 代码改动保持 Goal 范围，不顺带重构无关文件。
+
+## 6. 新依赖门禁
+
+安装前必须在 Goal 或研究记录中说明：
+
+- 替代的具体自研代码或风险。
+- 精确版本和锁文件变化。
+- 许可证、体积、维护状态和安全公告。
+- 直接/传递依赖、安装脚本、原生模块。
+- Chrome MV3/CSP、Node 和浏览器兼容性。
+- 是否存在遥测、隐式网络访问或远程配置。
+- spike、攻击 fixture 和回滚方案。
+
+禁止使用范围版本代替精确锁定。调研文档中的版本是历史快照，安装时必须重新核对。
+
+OpenCLI 当前只作为架构参考，不得添加为运行时依赖。
+
+## 7. 测试要求
+
+基础门禁：
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm --filter @shuhai/extension run build
+```
+
+按风险增加：
+
+- 用户交互：Testing Library/`user-event` 和真实 Chrome 手工步骤。
+- UI：popup、窄 Side Panel、Options、深浅主题、键盘和焦点检查。
+- 内容提取：脱敏 fixture、选择器变化、预算和攻击 payload。
+- 破坏性书签操作：部分失败、重启恢复、冲突和回滚。
+- Vault 写入：同名、权限失效、路径、空间/IO 错误和逐文件结果。
+- 网络：mock fetch，不在单元测试中请求真实站点。
+
+测试通过不等于产品验收；PR 还要说明用户如何完成任务和失败时发生什么。
+
+## 8. Commit 与 PR
+
+使用 conventional commits：
+
+- `feat:` 新用户能力
+- `fix:` 缺陷修复
+- `refactor:` 无行为变化的结构调整
+- `docs:` 文档
+- `test:` 测试
+- `chore:` 工具和依赖
+
+PR 必须包含：
+
+- 对应 Goal/version。
+- 用户可见变化。
+- 数据、安全和权限影响。
+- 修改文件清单。
+- 执行的命令和结果。
+- 手工验证步骤、截图或诊断证据。
+- 已知限制和回滚方式。
