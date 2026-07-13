@@ -57,15 +57,15 @@ codefact -> implement -> unit/integration tests -> build -> manual journey -> ha
 
 ## 5. 当前执行队列
 
-当前队列的唯一真相在 `docs/goals/README.md`。当前没有可执行依赖链：
+当前队列的唯一真相在 `docs/goals/README.md`。用户已授权按前置条件串行完成前三个模块：
 
 ```text
 Goal 032 paused
-Goal 041 draft/research gate
-Goal 042-047 planned
+Goal 041 done / independent pass
+Goal 042 in progress
+Goal 043 planned, waits for 041/042
 ```
 
-- 用户确认 v4 前，不把 Goal 041 转 `READY`。
 - Goal 041 没有得到平台 `GO/LIMITED_GO` 前，不写生产社交同步代码。
 - Goal 032 的候选实现只能由 Goal 045 显式接管，不能在旧 Goal 中自行恢复。
 - 不插入视觉装饰、Provider 扩张、任意网页全文抓取、Electron 或 companion 工作。

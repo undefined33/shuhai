@@ -1,16 +1,16 @@
 ---
 id: goal-041
 title: Social Favorites Sync Feasibility Spike
-status: DRAFT
-version: 1
+status: DONE
+version: 2
 updated: 2026-07-13
 depends_on: []
-branch: TBD
+branch: codex/social-sync-v4
 ---
 
 # Goal 041：X/微博收藏同步可行性 Spike
 
-> 本 Goal 尚未 `READY`，不得执行。它用于把 v4 最大的不确定性变成可验证结论，而不是提前建设生产同步功能。
+> 用户已于 2026-07-13 明确授权 v4 持续编排。本 Goal 已完成受控 spike、实现者门禁和四轮独立 review，最终 verdict 为 `PASS`。它把 v4 最大的不确定性变成了有边界的结论，而没有提前建设生产同步功能。
 
 ## 1. 用户问题
 
@@ -41,17 +41,54 @@ branch: TBD
 - 不读取或保存 Cookie、Authorization、localStorage token、私有 bearer 或完整网络日志。
 - 不研究小红书、知乎或其它平台。
 
-## 4. 开工前必须补齐
+## 4. 执行合同
 
-转为 `READY` 前，Product/Architect 必须写清：
+### 4.1 数据与账号边界
 
-1. 隔离测试账号或完全脱敏 fixture 的来源。
-2. 精确允许读取和写入的文件。
-3. 临时产物目录及窄清理边界。
-4. 是否允许真实 X API OAuth；若允许，凭据如何只由用户本地持有。
-5. 最大扫描条目、分页、时间、内存和网络预算。
-6. 平台条款与停止条件。
-7. 真实浏览器验证由谁执行，如何避免影响用户主账号和其它 Chrome profile。
+- 只使用由测试代码生成的完全脱敏 fixture；ID、作者、URL、正文和媒体地址均为虚构值。
+- 不登录 X/微博，不读取用户主收藏库，不访问 Chrome profile、Cookie、token、localStorage、网络日志或平台私有接口。
+- X 官方 API 只核对官方文档和做静态调用量估算；本 Goal 不执行 OAuth，也不发送真实 API 请求。
+
+### 4.2 允许读取
+
+- `AGENTS.md`、`CONTRIBUTING.md` 与当前 v4 文档、workflow。
+- `packages/extension/package.json`、`tsconfig.json`、`vitest.config.ts`。
+- `packages/extension/src/content/twitter.ts`、`weibo.ts` 及其现有测试。
+- `packages/extension/manifest.json`，仅核对当前权限，不修改。
+
+### 4.3 允许写入
+
+- `docs/PROJECT_STATUS.md`
+- `docs/product-roadmap-v4.md`
+- `docs/goals/README.md`
+- `docs/goals/goal-041-social-sync-feasibility-spike.md`
+- `docs/research/2026-07-13-social-favorites-sync-feasibility.md`
+- `docs/reviews/goal-041-social-sync-feasibility-review.md`
+- `docs/workflows/README.md`
+- `docs/workflows/continuous-orchestration.md`
+- `packages/extension/tests/fixtures/social-sync-spike.ts`
+- `packages/extension/tests/social-sync-spike.test.ts`
+- `packages/extension/e2e/social-sync-spike.spec.ts`
+
+禁止修改生产 `src/`、manifest、依赖、lockfile、Popup、Side Panel、service worker、Vault writer 和现有 adapter。
+
+### 4.4 预算与临时产物
+
+- 每个平台 fixture 50 条唯一收藏；每次运行最多观察 200 个虚拟列表节点、20 批、15 秒。
+- 单条正文最多 8 KiB，媒体最多 12 个；整个 fixture 运行时数据不超过 16 MiB。
+- 测试网络预算为 0；任何未 mock 的外部请求都使测试失败。
+- Playwright 只使用自身创建的临时浏览器上下文和 `page.setContent()`；不指定、不读取、不复用用户 Chrome profile。
+- 不创建需手工清理的持久临时目录；Playwright 自己产生的失败证据保留并报告，不运行宽泛清理命令。
+
+### 4.5 允许命令与风险
+
+- R0/R1：只读检查、精确 `apply_patch`、Prettier、lint、typecheck、Vitest、extension build、精确 Git stage/commit。
+- R2：一次隔离 Playwright fixture 旅程；不访问真实平台和真实 Vault。
+- R3/R4：依赖安装、真实 OAuth、真实收藏扫描、真实 Vault 写入、浏览器 profile 访问及危险命令均不授权。
+
+### 4.6 STOP 条件
+
+除第 8 节外，发现 fixture 不能证明稳定 ID、扫描需要真实凭据、测试试图联网、页面进入登录挑战/CAPTCHA/429、资源预算无法硬限制或需要修改允许范围外文件时，立即停止对应路线并记录 `NO_GO`/`LIMITED_GO`。
 
 ## 5. X 研究矩阵
 
@@ -117,7 +154,7 @@ interface SpikeItem {
 - 访问方式、权限、条款、限流和成本说明。
 - 稳定 ID、分页/滚动、内容完整度和错误分类证据。
 - 50 条脱敏/测试收藏的去重结果。
-- 中途停止并从 checkpoint 继续的证明。
+- 中途停止、JSON 序列化 checkpoint、从顶部重新枚举并跳过已见 ID 的证明；真正的跨进程持久化由 Goal 042 验收。
 - 未登录、选择器变化、429、超预算和恶意文本 fixture。
 - `git status --short --branch` 和实际变更文件。
 

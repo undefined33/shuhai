@@ -207,3 +207,52 @@ v4 的公开单一目的应表述为：
 5. 只有得到 `GO` 或明确边界的 `LIMITED_GO`，才编写 Goal 042/043 的生产 spec。
 
 最终判断：**值得验证，但不值得在平台可行性未知时继续堆生产 UI 和抽象。**
+
+## 11. Goal 041 受控 Spike 结果
+
+> 执行日期：2026-07-13  
+> 数据边界：完全脱敏 fixture；无平台登录、OAuth、Cookie、token、真实收藏、真实 Vault 或外部测试网络请求
+
+### 11.1 能力结论
+
+| 平台/路线      | 结论                         | 能做什么                                                     | 不能承诺什么                                           |
+| -------------- | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------ |
+| X 官方 API     | `GO`                         | 用户明确选择 OAuth/计费后，按稳定 ID 分页，单页最多 100 条   | 零配置、零成本、无 token 边界                          |
+| X 收藏页 DOM   | `LIMITED_GO`（候选实现门禁） | 脱敏 X-like DOM 证明 status ID、节点回收、顶部重扫去重可实现 | 未经隔离真实页面 QA，不能称为平台可用或绝对全量        |
+| 微博公开 API   | `NO_GO`                      | 当前公开资料未证明普通个人应用可稳定读取本人收藏             | 不能根据历史 endpoint 名称宣称现有能力                 |
+| 微博收藏页 DOM | `NO_GO`                      | 共用合成算法可继续作为未来研究工具                           | 没有平台 DOM、选择器、条款和真实隔离证据，不能进入生产 |
+
+X 的平台总判定为 `LIMITED_GO`：官方 API 技术路径为 `GO`，无凭据 DOM 路线只允许编写受 fixture 约束的生产候选；在隔离真实收藏页 QA 前，Goal 043 不能宣称“X 同步可用”，也不能把列表摘要标为完整正文。
+
+微博的平台总判定为 `NO_GO`：不进入前三个生产模块；Goal 044 保持 `PLANNED/BLOCKED_BY_REAL_PLATFORM_EVIDENCE`，等待官方能力变化或隔离账号的真实收藏页证据。
+
+### 11.2 X 官方 API 快照
+
+- 官方 `GET /2/users/{id}/bookmarks` 要求认证用户本人、OAuth 2.0 用户 token，读取 scope 至少为 `bookmark.read`、`tweet.read`、`users.read`。
+- `max_results` 范围为 1-100，使用 `pagination_token` 分页；当前用户级限制是 180 次/15 分钟。
+- 100 条收藏最多 1 页，1,000 条最多 10 页。若 owner 与 app 匹配，当前 Owned Reads 为每个返回资源 0.001 美元，因此静态估算约为 0.10/1.00 美元，不含未来价格变化、额外资源或失败重试。
+- 价格、scope 和限流必须在真正接入当天重新核对 Developer Console；本次没有创建 App、购买 credits 或持有 token。
+
+官方资料：
+
+- [X Get Bookmarks](https://docs.x.com/x-api/users/get-bookmarks)
+- [X Bookmarks lookup](https://docs.x.com/x-api/posts/bookmarks/quickstart/bookmarks-lookup)
+- [X rate limits](https://docs.x.com/x-api/fundamentals/rate-limits)
+- [X pricing](https://docs.x.com/x-api/getting-started/pricing)
+
+### 11.3 Fixture 与浏览器证据
+
+- X 与微博各生成 50 条虚构收藏，6 个虚拟列表批次包含重叠节点；扫描均得到 50 个唯一 `sourceItemId`。
+- 第 3 批主动暂停后，将 seen-ID checkpoint JSON 序列化并重建；恢复从第一批重新枚举，重叠节点不会重复生成 item。真正的 IndexedDB 持久化尚未实现，由 Goal 042 验收。
+- 登录挑战、429、结构变化、节点/时间预算超限全部返回 typed stop reason，不继续滚动。
+- maxItems、maxPages、总 accepted bytes、正文、媒体数组和 checkpoint 大小均有测试边界；原始 DOM/message 在进入扫描函数前仍必须由生产 content script 限制。
+- 恶意 YAML、模板、PowerShell 和 raw HTML 只作为字符串保留；本 spike 不把它写入 Markdown，也不执行。
+- Playwright 使用临时浏览器上下文和 X-like `article[data-testid="tweet"]` fixture 模拟节点回收、恶意 textContent、JSON checkpoint 与从顶部重扫，收集 50 个稳定 ID，并断言外部网络请求为 0。它不是对真实 x.com 的产品验收。
+
+### 11.4 对生产设计的约束
+
+- DOM checkpoint 不能保存像素位置。任务恢复时从收藏页顶部重新枚举，以 `source + sourceItemId` catalog 跳过已见项；连续命中已见 ID 后停止。
+- 收藏列表文本默认 `summary_only`；只有详情 adapter 能证明完整时才标 `complete`。
+- X adapter 只能在用户当前打开的精确收藏页、主 frame、绑定 tab/job 上工作；页面不能传任意 URL、Vault 路径或 privileged command。
+- Goal 042 必须先提供运行时 schema、版本化 IndexedDB、持久化 SyncJob/SyncCatalog、默认不覆盖的 Vault writer 和重建索引；Goal 043 不得用旧 pending-capture 队列代替。
+- 任何需要 Cookie、私有 GraphQL、页面 bearer、CAPTCHA 绕过或后台静默浏览的实现立即转 `NO_GO`。

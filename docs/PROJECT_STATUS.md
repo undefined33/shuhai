@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-13  
-> 状态：产品路线 v4 规划完成，所有业务 Goal 暂停，等待用户确认  
+> 状态：Goal 041 已通过，Goal 042 持久化/Vault 基础进行中  
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前没有可执行 Goal。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一实施 Goal 是 Goal 042，状态为 `IN_PROGRESS`。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -68,15 +68,15 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 | 顺序 | Goal     | 状态                      | 目的                                     |
 | ---: | -------- | ------------------------- | ---------------------------------------- |
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
-|    1 | Goal 041 | `DRAFT / RESEARCH_GATE`   | X/微博官方 API 与收藏页扫描可行性        |
-|    2 | Goal 042 | `PLANNED`                 | SyncJob、catalog、schema、Vault 安全基础 |
+|    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
+|    2 | Goal 042 | `IN_PROGRESS`             | SyncJob、catalog、schema、Vault 安全基础 |
 |    3 | Goal 043 | `PLANNED`                 | X 收藏增量同步 MVP                       |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户确认 v4 前，Goal 041 不得转 `READY`。032-040 的旧队列已停止自动编排；其中有价值的安全工作通过新 Goal 显式继承。
+用户已确认 v4 并授权连续完成 041-043。032-040 的旧队列仍停止自动编排；其中有价值的安全工作通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -100,17 +100,17 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 
 ## 9. 当前下一步
 
-1. 用户审阅 v4 产品定义、两条旅程和平台边界。
-2. 若认可，将 Goal 041 从 `DRAFT` 补齐测试账号、文件 allowlist、预算和条款后转 `READY`。
-3. Goal 041 只做研究 spike；没有 `GO/LIMITED_GO` 不编写生产同步代码。
-4. 根据 spike 结论决定是否进入 Goal 042，或停止全量社交同步并采用现成工具。
+1. 按 Goal 042 合同实现运行时 schema、版本化 IndexedDB、SyncJob/SyncCatalog 与 write intent。
+2. 完成默认不覆盖的 Vault writer、惰性 Markdown 和受限目录索引重建。
+3. 通过依赖、攻击 fixture、崩溃窗口和完整质量门禁的独立 review。
+4. Goal 042 验收后再进入 Goal 043 X 增量同步候选；真实 X 页面证据仍是产品验收门禁。
 
 ## 10. 当前文档
 
 - [产品路线图 v4](./product-roadmap-v4.md)
 - [扩展架构 v4](./architecture/extension-v4.md)
 - [社交收藏增量同步调研](./research/2026-07-13-social-favorites-sync-feasibility.md)
-- [Goal 041 草案](./goals/goal-041-social-sync-feasibility-spike.md)
+- [Goal 041 执行合同](./goals/goal-041-social-sync-feasibility-spike.md)
 - [Goal 状态索引](./goals/README.md)
 - [产品路线图 v3（历史）](./product-roadmap-v3.md)
 - [全方位审计（历史决策依据）](./audits/2026-07-12-comprehensive-product-security-ui-audit.md)
