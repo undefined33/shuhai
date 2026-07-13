@@ -70,7 +70,7 @@ pnpm 10 首次把现有 `node_modules` 切换到任务专属 store 时可能要�
 
 Audit 不能以命令退出码代替语义判断：pnpm 10 返回可解析 advisory JSON 时，即使因发现漏洞而非零退出也按实际 counts/path 处理；若返回 HTTP 410、endpoint/protocol/JSON parse 错误或无完整结果，状态必须写为 `UNKNOWN/BLOCKED`，不得声明 0 漏洞。只在该兼容故障下，允许使用本机现有 Node `24.14.1` + pnpm `11.3.0` 对同一 lock 运行 full/production 只读 audit；fallback 前后分别记录 lock SHA-256，禁止 install、修复或改写 lock。fallback 也失败时 G0 保持 blocked。
 
-当前 pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精确为 `10.34.5`；lock-only 前后语义相同且最终格式化后 SHA-256 保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`；full audit 为 low 1 / moderate 1 / high 0 / critical 0，production audit 为 0；唯一 Vite/Vitest 版本、lint、typecheck、269 项 test/coverage 和 extension build 均通过。当前实际 diff 只剩 CI pnpm `11.3.0 -> 10.34.5` 和状态文档，最终独立 actual-diff review 已 `PASS`；追加 commit/push 与实际 Node 20 CI 仍未完成，因此 G0 仍不是 `PASS`。
+pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精确为 `10.34.5`；lock-only 前后语义相同且最终格式化后 SHA-256 保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`；full audit 为 low 1 / moderate 1 / high 0 / critical 0，production audit 为 0；唯一 Vite/Vitest 版本、lint、typecheck、269 项 test/coverage 和 extension build 均通过。最终独立 actual-diff review 已 `PASS`，修复提交为 `b8a0b95`；GitHub Actions Node `20.20.2` run `29252734846` / job `86825006096` 也已 `PASS`。G0 正式关闭，允许进入 043A；该结论不授权 043B、真实 X 或生产入口。
 
 ### 3.2 043A：fixture-only 候选
 
