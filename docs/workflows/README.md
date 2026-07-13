@@ -56,8 +56,8 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 |    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计 |
 |    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                         |
 |    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
-|    3 | X 与微博增量同步                    | 043/044 | 043 `READY`，044 `PLANNED`，逐平台串行              |
+|    3 | X 与微博增量同步                    | 043/044 | 043 `IN_PROGRESS`，044 `PLANNED`，逐平台串行        |
 |    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032               |
 |    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-当前没有实施 writer。Goal 043 合同已独立通过并进入 `READY`，正式开工后成为唯一 writer；第一步只能实施 G0。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+当前唯一实施 writer 为 Goal 043；G0 candidate 的本地门禁、CI 修订合同和修复后实际 diff 均已独立 `PASS`，当前只等待 draft PR 的 Node 20 CI，关闭 P1 后才进入 043A。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

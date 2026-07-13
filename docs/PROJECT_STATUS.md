@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-13  
-> 状态：Goal 041/042 已通过，Goal 043 合同已独立 PASS 并进入 READY
+> 状态：Goal 041/042 已通过，Goal 043 G0 候选独立 diff review 已 PASS，等待 Node 20 CI
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前没有 `IN_PROGRESS` 实施 Goal。Goal 042 已 `DONE/PASS`；Goal 043 v1 已完成精确工具链版本核查和独立合同 review，当前为 `READY`，下一步先实施并验收 G0，再进入 043A fixture-only 候选。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一 `IN_PROGRESS` Goal 为 043。Goal 042 已 `DONE/PASS`；Goal 043 G0 候选已完成 official-registry lock 审计、audit、本地完整门禁和修复后独立 diff review `PASS`。首轮发现的 CI pnpm 9/脚本 P1 仍需提交后的 Node 20 CI 成功才能正式关闭；此前不能进入 043A fixture-only 候选。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -74,7 +74,7 @@ Goal 042 已独立通过但尚未接入生产路由的基础模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `READY`                   | X 收藏增量同步 MVP                       |
+|    3 | Goal 043 | `IN_PROGRESS`             | X 收藏增量同步 MVP                       |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
@@ -104,8 +104,8 @@ Goal 042 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 实施 G0：精确升级 Vite/Vitest、检查 lock/audit 并通过非监听式完整门禁。
-2. G0 独立通过后实现 043A 的 DB v2、持久化复核选择、typed stop reason、adapter/coordinator 与 fixture 测试。
+1. 精确提交/push G0 候选并创建 draft PR，取得 GitHub Actions Node 20 `PASS`。
+2. 关闭 G0 P1 后才实现 043A。
 3. 043A 通过后再编写 043B v2 的 sender/tab/host/job、生产入口和真实 Chrome QA allowlist。
 4. 真实 Chrome 验证优先使用本机已安装浏览器与项目专属临时 profile，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
 

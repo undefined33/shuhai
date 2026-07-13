@@ -1,7 +1,7 @@
 ---
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
-status: READY
+status: IN_PROGRESS
 version: 1
 updated: 2026-07-13
 depends_on: [goal-041, goal-042]
@@ -41,7 +41,7 @@ Goal 042 只在“不启动监听服务”的窄条件下接受了既有 Vite/Vi
 | root      | `vitest`               | `3.1.4`  | `3.2.6`      | 修复 `GHSA-5xrq-8626-4rwp`                          |
 | root      | `@vitest/coverage-v8`  | `3.1.4`  | `3.2.6`      | 必须与 Vitest 同版本                                |
 | extension | `vite`                 | `6.3.5`  | `6.4.3`      | 修复 `GHSA-p9ff-h696-f583` 与 `GHSA-fx2h-pf6j-xcff` |
-| root      | `pnpm.overrides.vite`  | 不存在   | `6.4.3`      | 消除 Vitest 宽范围解析出的第二份旧 Vite             |
+| workspace | `overrides.vite`       | 不存在   | `6.4.3`      | 在 `pnpm-workspace.yaml` 消除第二份旧 Vite          |
 | extension | `@vitejs/plugin-react` | `4.4.1`  | 保持 `4.4.1` | 已支持 Vite 6，不做无关升级                         |
 
 三项候选均为 MIT；`vite@6.4.3` 与 `vitest@3.2.6` 的 engines 为 `^18.0.0 || ^20.0.0 || >=22.0.0`，覆盖项目 `>=20.17.0` 下界。发布包没有 `install`/`postinstall`；metadata 中的 dev/build scripts 不在 consumer install 时执行。禁止升级到要求 Node `>=20.19` 的 Vite 8，也禁止把 Vitest 3 的安全修复扩大成 Vitest 4 major 迁移。
@@ -56,10 +56,13 @@ G0 候选必须同时证明：
 4. 运行完整质量门禁、`pnpm test:coverage` 和 extension build；继续禁止 dev/preview/UI/API/browser listener。
 5. 本机当前 Node `24.14.1` 的结果只算当前运行时证据；最终 PR/CI 还必须提供 Node 20 lane，不能把 Node 24 冒充最低支持版本。现有 NVM 只有过低的 20.2.0，不下载或切换到它。
 6. lockfile delta 限于候选工具链解析变化；出现额外二进制、install hook、Git dependency、未知下载或 production advisory 时立即 STOP。
+7. Node 20 CI 必须使用与候选 lock 相同的 pnpm `11.3.0`，并以 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/` 安装；pnpm 9 或允许 lifecycle script 的 CI 结果不能作为 G0 证据。
 
-G0 明确允许正常项目依赖下载，但只允许以下窄路径：先以 `--lockfile-only --ignore-scripts` 从 `https://registry.npmjs.org/` 解析候选 lock，审查 package/version/integrity/依赖闭包后，再以 `--ignore-scripts --frozen-lockfile` 安装该 lock 精确引用的 registry tarball。授权只覆盖上述三项 direct dev upgrade 与它们在候选 lock 中固定 integrity 的依赖闭包；不允许 Git/URL dependency、其它 registry、执行下载内容、额外二进制获取、install/postinstall 或全局安装。
+G0 明确允许正常项目依赖下载，但只允许以下窄路径：项目级 `.npmrc` 固定 `https://registry.npmjs.org/` 与严格 TLS；根 `pnpm-workspace.yaml` 设置 `overrides.vite=6.4.3` 和 `lockfileIncludeTarballUrl=false`。先以 `--lockfile-only --ignore-scripts` 解析候选 lock，审查 package/version/integrity/依赖闭包后，再以 `--ignore-scripts --frozen-lockfile` 安装。授权只覆盖上述三项 direct dev upgrade 与它们在候选 lock 中固定 integrity 的依赖闭包；不允许 Git/URL dependency、其它 registry、执行下载内容、额外二进制获取、install/postinstall 或全局安装。已有 content-addressed cache 只有在 integrity 与官方 metadata 完全相同时才能复用。
 
-精确版本已经确定，但尚未生成候选 lockfile和运行门禁，因此 G0 仍是待实施状态，不能写成已通过。
+候选 lock 允许一项额外的纯 provenance 机械变化：删除基线中显式保存的 `registry.npmmirror.com` tarball URL。除三项工具链解析变化外，其它 package version 与 integrity 必须逐项相同；最终 lock 不得出现 npm mirror/taobao、Git 或其它 registry URL。manifest 与 lock 不一致期间禁止运行 `pnpm exec` 或其它会隐式安装的 pnpm 命令，必须先完成 lock-only 阶段。
+
+G0 候选已使用修订后的 official-registry/ignore-scripts 流程生成，完成语义 lock 审计和本地完整门禁。首轮独立实现 review 因 CI 仍使用 pnpm 9 且未禁用 install scripts 给出 `FAIL`；精确 CI 修订合同与修复后的实际 diff 均已独立 `PASS`。当前只允许提交候选并由 draft PR 触发 Node 20 CI；CI 成功前不能写成 G0 已通过或进入 043A。
 
 ### 3.2 043A：fixture-only 候选
 
@@ -225,8 +228,11 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 
 ### 7.3 G0 允许写入
 
+- `.github/workflows/ci.yml`（仅把 pnpm 固定为 `11.3.0`，并让 install 使用 frozen lock、official registry 和 `--ignore-scripts`）
 - `package.json`
 - `packages/extension/package.json`
+- `.npmrc`
+- `pnpm-workspace.yaml`
 - `pnpm-lock.yaml`
 - `vitest.config.ts`（仅兼容升级确有需要时）
 - `packages/extension/vitest.config.ts`（仅兼容升级确有需要时）
@@ -264,7 +270,7 @@ Risk: G0 R3 supply-chain; 043A R1; browser fixture R2 after G0
 - R0：`Get-Content`、`Get-ChildItem`、`rg`、`git status/diff/log/show`。
 - R1：精确 `apply_patch`、精确文件 Prettier/ESLint、`tsc --noEmit`、`vitest run`、`vite build`。
 - 质量门禁：`pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm --filter @shuhai/extension run build`。
-- G0：先精确 `apply_patch` package manifests，再运行 `pnpm install --lockfile-only --ignore-scripts --registry=https://registry.npmjs.org/`；审查候选 lock 后，才允许运行 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/`。只下载 lock 中带 integrity 的官方 registry tarball，不执行 lifecycle script。
+- G0：先精确 `apply_patch` `.npmrc`、`pnpm-workspace.yaml` 和 package manifests，再运行 `pnpm install --lockfile-only --ignore-scripts --registry=https://registry.npmjs.org/`；审查候选 lock 后，才允许运行 `pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org/`。只解析/复用 lock 中带 integrity 且与官方 metadata 一致的内容，不执行 lifecycle script。
 - 浏览器命令必须等 G0 和 043A 实现 review，通过后按第 6 节补充精确 executable/profile/PID 合同；当前不得启动。
 
 禁止运行 `pnpm clean`、dev/watch/preview/UI/API/browser server、`--host`、未知下载命令、全局安装、危险命令或任何非本任务进程/端口操作。
