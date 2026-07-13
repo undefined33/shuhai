@@ -1,8 +1,8 @@
 ---
 id: goal-042
 title: Persistent Sync and Vault Safety Foundation
-status: IN_PROGRESS
-version: 1
+status: DONE
+version: 2
 updated: 2026-07-13
 depends_on: [goal-041]
 branch: codex/social-sync-v4
@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 042：持久化同步与 Vault 安全基础
 
-> Goal 041 已独立 `PASS`，用户已授权持续完成前三个模块。本合同已从 `READY` 正式转入 `IN_PROGRESS`；它交付 X/微博共用的确定性同步底座，不接入平台页面和 UI。
+> Goal 041 已独立 `PASS`，用户已授权持续完成前三个模块。本合同实现已通过完整质量门禁与独立 Product/Security review，状态为 `DONE/PASS`；它交付 X/微博共用的确定性同步底座，不接入平台页面和 UI。
 
 ## 1. 用户问题
 
@@ -99,7 +99,9 @@ persist write intent
 
 - 只在用户授权 handle 下访问配置的安全相对目录；路径 segment 单独验证，拒绝 traversal、空 segment、设备名、尾点/空格、规范化和大小写碰撞。
 - writer 结果枚举：`created`、`already_exists`、`changed`、`renamed`、`skipped`、`error`。本 Goal 只允许 `created/already_exists/skipped/error`，其它状态保留给未来显式策略。
-- 默认冲突策略是 `skip`，检查后的竞态由单 writer 锁与 intent reconciliation 处理。
+- 默认冲突策略是 `skip`。ShuHai 自身并发写入使用 Vault 身份注册表和单 Vault 全局 writer mutex 串行；每级目录与最终文件在创建前后做最多 20,000 项的同级碰撞扫描，碰撞键统一为 `NFKC -> uppercase -> NFC`。
+- 新文件名使用已持久化 write intent 的安全随机 token，例如 `<sourceItemId>-<intentId>.md`；崩溃恢复和错误重试必须复用该 relative path，不能重新随机或改写其它路径。
+- File System Access API 没有 OS `O_EXCL` 等价的原子“仅不存在时创建”。本 Goal 可以拒绝检查时已存在的目标、外部竞态产生的非空文件和 ShuHai 内部并发，但无法绝对区分外部进程在检查后创建的零字节文件，也无法阻止不协作进程在最后一次检查后修改文件。随机托管文件名、同级扫描、exclusive writer 和 intent reconciliation 用于缩小风险，不宣称消除该浏览器 API 边界；若产品要求对任意外部进程提供绝对原子保证，必须停止并重新做架构决策。
 - properties 使用固定白名单与安全 scalar serializer，不接受页面提供的 key、YAML 片段或模板。
 - 正文以惰性文本形式输出；中和 raw HTML、`javascript:`/`data:`、Markdown/Obsidian embed、wiki link、Templater、Dataview、callout 和插件命令语法。
 - 远程媒体只写普通文本 URL，不生成 `![]()`、`![[...]]` 或 HTML `<img>`。
@@ -154,9 +156,28 @@ persist write intent
 
 - `package.json` 为精确版本，无 `^`/`~`。
 - lockfile 只出现预期 direct/transitive 变化。
-- `pnpm audit` 或等价 lockfile 审计；若有 high/critical、install script、额外二进制下载或版本漂移立即 STOP。
+- 候选 `pnpm audit --prod` 必须为 0；完整 audit 按下述“基线与增量门禁”处理。
+- 若新增依赖闭包出现 high/critical、install/postinstall、额外二进制下载或版本漂移，立即 STOP。
 
 根 `pnpm typecheck` 当前依赖隐式 hoist 的 `tsc`。允许只修改脚本为从 `@shuhai/shared` 已锁定的 `typescript@5.8.3` 执行，不新增根 TypeScript 依赖，不修改全局 PATH。
+
+### 8.1 Audit 基线与增量门禁
+
+本 Goal 在 v1 的绝对门禁下因既有 dev toolchain 的 high/critical advisory 正确触发过 STOP。本节是独立 Product/Security review 后的前瞻性澄清，不追溯改写该事实，也不表示接受、修复或忽略既有漏洞。
+
+只有同时满足以下条件才可继续：
+
+1. 候选 lockfile 的 `pnpm audit --prod` 为 0。
+2. 使用相同 Node、pnpm、官方 registry、命令和审查窗口，分别审计未增加本 Goal 三项依赖的基线 checkout 与候选 checkout。
+3. 比较 advisory ID、severity、package、affected range 和 dependency path；候选相对基线不得新增、恶化或进入 production path，不能只比较数量。
+4. `zod@4.4.3`、`idb@8.0.3`、`fake-indexeddb@6.2.5` 及其新增依赖闭包不得包含 advisory、install/postinstall、原生二进制、额外下载、integrity/license/version 漂移或未说明的 lockfile 变化。
+5. Goal 042 只允许运行非监听式命令，包括 `vitest run` 和 `vite build`；禁止 Vite dev/preview、Vitest UI/API/browser server、`--host` 及任何对本机或局域网开放端口的模式。
+6. 每个既有 high/critical 必须在 review 记录 advisory、依赖路径、利用前提、当前缓解、owner 和修复门禁；不得写成“安全”或“已解决”。
+7. 保存 baseline/candidate 两组机器可读 audit 摘要与 lockfile SHA-256；最终依赖 diff 必须只包含三项 direct dependency 和预期的 OpenAI optional `zod` edge。
+8. 构建产物不得包含 `fake-indexeddb`。
+9. 任一条件无法证明，或后续最终 lockfile/audit 出现 delta，立即 STOP。
+
+既有 dev toolchain 债务必须在 Goal 043 转 `READY_FOR_REVIEW` 或首次启动任何监听服务前完成修复或重新独立审批。
 
 ## 9. 测试与预算
 
@@ -174,6 +195,8 @@ persist write intent
 ### Writer 与 reconciliation
 
 - created、already exists、权限 prompt/denied、中途撤权、create/write/close 失败、同名不同身份和 partial。
+- 大小写或 compatibility 变体通过同一 root/alias handle 并发时只能创建一条路径，包括祖先目录不同而叶文件名不同的情况；`isSameEntry` 失败必须返回显式 outcome，不能裸 reject。
+- 非空外部创建竞态必须拒绝；零字节外部创建竞态作为 File System Access API 的已知不可判定边界由测试固定并在 review 中披露。
 - close 后/catalog 前崩溃，重启从 properties 恢复；不覆盖用户编辑。
 - catalog orphan、文件 orphan、用户改名、重复 properties 和文件缺失。
 
@@ -199,7 +222,7 @@ pnpm --filter @shuhai/extension run build
 - 任务在持久化 store 中可恢复，状态与逐项结果不伪装成功。
 - 50 条写入模拟在每个崩溃窗口重试后仍是 50 个 catalog/文件身份，无重复。
 - 生成的 Markdown 不包含可激活的远程媒体、危险 URL、raw HTML、模板或插件执行语法。
-- 默认不覆盖、重命名或删除真实文件；本 Goal 只在 fake IndexedDB 和 mock Vault 中验收。
+- 默认不覆盖、重命名或删除检查时已存在的真实文件；本 Goal 只在 fake IndexedDB 和 mock Vault 中验收，并明确保留第 6 节的外部零字节竞态限制。
 - 独立 Reviewer 检查实际 diff、事务语义、攻击 fixture 和依赖变化后，才允许 Goal 043 转 `READY`。
 
 ## 11. STOP 条件

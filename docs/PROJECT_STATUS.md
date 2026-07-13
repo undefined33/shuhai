@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-13  
-> 状态：Goal 041 已通过，Goal 042 持久化/Vault 基础进行中  
+> 状态：Goal 041/042 已通过，正在准备 Goal 043 X 增量同步合同
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一实施 Goal 是 Goal 042，状态为 `IN_PROGRESS`。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前没有 `IN_PROGRESS` 实施 Goal。Goal 042 已 `DONE/PASS`，下一步先把 Goal 043 的 fixture-only 候选、真实 Chrome QA 与工具链门禁写成可执行合同，再按状态规则推进。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -46,12 +46,16 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 - File System Access API Vault 目录授权和写入。
 - AI Provider、规则、模板、活动、备份和诊断。
 
+Goal 042 已独立通过但尚未接入生产路由的基础模块：
+
+- runtime SocialItem/SyncJob/record/intent schema 与版本化 `shuhai-sync` IndexedDB。
+- SyncCatalog、checkpoint、崩溃恢复、跨会话 `source + sourceItemId` 去重。
+- 安全 Markdown、受限 Vault 索引重建、逐文件结果与默认不覆盖 writer。
+
 尚未实现：
 
 - X/微博收藏页全量或增量枚举。
-- 稳定 SyncJob、SyncCatalog、checkpoint 和 Vault 索引重建。
-- `source + source_item_id` 跨会话去重。
-- 内容完整度语义和源变化处理。
+- X adapter 与上述同步底座的生产接线、持久化复核选择和 typed stop reason。
 - 真正独立的 Popup、Side Panel、Options 构建和按需状态加载。
 
 ## 5. 冻结中的 Goal 032
@@ -69,7 +73,7 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 | ---: | -------- | ------------------------- | ---------------------------------------- |
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
-|    2 | Goal 042 | `IN_PROGRESS`             | SyncJob、catalog、schema、Vault 安全基础 |
+|    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
 |    3 | Goal 043 | `PLANNED`                 | X 收藏增量同步 MVP                       |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
@@ -100,10 +104,10 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 
 ## 9. 当前下一步
 
-1. 按 Goal 042 合同实现运行时 schema、版本化 IndexedDB、SyncJob/SyncCatalog 与 write intent。
-2. 完成默认不覆盖的 Vault writer、惰性 Markdown 和受限目录索引重建。
-3. 通过依赖、攻击 fixture、崩溃窗口和完整质量门禁的独立 review。
-4. Goal 042 验收后再进入 Goal 043 X 增量同步候选；真实 X 页面证据仍是产品验收门禁。
+1. 编写 Goal 043 的分阶段可执行合同：043A 只做 fixture adapter/coordinator，043B 才做真实页面 QA 与最小接线。
+2. 在 Goal 043 进入 review 或启动任何监听服务前，修复或重新独立审批既有 Vite/Vitest high/critical 工具链债务。
+3. 为持久化复核选择、typed stop reason、sender/tab/host/job 绑定和扫描预算定义精确 schema 与测试。
+4. 真实 Chrome 验证优先使用本机已安装浏览器与项目专属临时 profile，禁止自行下载浏览器、读取日常 profile 或干扰其它 Chrome 进程。
 
 ## 10. 当前文档
 

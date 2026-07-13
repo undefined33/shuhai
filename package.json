@@ -16,7 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "lint": "pnpm -r run lint",
-    "typecheck": "tsc -b packages/shared --force && pnpm -r run typecheck",
+    "typecheck": "pnpm --filter @shuhai/shared exec tsc -b --force && pnpm -r run typecheck",
     "clean": "pnpm -r run clean",
     "prepare": "husky"
   },
