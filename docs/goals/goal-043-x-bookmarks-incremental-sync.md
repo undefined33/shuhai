@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 离线代码候选提交 `c66c3ac` 已通过 426 项测试、完整本地门禁、最终 actual-diff review 和 Node 20 CI；当前唯一实施门禁是独立 Chrome profile 中的 extension fixture E2E，仍不读取真实 X、不请求 Vault。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为后续真实 QA 例外。真正的真实 X probe 必须在离线 extension E2E 之后运行，不能用来替代该门禁。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `97f1a08` 已通过 427 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration 和 Node 20 CI run `29332332585`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示，不冒充真实工具栏手势、`activeTab` 或 runtime sender；当前唯一实施门禁是独立 Chrome profile 中的人工 toolbar E2E，随后才允许受界真实 X probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为后续真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`：用户已授权日常 Chrome 只操作 X 并要求限制并发，项目将边界固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及 STOP 条件。该授权现在只启动不接触真实 X 的生产实现、测试与离线 E2E；真实 probe 仍必须等待实现门禁、独立 review 和 Codex Chrome 连接恢复。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_MANUAL_TOOLBAR_E2E_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration 和 Node 20 CI 均已通过，但 route integration 明确 mock 了 active-tab UI 边界，不能替代用户实际点击工具栏后的 `activeTab`、sender 和 Side Panel permission preflight。用户已授权日常 Chrome 只操作 X 并要求限制并发，项目将后续真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及 STOP 条件；人工 toolbar E2E 未通过前不得进入该 probe。
 
 ## 4. 043A 数据与行为合同
 

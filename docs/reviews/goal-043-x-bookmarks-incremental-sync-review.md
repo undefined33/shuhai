@@ -324,10 +324,24 @@ Chrome 在 30 秒内没有注册 unpacked extension 的 service worker，验证�
 
 复核随后发现原 E2E harness 与人工门禁自相矛盾：它要求 profile 不存在并继续传入 Stable Chrome 已忽略的 `--load-extension`，因此用户手动准备后反而会被测试拒绝。候选修复把输入改为当前 Goal profile 根目录下已存在的普通子目录，拒绝根目录、不存在路径、symbolic link/junction 或 realpath 越界；以可见模式重开用户已手动加载 `packages/extension/dist` 的专用 profile，并完全移除命令行 extension 加载 flags。缺少 ShuHai service worker 时返回明确的准备步骤错误。独立复核又指出只取第一个 service worker 可能让 stale/其它 extension 冒充当前候选；harness 因此对浏览器实际提供的 `background/service-worker.js` 与当前 `dist` 文件做 SHA-256 比对，不一致即 fail closed。仓库外路径、Goal profile 根目录和不存在子目录三项实际拒绝检查均通过；独立 reviewer Confucius (`019f6052-a676-7ea1-aa9c-dfdb236ad334`) 对 profile/realpath/hash/context-close diff 给出 `PASS`，P0/P1/P2 均为 0。该 harness 已通过 Prettier、`git diff --check` 和 Playwright `--list` 编译发现，实际 extension E2E 仍等待人工 profile，不能写成 `PASS`。
 
-下一步需要用户在独立项目 Chrome profile 的 `chrome://extensions` 中手动加载 `packages/extension/dist` 并关闭该专用 Chrome，再把精确 profile 路径传给测试。浏览器扩展安装属于需要当次人工确认的 UI 操作；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。
+用户随后已在独立项目 profile `.pnpm-store/goal-043/chrome-profile/manual-e2e-20260714-1850` 中手动加载当前 `packages/extension/dist`，扩展 ID 为 `pbjamjajfdmcnfnljgedgiahcpogpbji`。自动化 route integration 已使用该普通 profile 完成，但真实 toolbar 点击仍需人工证据；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。
 
 ### 16.7 提交与 Node 20 CI
 
 首次提交尝试没有创建 commit：Husky 的 `pnpm lint-staged` 解析到用户全局 pnpm，触发 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 后在任何目录替换前停止。没有使用 `--force`、手工删除或清理。随后通过 Goal 固定的 pnpm `10.34.5` 前缀显式运行同一 `lint-staged`，ESLint/Prettier 全部通过且临时 stash 已正常清理；再次完整运行 lint、typecheck、426 项测试、coverage 和 extension build 后，只对该次 commit 设置进程级 `HUSKY=0`，没有跳过等价质量门禁。
 
 普通追加提交 `c66c3ac` 已 push 到 draft PR `#5`。GitHub Actions run `29326255564` / job `87063170807` 在 Node `20.20.2`、pnpm `10.34.5` 下于 53 秒内 `PASS`；frozen install 使用 official registry 和 `--ignore-scripts`，lint、typecheck、coverage、全仓 build 与 coverage artifact 均成功。该 CI 只关闭 Node 20 门禁，不替代 extension E2E 或真实 X/Vault QA。
+
+### 16.8 Preloaded-extension route integration 与安全纠偏
+
+手动 profile 准备后，测试发现 Playwright 默认参数仍会通过 `--disable-extensions` 禁用已加载扩展，且 MV3 worker 可以休眠。harness 最终只忽略该一个 Playwright 默认参数；扩展 ID 必须由 `SHUHAI_GOAL_043_EXTENSION_ID` 以严格 32 位 `[a-p]` 格式显式提供，并同时校验实际 worker URL host 与当前 `dist/background/service-worker.js` SHA-256。它不读取 Chrome `Preferences`、`Secure Preferences`、日常 profile 或其它扩展配置，也拒绝 profile 根目录、不存在目录、junction/symlink 和 realpath 越界。
+
+直接把 `popup/index.html` 作为普通 tab 打开时，Chrome runtime sender 会带 `sender.tab`，且该 tab 不具有真实 toolbar user gesture/`activeTab`。测试因此收紧为 preloaded-extension route integration：只在测试进程内 mock Popup 的 active-tab UI 查询，验证当前 `dist`、精确 X 上下文展示、无 X host permission 时零 job/零注入和 fixture route 零平台出站；测试名称与合同均明确不宣称真实 toolbar、`activeTab` 或 sender E2E。真实 toolbar 门禁继续保留为人工步骤。
+
+route trace 同时暴露 `popup/styles.css` 仍从 Google Fonts 发起远程请求，违反扩展 UI 不使用远程字体与离线测试边界。候选只删除该 import，保留系统字体 fallback，并在 `manifest.test.ts` 增加 UI stylesheet 无 `http://`/`https://` 回归。build 产物静态扫描确认没有远程字体或 CSS HTTP(S) resource reference。
+
+一次可见 Chrome 启动错误地通过 PowerShell 传递带空格的 `--host-resolver-rules=MAP * ~NOTFOUND`，导致 `*`/`~NOTFOUND` 被拆成 `%2A` 和 `~notfound` 标签，并显示 unsupported flag 警告。该次只关闭命令行和专用 profile 精确匹配的任务 Chrome，未按名称结束进程，也未触碰日常 Chrome。两份 Playwright fixture 已完全移除这个参数；离线 context 与 route abort 继续承担测试网络边界。以后不得复用该参数或用可见 Chrome 试错命令行分词。
+
+最终自动 route integration 1/1 `PASS`，测试本体 1.6 秒、总耗时 3.8 秒。独立 reviewer Volta 先发现“普通 popup tab 冒充 activeTab”和远程字体两个 P1；Aquinas 对修订后的 Goal 合同给出 `PASS`；Hilbert 发现读取 `Secure Preferences` 可能经子路径 junction 越界的 P1，移除所有 Preferences 读取并改为显式 ID + worker URL + SHA 校验后最终给出 `PASS`，P0/P1/P2 均为 0。
+
+本地最终门禁为 lint、typecheck、427/427 tests、41 files / 427 tests coverage、extension build、Prettier、`git diff --check`、production audit 0 和 lock SHA 不变，全部 `PASS`。普通追加提交 `97f1a08` 已 push 到 draft PR `#5`；GitHub Actions run `29332332585` / job `87083017568` 在 Node 20/pnpm `10.34.5` 下 `PASS`。当前 verdict 为 `043B ROUTE INTEGRATION PASS / GOAL NOT PASS`；下一门禁仍是独立 profile 的真实 toolbar 点击，其后才是受界真实 X no-Vault probe 和 disposable Vault 1-3 条写入。
