@@ -633,7 +633,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 
 #### 离线 extension fixture E2E
 
-- 使用本机已安装 Chrome、全新项目 profile和实际 `dist` extension。
+- 使用本机已安装 Chrome。用户先在当前 worktree `.pnpm-store/goal-043/chrome-profile/` 下创建全新项目 profile，通过 `chrome://extensions` 手动加载实际 `dist` extension 并关闭该专用 Chrome；Playwright 只重新打开这个已准备的普通目录。测试不得使用已被 Stable Chrome 禁用的 `--load-extension`、不得接受不存在/根目录/链接 profile，也不得读取日常 Chrome profile。
 - Playwright route 在精确 `https://x.com/i/bookmarks` 提供脱敏 fixture，context offline，禁止 fixture 远程请求；不加载真实 X。
 - 从 Popup 唯一动作打开 Side Panel，完整走 request exact X permission -> start -> pause/resume -> review -> all-excluded no-write/cancel，并验证 revoke；证明没有 X permission 时不注入、没有真实用户手势/目录授权时不写入。覆盖 reload/SPA navigation、stale document、重复运行、known frontier 和 backfill 第 51 条。File System picker 不用 CDP 或 test-only production backdoor 绕过，实际 disposable Vault outcome 留给人工隔离 QA；writer/engine 的自动化证据使用单元集成中的 fake handle。
 - 截图只允许脱敏 fixture UI，不含真实帖子、URL、账号或 Vault 内容；人工检查 popup、窄 Side Panel、深浅主题、长文本、键盘和 focus。

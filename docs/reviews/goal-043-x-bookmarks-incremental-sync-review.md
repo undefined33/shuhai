@@ -322,7 +322,9 @@ Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gib
 
 Chrome 在 30 秒内没有注册 unpacked extension 的 service worker，验证以 timeout 失败；Playwright context 随后正常关闭，进程检查未发现仍携带该 profile 的 Chrome。该证据只能说明当前安装版 Chrome 的命令行加载路径不可用，不能写成 extension E2E `PASS`。
 
-下一步需要用户在独立项目 Chrome profile 的 `chrome://extensions` 中手动加载 `packages/extension/dist`，再运行离线 fixture。浏览器扩展安装属于需要当次人工确认的 UI 操作；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。
+复核随后发现原 E2E harness 与人工门禁自相矛盾：它要求 profile 不存在并继续传入 Stable Chrome 已忽略的 `--load-extension`，因此用户手动准备后反而会被测试拒绝。候选修复把输入改为当前 Goal profile 根目录下已存在的普通子目录，拒绝根目录、不存在路径、symbolic link/junction 或 realpath 越界；以可见模式重开用户已手动加载 `packages/extension/dist` 的专用 profile，并完全移除命令行 extension 加载 flags。缺少 ShuHai service worker 时返回明确的准备步骤错误。独立复核又指出只取第一个 service worker 可能让 stale/其它 extension 冒充当前候选；harness 因此对浏览器实际提供的 `background/service-worker.js` 与当前 `dist` 文件做 SHA-256 比对，不一致即 fail closed。仓库外路径、Goal profile 根目录和不存在子目录三项实际拒绝检查均通过；独立 reviewer Confucius (`019f6052-a676-7ea1-aa9c-dfdb236ad334`) 对 profile/realpath/hash/context-close diff 给出 `PASS`，P0/P1/P2 均为 0。该 harness 已通过 Prettier、`git diff --check` 和 Playwright `--list` 编译发现，实际 extension E2E 仍等待人工 profile，不能写成 `PASS`。
+
+下一步需要用户在独立项目 Chrome profile 的 `chrome://extensions` 中手动加载 `packages/extension/dist` 并关闭该专用 Chrome，再把精确 profile 路径传给测试。浏览器扩展安装属于需要当次人工确认的 UI 操作；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。
 
 ### 16.7 提交与 Node 20 CI
 
