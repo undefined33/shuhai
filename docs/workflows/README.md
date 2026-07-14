@@ -51,13 +51,13 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 
 ## 5. 当前大模块
 
-| 顺序 | 模块                                | Goal    | 当前状态                                                 |
-| ---: | ----------------------------------- | ------- | -------------------------------------------------------- |
-|    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计      |
-|    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                              |
-|    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                              |
-|    3 | X 与微博增量同步                    | 043/044 | 043B `IN_PROGRESS_OFFLINE_IMPLEMENTATION`，044 `PLANNED` |
-|    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032                    |
-|    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                                |
+| 顺序 | 模块                                | Goal    | 当前状态                                            |
+| ---: | ----------------------------------- | ------- | --------------------------------------------------- |
+|    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计 |
+|    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                         |
+|    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
+|    3 | X 与微博增量同步                    | 043/044 | 043B `IN_PROGRESS_REAL_X_PROBE_GATE`，044 `PLANNED` |
+|    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032               |
+|    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS`，只运行合同内离线实现、测试和 fixture E2E。用户已授权日常 Chrome 只操作 X 并要求限制并发，因此无需等待 Codex 重启即可实现；真实页面读取、no-Vault probe 和 disposable Vault 写入仍后置到实现门禁与独立 review 之后。隔离账号不可用时，只有用户明确指定的单个日常 X 收藏页标签可以作为例外，且不得枚举其它标签或读取整个 profile。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS`。合同内离线实现、测试、fixture route integration、独立 profile 人工 toolbar E2E、独立 review 和 Node 20 CI 已通过；当前只允许受界真实 X no-Vault probe。隔离账号不可用时，只有用户明确指定的单个日常 X 收藏页标签可以作为例外，且不得枚举其它标签或读取整个 profile；disposable Vault 写入仍后置到 probe 通过之后。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

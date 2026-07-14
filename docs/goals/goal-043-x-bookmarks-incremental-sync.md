@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `97f1a08` 已通过 427 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration 和 Node 20 CI run `29332332585`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示，不冒充真实工具栏手势、`activeTab` 或 runtime sender；当前唯一实施门禁是独立 Chrome profile 中的人工 toolbar E2E，随后才允许受界真实 X probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为后续真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `98fbd49` 已通过 438 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29335924317`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。当前唯一实施门禁是受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_MANUAL_TOOLBAR_E2E_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration 和 Node 20 CI 均已通过，但 route integration 明确 mock 了 active-tab UI 边界，不能替代用户实际点击工具栏后的 `activeTab`、sender 和 Side Panel permission preflight。用户已授权日常 Chrome 只操作 X 并要求限制并发，项目将后续真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及 STOP 条件；人工 toolbar E2E 未通过前不得进入该 probe。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。人工 E2E 证明用户实际点击工具栏后的 Popup 单动作、Side Panel permission preflight、取消和终态返回；无权限零 job/零注入仍由自动化 service-worker 测试证明。用户已授权日常 Chrome 只操作 X 并要求限制并发，下一道真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
 
 ## 4. 043A 数据与行为合同
 
@@ -695,4 +695,4 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 3. 合同据此加入精确 manifest 权限迁移、平台权限生命周期、`classifyAndPersistScanBatch`、`cancelJob/abandonWriteJob`、`completeReviewWithoutWrites`、upgrade abort 与 post-commit fail-closed 的分离语义及专项测试。Helmholtz 第二轮给出 `PASS`，确认原四项聚焦问题全部关闭。
 4. Gibbs 第二轮发现最后一个 P1：含 `classification=error` 的全 excluded job 在 `complete` 与写入型 `partial` 之间冲突。合同新增 terminal `complete_with_issues`、持久化 `classificationErrorCount`、零写入约束、active-source 释放、reload UI 与专项测试后，Gibbs 第三轮给出 `PASS`。
 
-最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。该结论只证明合同足以进入下一道人工作业门禁；没有修改生产代码、没有运行真实 X、没有请求平台/Vault 权限，也不构成实现或真实用户旅程证据。合同通过时进入 `CONTRACT_PASS_WAITING_MANUAL_GATE`；用户随后授权日常 Chrome 只操作 X 并要求限制并发，当前已按第 3.3 和 13.10 节转为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`，真实 probe 与 Vault 仍未授权。
+最终 verdict：`043B CONTRACT PASS`，P0/P1/P2 均为 0。该结论只证明合同足以进入下一道人工作业门禁；没有修改生产代码、没有运行真实 X、没有请求平台/Vault 权限，也不构成实现或真实用户旅程证据。合同通过时进入 `CONTRACT_PASS_WAITING_MANUAL_GATE`；用户随后授权日常 Chrome 只操作 X 并要求限制并发，当时按第 3.3 和 13.10 节转为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`。该阶段现已结束，当前状态以第 3.3 节为准；合同复审时真实 probe 与 Vault 均未授权。

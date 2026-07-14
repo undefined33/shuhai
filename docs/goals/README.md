@@ -1,8 +1,8 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-14
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration 已通过，等待人工 toolbar E2E
-> 执行规则：当前为 `IN_PROGRESS_MANUAL_TOOLBAR_E2E_GATE`；代码候选、actual-diff review、自动 route integration 和 Node 20 CI 已通过，只允许先完成独立项目 Chrome profile 的真实工具栏用户旅程。真实 X probe 仍只允许用户指定的单个 X 收藏页标签。
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration 和人工 toolbar E2E 已通过，等待受界真实 X no-Vault probe
+> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；代码候选、actual-diff review、自动 route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 已通过。真实 X probe 只允许用户指定的单个 X 收藏页标签，并保持 10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界。
 
 ## 当前编排状态
 
@@ -11,10 +11,10 @@
 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
 | Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | route integration PASS；等待 toolbar E2E | 用户实际点击独立 profile 工具栏 |
+| Goal 043 | `IN_PROGRESS`             | toolbar E2E PASS；等待真实 X probe       | 受界 no-Vault probe             |
 | 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
 | Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `043B_TOOLBAR_E2E_GATE`   | 独立 profile 真实 toolbar/activeTab E2E  | E2E 后进入受界真实 X probe      |
+| workflow | `043B_REAL_X_PROBE_GATE`  | 单标签、限额、no-Vault 真实 X probe      | probe 后进入 disposable Vault   |
 
 ## v4 当前队列
 
@@ -23,7 +23,7 @@
 | [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现             | Goal 045 重新审计                |
 | [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性             | 独立 PASS                        |
 | [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS                 |
-| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `IN_PROGRESS`             | X 收藏增量同步 MVP                        | 043B manual toolbar E2E          |
+| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `IN_PROGRESS`             | X 收藏增量同步 MVP                        | 043B bounded real X probe        |
 | 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | Goal 041 微博结论 + Goal 042/043 |
 | 045                                                    | `PLANNED`                 | 书签整理收缩和 Goal 032 安全收口          | v4 确认；独立 review 方案        |
 | 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收           |

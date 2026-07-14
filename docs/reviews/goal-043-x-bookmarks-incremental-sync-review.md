@@ -344,4 +344,24 @@ route trace 同时暴露 `popup/styles.css` 仍从 Google Fonts 发起远程请�
 
 最终自动 route integration 1/1 `PASS`，测试本体 1.6 秒、总耗时 3.8 秒。独立 reviewer Volta 先发现“普通 popup tab 冒充 activeTab”和远程字体两个 P1；Aquinas 对修订后的 Goal 合同给出 `PASS`；Hilbert 发现读取 `Secure Preferences` 可能经子路径 junction 越界的 P1，移除所有 Preferences 读取并改为显式 ID + worker URL + SHA 校验后最终给出 `PASS`，P0/P1/P2 均为 0。
 
-本地最终门禁为 lint、typecheck、427/427 tests、41 files / 427 tests coverage、extension build、Prettier、`git diff --check`、production audit 0 和 lock SHA 不变，全部 `PASS`。普通追加提交 `97f1a08` 已 push 到 draft PR `#5`；GitHub Actions run `29332332585` / job `87083017568` 在 Node 20/pnpm `10.34.5` 下 `PASS`。当前 verdict 为 `043B ROUTE INTEGRATION PASS / GOAL NOT PASS`；下一门禁仍是独立 profile 的真实 toolbar 点击，其后才是受界真实 X no-Vault probe 和 disposable Vault 1-3 条写入。
+本地最终门禁为 lint、typecheck、427/427 tests、41 files / 427 tests coverage、extension build、Prettier、`git diff --check`、production audit 0 和 lock SHA 不变，全部 `PASS`。普通追加提交 `97f1a08` 已 push 到 draft PR `#5`；GitHub Actions run `29332332585` / job `87083017568` 在 Node 20/pnpm `10.34.5` 下 `PASS`。该阶段 verdict 为 `043B ROUTE INTEGRATION PASS / GOAL NOT PASS`；下一门禁仍是独立 profile 的真实 toolbar 点击，其后才是受界真实 X no-Vault probe 和 disposable Vault 1-3 条写入。
+
+### 16.9 人工 toolbar E2E 与终态返回
+
+人工 QA 继续使用独立项目 profile `.pnpm-store/goal-043/chrome-profile/manual-e2e-20260714-1850`、当前 `dist` 和扩展 ID `pbjamjajfdmcnfnljgedgiahcpogpbji`，页面是 Playwright 提供的离线脱敏 exact X bookmarks route。用户实际点击 ShuHai 工具栏图标后确认 Popup 只有 `同步新增收藏` 一个主动作；点击后 Side Panel 先显示 exact X permission preflight。该过程没有访问真实 X、日常 Chrome、Cookie/token、真实 Vault 或其它站点，也没有下载浏览器或影响其它 Chrome 进程。
+
+用户授予精确 X 权限并启动 fixture 任务后，脱敏页面因为测试 route 生命周期切换而进入 `tab_changed`，因此这一步不作为真实 selector 或平台扫描证据。用户随后取消任务并撤销 X 权限，暴露了一个真实 UX 缺口：`cancelled` 结果页没有返回工作区入口。候选修复新增终态专用 `返回工作区`：只在 `complete`、`complete_with_issues`、`cancelled` 和 `failed` 出现；`prepared`、`scanning`、`paused`、`ready_for_review`、`writing`、`partial` 及无 job 均不出现，避免把仍可恢复的任务藏掉。点击只切换 UI workspace，不修改 job、历史、权限或 Vault 数据。
+
+独立 reviewer Dirac (`019f60b7-76a0-7ea2-87ad-6c1d0fcebb5f`) 首轮指出缺少全部状态的直接测试；补齐 10 种 job status 与 no-job 参数化覆盖后，最终 verdict 为 `PASS`，P0/P1/P2 均为 0。最终本地证据为：
+
+- 定向 UI model 测试 38/38 `PASS`。
+- `pnpm lint`、`pnpm typecheck`、`pnpm test` 438/438、`pnpm test:coverage` 41 files / 438 tests 和 extension build 全部 `PASS`。
+- coverage 为 statements 53.51%、branches 73.05%、functions 72.91%、lines 53.51%；Vite 6.4.3 转换 1,992 modules，既有约 542 kB chunk 警告仍为非阻塞结构债务。
+- 精确 ESLint、Prettier、`git diff --check` 和 lock SHA-256 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB` 均通过或未漂移。
+- 修复提交 `98fbd49` 已普通 push；GitHub Actions run `29335924317` / job `87095013911` 在 Node 20/pnpm `10.34.5` 下 `PASS`。
+
+状态文档独立 reviewer Lovelace (`019f60d1-2118-7790-bff8-05240d989c84`) 首轮发现 Goal 合同复审历史仍把 `IN_PROGRESS_OFFLINE_IMPLEMENTATION` 写成当前状态的一项 P2；改成明确历史时态并指向第 3.3 节当前 gate 后，最终 verdict 为 `PASS`，P0/P1/P2 均为 0。复审确认六份 current 文档一致保持 `IN_PROGRESS_REAL_X_PROBE_GATE` 和 `GOAL NOT PASS`，且没有把 route、toolbar、自动零 job 或真实 X 证据混为一体。
+
+重新 build 并重开同一专用 profile 后，用户在 `本次任务已取消` 终态看到 `返回工作区`，实际点击并确认“返回正常”。专用测试 Chrome 随后正常退出，按精确 profile marker 检查没有遗留进程。人工截图没有作为“无权限零 job”的数据库证据；该不变量继续由 service-worker/IndexedDB 自动化回归承担。
+
+最终 verdict 更新为 `043B MANUAL TOOLBAR E2E PASS / GOAL NOT PASS`。下一门禁是用户明确指定的单个日常 `https://x.com/i/bookmarks` 标签上的 10-candidate、最多 5 次滚动、单 outstanding request、批次至少 2 秒、no-Vault probe；真实 selector、平台 stop code、disposable Vault 1-3 条写入和第二次 incremental 去重仍未验证。
