@@ -8,6 +8,7 @@ const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta
   permissions?: string[];
   side_panel?: { default_path?: string };
 };
+const popupStyles = readFileSync(new URL('../src/popup/styles.css', import.meta.url), 'utf8');
 
 describe('extension manifest', () => {
   it('declares the Chrome side panel entry', () => {
@@ -40,5 +41,9 @@ describe('extension manifest', () => {
     expect(staticMatches).not.toContain('https://twitter.com/*');
     expect(staticScripts).not.toContain('content/twitter.js');
     expect(staticMatches).toEqual(['https://weibo.com/*', 'https://m.weibo.cn/*']);
+  });
+
+  it('does not load remote resources from extension UI styles', () => {
+    expect(popupStyles).not.toMatch(/https?:\/\//iu);
   });
 });

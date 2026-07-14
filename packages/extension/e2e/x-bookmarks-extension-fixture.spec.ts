@@ -2,10 +2,16 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, expect, test, type BrowserContext, type Worker } from '@playwright/test';
+import {
+  chromium,
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type Worker,
+} from '@playwright/test';
 
-import { X_SYNC_LAUNCH_INTENT_KEY } from '../src/social/x-sync-launch-intent.js';
-import { X_SYNC_BOOKMARKS_URL, X_SYNC_PROTOCOL } from '../src/social/x-sync-messages.js';
+import { X_SYNC_BOOKMARKS_URL } from '../src/social/x-sync-messages.js';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const extensionPath = path.resolve(dirname, '../dist');
@@ -47,6 +53,14 @@ function preparedExtensionProfilePath(): string {
   return candidate;
 }
 
+function preparedExtensionId(): string {
+  const extensionId = process.env.SHUHAI_GOAL_043_EXTENSION_ID;
+  if (!extensionId || !/^[a-p]{32}$/u.test(extensionId)) {
+    throw new Error('SHUHAI_GOAL_043_EXTENSION_ID must be the prepared ShuHai extension ID');
+  }
+  return extensionId;
+}
+
 async function extensionWorker(context: BrowserContext): Promise<Worker> {
   const existing = context.serviceWorkers()[0];
   if (existing) return existing;
@@ -80,6 +94,40 @@ async function assertCurrentExtensionBuild(worker: Worker): Promise<void> {
       'Prepared profile is not running the current packages/extension/dist build. Reload ShuHai in chrome://extensions and retry.',
     );
   }
+}
+
+async function installRouteOnlyActiveTabFixture(page: Page): Promise<void> {
+  await page.addInitScript((url) => {
+    const api = (
+      globalThis as unknown as {
+        chrome?: {
+          tabs?: {
+            query?: (
+              queryInfo: Record<string, unknown>,
+              callback: (tabs: Array<{ title: string; url: string }>) => void,
+            ) => void;
+          };
+        };
+      }
+    ).chrome;
+    const tabs = api?.tabs;
+    const originalQuery = tabs?.query;
+    if (!tabs || typeof originalQuery !== 'function') return;
+
+    Object.defineProperty(tabs, 'query', {
+      configurable: true,
+      value: (
+        queryInfo: Record<string, unknown>,
+        callback: (tabs: Array<{ title: string; url: string }>) => void,
+      ) => {
+        if (queryInfo.active === true && queryInfo.currentWindow === true) {
+          callback([{ title: 'Bookmarks / X', url }]);
+          return;
+        }
+        originalQuery.call(tabs, queryInfo, callback);
+      },
+    });
+  }, X_SYNC_BOOKMARKS_URL);
 }
 
 function countPersistedXJobs(worker: Worker): Promise<number> {
@@ -129,7 +177,7 @@ const fixtureHtml = `<!doctype html>
   </body>
 </html>`;
 
-test('uses a preloaded project profile and creates no job without optional host permission', async () => {
+test('loads the current extension and renders the X popup route with a mocked activeTab boundary', async () => {
   if (!existsSync(path.join(extensionPath, 'manifest.json'))) {
     throw new Error('Build @shuhai/extension before running the extension fixture');
   }
@@ -137,9 +185,12 @@ test('uses a preloaded project profile and creates no job without optional host 
   let context: BrowserContext | undefined;
   const outboundRequests: string[] = [];
   try {
-    context = await chromium.launchPersistentContext(preparedExtensionProfilePath(), {
+    const profilePath = preparedExtensionProfilePath();
+    const extensionId = preparedExtensionId();
+    context = await chromium.launchPersistentContext(profilePath, {
       channel: 'chrome',
-      headless: false,
+      headless: true,
+      ignoreDefaultArgs: ['--disable-extensions'],
       offline: true,
       args: [
         '--disable-background-networking',
@@ -149,7 +200,6 @@ test('uses a preloaded project profile and creates no job without optional host 
         '--disable-sync',
         '--metrics-recording-only',
         '--no-first-run',
-        '--host-resolver-rules=MAP * ~NOTFOUND',
       ],
     });
     await context.route('**/*', async (route) => {
@@ -166,48 +216,22 @@ test('uses a preloaded project profile and creates no job without optional host 
       await route.continue();
     });
 
+    const popup = context.pages()[0] ?? (await context.newPage());
+    await installRouteOnlyActiveTabFixture(popup);
+    await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
     const worker = await extensionWorker(context);
     await assertCurrentExtensionBuild(worker);
-    const extensionId = new URL(worker.url()).host;
-    const fixturePage = context.pages()[0] ?? (await context.newPage());
+    expect(new URL(worker.url()).host).toBe(extensionId);
+
+    const fixturePage = await context.newPage();
     await fixturePage.goto(X_SYNC_BOOKMARKS_URL);
 
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
     await fixturePage.bringToFront();
     await popup.reload({ waitUntil: 'domcontentloaded' });
 
     await expect(popup.getByRole('heading', { name: '同步新增收藏' })).toBeVisible();
     await expect(popup.getByRole('button', { name: '同步新增收藏' })).toHaveCount(1);
     await expect(popup.getByText('只处理当前 X 收藏页', { exact: false })).toBeVisible();
-
-    await popup.getByRole('button', { name: '同步新增收藏' }).click();
-    await expect
-      .poll(() =>
-        worker.evaluate(async (key) => {
-          const api = (
-            globalThis as unknown as {
-              chrome: {
-                storage: {
-                  session: { get(storageKey: string): Promise<Record<string, unknown>> };
-                };
-              };
-            }
-          ).chrome;
-          const stored = await api.storage.session.get(key);
-          return stored[key];
-        }, X_SYNC_LAUNCH_INTENT_KEY),
-      )
-      .toMatchObject({ protocol: X_SYNC_PROTOCOL, action: 'start' });
-
-    const sidePanel = await context.newPage();
-    await sidePanel.goto(`chrome-extension://${extensionId}/sidepanel/index.html`);
-    await fixturePage.bringToFront();
-    await sidePanel.reload({ waitUntil: 'domcontentloaded' });
-
-    await expect(sidePanel.getByRole('heading', { name: '允许读取当前 X 收藏页' })).toBeVisible();
-    await expect(sidePanel.getByRole('button', { name: '允许读取 X 收藏页' })).toBeVisible();
-    await expect(sidePanel.getByRole('button', { name: /开始检查新增收藏/u })).toHaveCount(0);
 
     const permissionGranted = await worker.evaluate(async () => {
       const api = (

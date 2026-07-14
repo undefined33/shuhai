@@ -557,6 +557,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/src/background/service-worker.ts`
 - `packages/extension/src/utils/vault-writer.ts`（仅 query-only permission helper）
 - `packages/extension/src/popup/App.tsx`
+- `packages/extension/src/popup/styles.css`（仅删除远程字体 import，保留现有本地系统字体 fallback；不得引入字体文件或其它视觉重构）
 - `packages/extension/src/popup/pages/XSyncPage.tsx`（new）
 - `packages/extension/src/popup/pages/x-sync-ui-model.ts`（new）
 - `packages/extension/vite.config.ts`（仅增加 content build entry）
@@ -573,7 +574,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/tests/x-sync-runtime.test.ts`（new）
 - `packages/extension/tests/x-sync-service-worker.test.ts`（new）
 - `packages/extension/tests/x-sync-ui-model.test.ts`（new）
-- `packages/extension/tests/manifest.test.ts`（仅权限与静态注入回归）
+- `packages/extension/tests/manifest.test.ts`（仅权限、静态注入与扩展 UI 无远程资源回归）
 - `packages/extension/tests/vault-writer.test.ts`
 - `packages/extension/src/content/__tests__/x-bookmarks.test.ts`（new）
 - `packages/extension/e2e/x-bookmarks-fixture.spec.ts`
@@ -633,9 +634,11 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 
 #### 离线 extension fixture E2E
 
-- 使用本机已安装 Chrome。用户先在当前 worktree `.pnpm-store/goal-043/chrome-profile/` 下创建全新项目 profile，通过 `chrome://extensions` 手动加载实际 `dist` extension 并关闭该专用 Chrome；Playwright 只重新打开这个已准备的普通目录。测试不得使用已被 Stable Chrome 禁用的 `--load-extension`、不得接受不存在/根目录/链接 profile，也不得读取日常 Chrome profile。
+- 使用本机已安装 Chrome。用户先在当前 worktree `.pnpm-store/goal-043/chrome-profile/` 下创建全新项目 profile，通过 `chrome://extensions` 手动加载实际 `dist` extension，记录页面显示的 32 位 extension ID 并关闭该专用 Chrome；Playwright 只重新打开这个已准备的普通目录，并以显式 ID 定位 extension 后校验当前 `dist` service-worker SHA。测试不得使用已被 Stable Chrome 禁用的 `--load-extension`、不得接受不存在/根目录/链接 profile，也不得读取 Chrome `Preferences`、日常 Chrome profile 或其它扩展配置。
 - Playwright route 在精确 `https://x.com/i/bookmarks` 提供脱敏 fixture，context offline，禁止 fixture 远程请求；不加载真实 X。
-- 从 Popup 唯一动作打开 Side Panel，完整走 request exact X permission -> start -> pause/resume -> review -> all-excluded no-write/cancel，并验证 revoke；证明没有 X permission 时不注入、没有真实用户手势/目录授权时不写入。覆盖 reload/SPA navigation、stale document、重复运行、known frontier 和 backfill 第 51 条。File System picker 不用 CDP 或 test-only production backdoor 绕过，实际 disposable Vault outcome 留给人工隔离 QA；writer/engine 的自动化证据使用单元集成中的 fake handle。
+- 自动化的 preloaded-extension route integration 必须验证当前 `dist` service worker hash、构建产物无远程字体/HTTP(S) UI 资源、无 X host permission 时零 job/零注入/零平台出站，以及给定脱敏 X active-tab fixture 时 Popup/Side Panel 的 UI 路由。由于把 `popup/index.html` 直接打开成普通 tab 不会获得真实 toolbar user gesture/`activeTab`，且其 runtime sender 带 `sender.tab`，测试只允许在测试进程内 mock 这条 UI context 边界；测试名称和报告必须明确为 route integration，不能声称验证真实 toolbar、真实 `activeTab` 或真实 sender。
+- 真正的 toolbar extension E2E 必须由用户在上述独立 profile 的脱敏 fixture 页实际点击 ShuHai 工具栏图标；不 mock Chrome API，不修改生产代码，不授予 X host permission。人工确认 Popup 唯一动作是 `同步新增收藏`、点击后打开 Side Panel 且先显示 exact X permission preflight，再确认没有授权时不创建 job。此证据与 route integration 分开记录，二者都不能替代受界真实 X QA。
+- start -> pause/resume -> review -> all-excluded no-write/cancel、revoke、reload/SPA navigation、stale document、重复运行、known frontier 和 backfill 第 51 条继续由 service-worker/runtime/store 单元集成与脱敏页面 fixture 覆盖；不得为了制造“全自动 E2E”绕过 sender、权限、真实用户手势或 File System picker。实际 disposable Vault outcome 留给人工隔离 QA；writer/engine 的自动化证据使用单元集成中的 fake handle。
 - 截图只允许脱敏 fixture UI，不含真实帖子、URL、账号或 Vault 内容；人工检查 popup、窄 Side Panel、深浅主题、长文本、键盘和 focus。
 
 #### 受界真实 X QA

@@ -176,7 +176,6 @@ test('rescans a recycled X fixture from the top and resumes without duplicate it
         '--disable-sync',
         '--metrics-recording-only',
         '--no-first-run',
-        '--host-resolver-rules=MAP * ~NOTFOUND',
       ],
     });
     await context.route('**/*', async (route) => {
