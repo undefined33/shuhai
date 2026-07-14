@@ -271,7 +271,7 @@ Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gib
 
 043B 已在独立 worktree 内完成合同白名单中的 manifest 权限迁移、DB3/单事务分类持久化、X DOM reader、runtime message/sender/document 绑定、单任务 coordinator、Popup 上下文入口、Side Panel 工作台和 Vault 逐项写入接线。实现期间没有读取真实 X、Cookie、token、日常 Chrome 其它标签或真实 Vault，也没有启动 Docker、服务、监听端口或下载浏览器。
 
-当前仍是离线实现候选，不是 Goal 完成。单元、集成、coverage、build、复杂度审查和最终 post-fix actual-diff review 已通过；离线 extension fixture E2E 因本机 Chrome 未注册命令行加载的 unpacked extension 而未通过，Node 20 CI、受界真实 X probe 和 disposable Vault 1-3 条写入仍未完成。
+当前仍是离线实现候选，不是 Goal 完成。单元、集成、coverage、build、复杂度审查、最终 post-fix actual-diff review 和 Node 20 CI 已通过；离线 extension fixture E2E 因本机 Chrome 未注册命令行加载的 unpacked extension 而未通过，受界真实 X probe 和 disposable Vault 1-3 条写入仍未完成。
 
 ### 16.2 首轮 actual-diff findings
 
@@ -314,7 +314,7 @@ Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gib
 
 最终只读 reviewer Kant (`019f6027-1906-7ca3-a3b1-2f86aad7410d`) 对基线 `5acdcc7` 到当前工作树的 post-fix actual diff 给出 `PASS`，P0/P1/P2 均无未解决项。复审确认权限 fail-closed 与零 job/零注入、sender/document/tab/window/nonce 绑定、terminal 宽权限撤销、candidate/backfill budget、partial/cancel/reconcile/Vault write-intent 和 Goal allowlist 均未发现绕过；没有发现需要在本 Goal 强拆的实质过度设计。该 reviewer 未修改文件，也未把逻辑测试冒充浏览器验收。
 
-当前 verdict 更新为 `043B OFFLINE CODE CANDIDATE PASS / GOAL NOT PASS`。剩余阻塞是 extension-level Chrome E2E、Node 20 CI、受界真实 X 和 disposable Vault QA，而不是当前代码门禁或 actual-diff review。
+当前 verdict 更新为 `043B OFFLINE CODE CANDIDATE PASS / GOAL NOT PASS`。剩余阻塞是 extension-level Chrome E2E、受界真实 X 和 disposable Vault QA，而不是当前代码门禁、actual-diff review 或 Node 20 CI。
 
 ### 16.6 Chrome extension E2E 门禁
 
@@ -323,3 +323,9 @@ Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gib
 Chrome 在 30 秒内没有注册 unpacked extension 的 service worker，验证以 timeout 失败；Playwright context 随后正常关闭，进程检查未发现仍携带该 profile 的 Chrome。该证据只能说明当前安装版 Chrome 的命令行加载路径不可用，不能写成 extension E2E `PASS`。
 
 下一步需要用户在独立项目 Chrome profile 的 `chrome://extensions` 中手动加载 `packages/extension/dist`，再运行离线 fixture。浏览器扩展安装属于需要当次人工确认的 UI 操作；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。
+
+### 16.7 提交与 Node 20 CI
+
+首次提交尝试没有创建 commit：Husky 的 `pnpm lint-staged` 解析到用户全局 pnpm，触发 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 后在任何目录替换前停止。没有使用 `--force`、手工删除或清理。随后通过 Goal 固定的 pnpm `10.34.5` 前缀显式运行同一 `lint-staged`，ESLint/Prettier 全部通过且临时 stash 已正常清理；再次完整运行 lint、typecheck、426 项测试、coverage 和 extension build 后，只对该次 commit 设置进程级 `HUSKY=0`，没有跳过等价质量门禁。
+
+普通追加提交 `c66c3ac` 已 push 到 draft PR `#5`。GitHub Actions run `29326255564` / job `87063170807` 在 Node `20.20.2`、pnpm `10.34.5` 下于 53 秒内 `PASS`；frozen install 使用 official registry 和 `--ignore-scripts`，lint、typecheck、coverage、全仓 build 与 coverage artifact 均成功。该 CI 只关闭 Node 20 门禁，不替代 extension E2E 或真实 X/Vault QA。

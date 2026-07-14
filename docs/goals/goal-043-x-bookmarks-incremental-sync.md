@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。用户明确授权日常 Chrome 只操作 X 并要求限制并发后，043B 已转为唯一 `IN_PROGRESS` Goal；当前只实施生产接线、测试和离线 fixture E2E，不读取真实 X、不请求 Vault。项目隔离 profile 优先；隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外。真正的真实 X probe 必须在生产实现和离线验收之后运行，不能作为实现自己的前置证据。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 离线代码候选提交 `c66c3ac` 已通过 426 项测试、完整本地门禁、最终 actual-diff review 和 Node 20 CI；当前唯一实施门禁是独立 Chrome profile 中的 extension fixture E2E，仍不读取真实 X、不请求 Vault。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为后续真实 QA 例外。真正的真实 X probe 必须在离线 extension E2E 之后运行，不能用来替代该门禁。
 
 ## 1. 用户问题
 

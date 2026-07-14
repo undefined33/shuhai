@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-14
-> 状态：Goal 041/042 与 Goal 043A fixture-only 候选已通过；Goal 043B 离线生产实现进行中
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 离线代码候选、actual-diff review 和 Node 20 CI 已通过，等待 extension E2E
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，状态为 `IN_PROGRESS`，仅授权合同内的离线生产实现、单元/集成测试、离线 fixture E2E、完整门禁和独立 actual-diff review。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。043A 最终修复关闭了 invocation deadline 的迟到事务竞态、adapter 节点低报和 fixture 网络证据夸大问题；335 项测试、完整门禁、依赖审计、全新离线 Chrome fixture E2E 和独立 actual-diff review 均通过。043B v2 合同已完成两位独立 reviewer 的多轮复审并最终 `PASS`，关闭最小可撤销 X 权限、单事务预算计数、持久取消、无写盘终态和 DB3 fail-closed 等缺口。隔离测试账号无法登录后，用户已明确允许日常 Chrome 的单个 X 收藏页标签作为真实 QA 例外，并要求限制 X 并发；项目据此固定 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试。Codex Chrome 连接只阻塞实现后的真实 probe，不阻塞离线实现；该授权不包含其它标签、整个 profile、其它站点或 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码候选提交 `c66c3ac` 已通过 426 项测试、coverage、build、完整本地门禁、最终 actual-diff review 和 GitHub Node 20 CI run `29326255564`；当前只允许完成独立 Chrome profile 中的 extension fixture E2E。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。隔离测试账号无法登录后，用户已明确允许日常 Chrome 的单个 X 收藏页标签作为真实 QA 例外，并要求限制 X 并发；项目据此固定 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试。真实 X 与 disposable Vault 仍位于 extension E2E 之后；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -75,13 +75,13 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | 043B 离线生产实现；真实 QA 暂待 Chrome   |
+|    3 | Goal 043 | `IN_PROGRESS`             | 043B 代码/CI PASS；等待 extension E2E    |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。用户已授权日常 Chrome 的精确 X 收藏页范围和限并发方向，因此离线实现可以继续；真实页面读取、probe 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
+用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码与 CI 已通过，当前等待独立项目 Chrome profile 的 extension E2E；真实页面读取、probe 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -105,8 +105,8 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 043B 已作为唯一 `IN_PROGRESS` Goal，严格按 v2 文件 allowlist 完成生产接线、单元/集成测试和离线 extension fixture E2E；这一阶段不连接或读取真实 X，不请求 Vault。
-2. 候选通过完整质量门禁和独立 actual-diff review 后，才进入真实 Chrome QA 等待态；不得以 Chrome 插件暂不可用为理由下载浏览器、CRX、手工删除插件缓存或改动 Chrome 配置。
+1. 043B 离线代码候选 `c66c3ac`、完整质量门禁、独立 actual-diff review 和 Node 20 CI 已通过；正式状态仍为 `IN_PROGRESS`。
+2. 在独立项目 Chrome profile 中由用户手动加载 `packages/extension/dist`，完成第 13.11 节 extension fixture E2E；不得以 Chrome 插件暂不可用为理由下载浏览器、CRX、手工删除插件缓存或改动 Chrome 配置。
 3. 用户方便重启 Codex 并恢复 Chrome 控制后，只新建或绑定日常 Chrome 中的单个 `https://x.com/i/bookmarks` 标签；不得枚举、读取、切换、刷新或关闭其它标签，也不得读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile。
 4. 首次 probe 固定为 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动完成到下一批请求至少 2 秒、不写 Vault；遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
 5. no-Vault probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
