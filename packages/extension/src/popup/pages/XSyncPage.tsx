@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Ban, CheckCircle2, Pause, Play, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Ban, CheckCircle2, Pause, Play, RefreshCw, ShieldCheck } from 'lucide-react';
 
 import { Button } from '../../components/ui/button.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
@@ -192,7 +192,11 @@ function classificationLabel(classification: SyncJobItem['classification']): str
   return '待判断';
 }
 
-export default function XSyncPage() {
+interface XSyncPageProps {
+  onReturnToWorkspace(): void;
+}
+
+export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
   const [snapshot, setSnapshot] = useState<XSyncSnapshot>(EMPTY_SNAPSHOT);
   const [mode, setMode] = useState<SyncScanMode>('incremental');
   const [xPermission, setXPermission] = useState<XHostPermissionState>('unavailable');
@@ -655,6 +659,18 @@ export default function XSyncPage() {
 
   return (
     <div className="h-full overflow-y-auto pb-4">
+      {model.canReturnToWorkspace ? (
+        <Button
+          className="mb-3"
+          disabled={busy}
+          onClick={onReturnToWorkspace}
+          size="sm"
+          variant="ghost"
+        >
+          <ArrowLeft className="h-4 w-4" /> 返回工作区
+        </Button>
+      ) : null}
+
       <div className={`rounded-md border p-3 ${toneClass}`} role="status">
         <h2 className="text-sm font-semibold">{model.headline}</h2>
         <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{model.description}</p>

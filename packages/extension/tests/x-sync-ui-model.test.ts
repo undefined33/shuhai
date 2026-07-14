@@ -418,6 +418,27 @@ describe('X sync UI model', () => {
     expect(model.candidateLimit).toBe(10);
   });
 
+  it.each([
+    ['complete', true],
+    ['complete_with_issues', true],
+    ['cancelled', true],
+    ['failed', true],
+    ['prepared', false],
+    ['scanning', false],
+    ['paused', false],
+    ['ready_for_review', false],
+    ['writing', false],
+    ['partial', false],
+  ] as const)('sets return-to-workspace for %s to %s', (status, expected) => {
+    const model = deriveXSyncUiModel(snapshot({ job: job(status) }));
+
+    expect(model.canReturnToWorkspace).toBe(expected);
+  });
+
+  it('does not offer a workspace return without a job', () => {
+    expect(deriveXSyncUiModel(snapshot()).canReturnToWorkspace).toBe(false);
+  });
+
   it('reports an explicit no-write terminal result', () => {
     const completed = job('complete', {
       scanCompletion: 'known_frontier',

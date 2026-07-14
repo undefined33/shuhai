@@ -1552,6 +1552,11 @@ function AppContent({ surface = 'popup' }: AppProps) {
     usePopupWorkspace('settings');
   };
 
+  const handleReturnFromXSync = () => {
+    setXSyncRoute(false);
+    usePopupWorkspace('home');
+  };
+
   const quickClassifyFromPopup = () => {
     usePopupWorkspace('organize');
     setOrganizeMode('plan');
@@ -1683,7 +1688,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
           <Separator className="mt-3" />
         </header>
         <div className="min-h-0 flex-1 px-3 pt-2">
-          <XSyncPage />
+          <XSyncPage onReturnToWorkspace={handleReturnFromXSync} />
         </div>
       </main>
     );

@@ -62,6 +62,7 @@ export interface XSyncUiModel {
   canContinueWriting: boolean;
   canRetryWrites: boolean;
   canAbandonWriting: boolean;
+  canReturnToWorkspace: boolean;
 }
 
 const X_HOST_ORIGIN = 'https://x.com/*';
@@ -470,5 +471,6 @@ export function deriveXSyncUiModel(snapshot: XSyncUiSnapshot): XSyncUiModel {
         (job.status === 'writing' || job.status === 'partial' || pausedWriting) &&
         !hasPendingWrites,
     ),
+    canReturnToWorkspace: Boolean(job && !ACTIVE_STATUSES.has(job.status)),
   };
 }
