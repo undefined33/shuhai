@@ -52,6 +52,53 @@ import {
 import { inferErrorCode } from '../utils/error-messages.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
+import {
+  X_BOOKMARKS_ADAPTER_VERSION,
+  X_BOOKMARKS_CEILINGS,
+  type XBookmarksLimits,
+} from '../social/adapters/x-bookmarks.js';
+import { SYNC_LIMITS, type SyncJob, type SyncScanMode } from '../social/sync-schema.js';
+import {
+  ActiveSyncJobExistsError,
+  SyncStoreConflictError,
+  openSyncStore,
+  type SyncStore,
+} from '../social/sync-store.js';
+import {
+  XSyncAdapterStopError,
+  XSyncCoordinator,
+  type AdapterBatchPort,
+  type AdapterBatchRequest,
+  type XSyncInvocationResult,
+} from '../social/x-sync-coordinator.js';
+import {
+  XSyncLaunchIntentError,
+  XSyncLaunchIntentStore,
+  type XSyncSessionStoragePort,
+} from '../social/x-sync-launch-intent.js';
+import {
+  X_SYNC_BOOKMARKS_URL,
+  X_SYNC_PROTOCOL,
+  makeMinimalXSyncRuntimeError,
+  matchesXSyncContentResponseBinding,
+  parseXSyncContentResponse,
+  parseXSyncPortMessage,
+  parseXSyncUiRequest,
+  parseXSyncUiResponse,
+  resolveXSyncExtensionOrigin,
+  validateXSyncUiSender,
+  type XSyncContentRequest,
+  type XSyncDocumentBinding,
+  type XSyncPortMessage,
+  type XSyncUiRequest,
+  type XSyncUiResponse,
+} from '../social/x-sync-messages.js';
+import {
+  XSyncRuntime,
+  type XSyncInvocationLease,
+  type XSyncRuntimeProfile,
+  type XSyncRuntimePauseReason,
+} from '../social/x-sync-runtime.js';
 
 type SocialCaptureSource = 'twitter' | 'weibo';
 
@@ -64,6 +111,1016 @@ interface SocialExtractResponse {
 
 let activeClassification: AbortController | undefined;
 let activeHealthCheck: AbortController | undefined;
+
+const X_SYNC_CONTENT_FILE = 'content/x-bookmarks.js';
+const X_SYNC_ORIGIN = 'https://x.com/*';
+const X_SYNC_LEGACY_BROAD_ORIGINS = ['http://*/*', 'https://*/*'] as const;
+const X_SYNC_INITIAL_CANDIDATE_LIMIT = 10;
+const X_SYNC_INITIAL_SCROLL_LIMIT = 5;
+const xSyncRuntime = new XSyncRuntime();
+const xSyncPorts = new Set<chrome.runtime.Port>();
+
+type XSyncRuntimeErrorCode = Parameters<typeof makeMinimalXSyncRuntimeError>[0]['code'];
+type XSyncRuntimeErrorPhase = Parameters<typeof makeMinimalXSyncRuntimeError>[0]['phase'];
+type XSyncSuccessResult = Extract<XSyncUiResponse, { readonly ok: true }>['result'];
+
+interface XSyncValidatedTab {
+  readonly tabId: number;
+  readonly windowId: number;
+}
+
+interface XSyncInjectedDocument extends XSyncValidatedTab {
+  readonly documentId: string;
+}
+
+interface ActiveXSyncRun {
+  readonly jobId: string;
+  readonly scanRevision: number;
+  readonly tabId: number;
+  readonly windowId: number;
+  readonly adapter: XSyncChromeAdapter;
+  readonly promise: Promise<void>;
+}
+
+class XSyncServiceError extends Error {
+  readonly code: XSyncRuntimeErrorCode;
+  readonly phase: XSyncRuntimeErrorPhase;
+  readonly jobId?: string;
+  readonly scanRevision?: number;
+
+  constructor(
+    code: XSyncRuntimeErrorCode,
+    phase: XSyncRuntimeErrorPhase,
+    options: { readonly jobId?: string; readonly scanRevision?: number } = {},
+  ) {
+    super('The X sync command failed');
+    this.name = 'XSyncServiceError';
+    this.code = code;
+    this.phase = phase;
+    this.jobId = options.jobId;
+    this.scanRevision = options.scanRevision;
+  }
+}
+
+function xSyncSessionStoragePort(): XSyncSessionStoragePort {
+  return {
+    get: (key) =>
+      new Promise((resolve, reject) => {
+        if (!chrome.storage?.session) {
+          reject(new Error('session storage unavailable'));
+          return;
+        }
+        chrome.storage.session.get(key, (items) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error('session storage get failed'));
+            return;
+          }
+          const descriptor = Object.getOwnPropertyDescriptor(items, key);
+          resolve(descriptor && 'value' in descriptor ? descriptor.value : undefined);
+        });
+      }),
+    set: (key, value) =>
+      new Promise((resolve, reject) => {
+        if (!chrome.storage?.session) {
+          reject(new Error('session storage unavailable'));
+          return;
+        }
+        chrome.storage.session.set({ [key]: value }, () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error('session storage set failed'));
+            return;
+          }
+          resolve();
+        });
+      }),
+    remove: (key) =>
+      new Promise((resolve, reject) => {
+        if (!chrome.storage?.session) {
+          reject(new Error('session storage unavailable'));
+          return;
+        }
+        chrome.storage.session.remove(key, () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error('session storage remove failed'));
+            return;
+          }
+          resolve();
+        });
+      }),
+  };
+}
+
+const xSyncLaunchIntents = new XSyncLaunchIntentStore(xSyncSessionStoragePort());
+let activeXSyncRun: ActiveXSyncRun | undefined;
+let xSyncCommandQueue: Promise<void> = Promise.resolve();
+
+function runXSyncCommandExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  const result = xSyncCommandQueue.then(operation, operation);
+  xSyncCommandQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function hasXSyncProtocolEnvelope(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  try {
+    return Object.prototype.hasOwnProperty.call(value, 'protocol');
+  } catch {
+    return true;
+  }
+}
+
+function xSyncPhaseForRequest(request: XSyncUiRequest): XSyncRuntimeErrorPhase {
+  switch (request.type) {
+    case 'launch':
+    case 'start':
+      return 'launch';
+    case 'resume':
+    case 'pause':
+    case 'finalize':
+    case 'cancel':
+      return 'scanning';
+    case 'save-selection':
+    case 'complete-without-writes':
+    case 'authorize':
+      return request.type === 'authorize' ? 'writing' : 'review';
+  }
+}
+
+function xSyncSuccess(requestId: string, result: XSyncSuccessResult): XSyncUiResponse {
+  return parseXSyncUiResponse({
+    protocol: X_SYNC_PROTOCOL,
+    type: 'command-result',
+    requestId,
+    ok: true,
+    result,
+  });
+}
+
+function xSyncFailure(
+  requestId: string,
+  code: XSyncRuntimeErrorCode,
+  phase: XSyncRuntimeErrorPhase,
+  options: { readonly jobId?: string; readonly scanRevision?: number } = {},
+): XSyncUiResponse {
+  return parseXSyncUiResponse({
+    protocol: X_SYNC_PROTOCOL,
+    type: 'command-result',
+    requestId,
+    ok: false,
+    error: makeMinimalXSyncRuntimeError({
+      code,
+      phase,
+      ...(options.jobId === undefined ? {} : { jobId: options.jobId }),
+      ...(options.scanRevision === undefined ? {} : { scanRevision: options.scanRevision }),
+    }),
+  });
+}
+
+function xSyncErrorResponse(request: XSyncUiRequest, error: unknown): XSyncUiResponse {
+  const phase = xSyncPhaseForRequest(request);
+  if (error instanceof XSyncServiceError) {
+    return xSyncFailure(request.requestId, error.code, error.phase, {
+      ...(error.jobId === undefined ? {} : { jobId: error.jobId }),
+      ...(error.scanRevision === undefined ? {} : { scanRevision: error.scanRevision }),
+    });
+  }
+  if (error instanceof XSyncLaunchIntentError) {
+    const code: XSyncRuntimeErrorCode =
+      error.code === 'expired'
+        ? 'launch_expired'
+        : error.code === 'missing' || error.code === 'nonce_mismatch'
+          ? 'launch_missing'
+          : error.code === 'storage_corrupt'
+            ? 'storage_corrupt'
+            : error.code === 'window_missing' || error.code === 'tab_changed'
+              ? 'tab_changed'
+              : 'internal_error';
+    return xSyncFailure(request.requestId, code, phase);
+  }
+  if (error instanceof ActiveSyncJobExistsError) {
+    return xSyncFailure(request.requestId, 'source_conflict', phase);
+  }
+  if (error instanceof SyncStoreConflictError) {
+    return xSyncFailure(request.requestId, 'stale_revision', phase);
+  }
+  return xSyncFailure(request.requestId, 'internal_error', phase);
+}
+
+function postXSyncPortValue(
+  port: chrome.runtime.Port,
+  value: XSyncUiResponse | XSyncPortMessage,
+): void {
+  try {
+    port.postMessage(value);
+  } catch {
+    xSyncPorts.delete(port);
+  }
+}
+
+function broadcastXSyncEvent(message: XSyncPortMessage): void {
+  const parsed = parseXSyncPortMessage(message);
+  for (const port of xSyncPorts) {
+    postXSyncPortValue(port, parsed);
+  }
+}
+
+function broadcastXSyncState(job: SyncJob): void {
+  broadcastXSyncEvent({
+    protocol: X_SYNC_PROTOCOL,
+    type: 'runtime-event',
+    event: {
+      kind: 'state',
+      jobId: job.id,
+      status: job.status,
+      scanRevision: job.scanRevision,
+      reviewRevision: job.reviewRevision,
+    },
+  });
+}
+
+function queryActiveXTab(windowId?: number): Promise<XSyncValidatedTab> {
+  return new Promise((resolve, reject) => {
+    const query: chrome.tabs.QueryInfo =
+      windowId === undefined
+        ? { active: true, lastFocusedWindow: true }
+        : { active: true, windowId };
+    chrome.tabs.query(query, (tabs) => {
+      if (chrome.runtime.lastError) {
+        reject(new XSyncServiceError('tab_changed', 'launch'));
+        return;
+      }
+      const tab = tabs[0];
+      if (
+        tabs.length !== 1 ||
+        typeof tab?.id !== 'number' ||
+        typeof tab.windowId !== 'number' ||
+        tab.active !== true ||
+        tab.url !== X_SYNC_BOOKMARKS_URL ||
+        (windowId !== undefined && tab.windowId !== windowId)
+      ) {
+        reject(new XSyncServiceError('tab_changed', 'launch'));
+        return;
+      }
+      resolve({ tabId: tab.id, windowId: tab.windowId });
+    });
+  });
+}
+
+function getBoundXTab(tabId: number, windowId: number): Promise<XSyncValidatedTab> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.get(tabId, (tab) => {
+      if (
+        chrome.runtime.lastError ||
+        typeof tab?.id !== 'number' ||
+        tab.id !== tabId ||
+        tab.windowId !== windowId ||
+        tab.active !== true ||
+        tab.url !== X_SYNC_BOOKMARKS_URL
+      ) {
+        reject(new XSyncAdapterStopError('tab_changed'));
+        return;
+      }
+      resolve({ tabId, windowId });
+    });
+  });
+}
+
+function containsXPermission(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!chrome.permissions?.contains || !chrome.permissions.getAll) {
+      resolve(false);
+      return;
+    }
+    chrome.permissions.contains({ origins: [X_SYNC_ORIGIN] }, (granted) => {
+      if (chrome.runtime.lastError || granted !== true) {
+        resolve(false);
+        return;
+      }
+      chrome.permissions.getAll((permissions) => {
+        if (chrome.runtime.lastError) {
+          resolve(false);
+          return;
+        }
+        const origins = permissions.origins ?? [];
+        resolve(
+          origins.includes(X_SYNC_ORIGIN) &&
+            !X_SYNC_LEGACY_BROAD_ORIGINS.some((origin) => origins.includes(origin)),
+        );
+      });
+    });
+  });
+}
+
+async function assertXAccess(tabId: number, windowId: number): Promise<void> {
+  if (!(await containsXPermission())) {
+    throw new XSyncAdapterStopError('permission_revoked');
+  }
+  await getBoundXTab(tabId, windowId);
+}
+
+function injectXBookmarksReader(tab: XSyncValidatedTab): Promise<XSyncInjectedDocument> {
+  return chrome.scripting
+    .executeScript({
+      target: { tabId: tab.tabId, frameIds: [0] },
+      files: [X_SYNC_CONTENT_FILE],
+    })
+    .then((results) => {
+      const mainFrame = results.find(
+        (result) =>
+          result.frameId === 0 &&
+          typeof result.documentId === 'string' &&
+          result.documentId.length > 0,
+      );
+      if (!mainFrame?.documentId) {
+        throw new XSyncServiceError('invalid_state', 'scanning');
+      }
+      return { ...tab, documentId: mainFrame.documentId };
+    })
+    .catch((error: unknown) => {
+      if (error instanceof XSyncServiceError) {
+        throw error;
+      }
+      throw new XSyncServiceError('invalid_state', 'scanning');
+    });
+}
+
+function sendTargetedXMessage(
+  binding: XSyncDocumentBinding,
+  message: XSyncContentRequest,
+  signal: AbortSignal,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (operation: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      operation();
+    };
+    const abort = () => finish(() => reject(new XSyncAdapterStopError('budget_exceeded')));
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener('abort', abort, { once: true });
+    chrome.tabs.sendMessage(
+      binding.tabId,
+      message,
+      { documentId: binding.documentId, frameId: binding.frameId },
+      (response: unknown) => {
+        if (chrome.runtime.lastError) {
+          finish(() => reject(new XSyncAdapterStopError('tab_changed')));
+          return;
+        }
+        finish(() => resolve(response));
+      },
+    );
+  });
+}
+
+class XSyncChromeAdapter implements AdapterBatchPort {
+  private lease?: XSyncInvocationLease;
+  private pauseReason?: XSyncRuntimePauseReason;
+
+  constructor(
+    private readonly document: XSyncInjectedDocument,
+    private readonly profile: XSyncRuntimeProfile,
+    private readonly maximumScrollActions: number,
+  ) {}
+
+  requestPause(reason: XSyncRuntimePauseReason = 'user_paused'): void {
+    this.pauseReason ??= reason;
+    if (this.lease) {
+      xSyncRuntime.requestPause(this.lease, this.pauseReason);
+    }
+  }
+
+  finish(): void {
+    if (!this.lease) {
+      return;
+    }
+    const snapshot = xSyncRuntime.snapshot();
+    if (
+      snapshot.status !== 'idle' &&
+      snapshot.jobId === this.lease.binding.jobId &&
+      snapshot.scanRevision === this.lease.binding.scanRevision
+    ) {
+      xSyncRuntime.finishInvocation(this.lease);
+    }
+  }
+
+  async readBatch(request: AdapterBatchRequest, signal?: AbortSignal): Promise<unknown> {
+    return this.withCoordinatorSignal(signal, async () => {
+      if (this.pauseReason) {
+        throw new XSyncAdapterStopError(this.pauseReason);
+      }
+      await assertXAccess(this.document.tabId, this.document.windowId);
+      const lease = this.ensureLease(request);
+      await this.ping(lease, request);
+
+      const remainingBytes = Math.max(1, request.limits.maxTotalBytes - request.jobAcceptedBytes);
+      const response = await this.sendBoundRequest(
+        lease,
+        {
+          protocol: X_SYNC_PROTOCOL,
+          type: 'read-batch',
+          jobId: lease.binding.jobId,
+          scanRevision: lease.binding.scanRevision,
+          adapterVersion: request.adapterVersion,
+          step: request.step,
+          nonce: lease.binding.nonce,
+          mode: request.mode,
+          limits: {
+            remainingCandidateSlots: request.remainingCandidateSlots,
+            maxObservedNodes: request.limits.maxObservedNodes,
+            maxElapsedMs: request.limits.maxElapsedMs,
+            maxTextBytes: request.limits.maxTextBytes,
+            maxMedia: request.limits.maxMedia,
+            maxTotalBytes: remainingBytes,
+            maxScrollActionsRemaining: request.maxScrollActionsRemaining,
+            allowScroll: true,
+          },
+        },
+        !(request.mode === 'backfill' && request.step === 0),
+      );
+      if (response.type !== 'batch-result') {
+        throw new XSyncAdapterStopError('structure_changed');
+      }
+
+      await assertXAccess(this.document.tabId, this.document.windowId);
+      await this.ping(lease, request);
+      return response.result;
+    });
+  }
+
+  async verifyBinding(request: AdapterBatchRequest, signal?: AbortSignal): Promise<void> {
+    await this.withCoordinatorSignal(signal, async () => {
+      await assertXAccess(this.document.tabId, this.document.windowId);
+      await this.ping(this.ensureLease(request), request);
+    });
+  }
+
+  private ensureLease(request: AdapterBatchRequest): XSyncInvocationLease {
+    if (this.lease) {
+      if (
+        this.lease.binding.jobId !== activeXSyncRun?.jobId ||
+        this.lease.binding.scanRevision !== request.scanRevision
+      ) {
+        throw new XSyncAdapterStopError('structure_changed');
+      }
+      return this.lease;
+    }
+    const started = xSyncRuntime.beginInvocation({
+      jobId: activeXSyncRun?.jobId ?? '',
+      scanRevision: request.scanRevision,
+      tabId: this.document.tabId,
+      windowId: this.document.windowId,
+      documentId: this.document.documentId,
+      mode: request.mode,
+      profile: this.profile,
+      maxScrollActions: this.maximumScrollActions,
+    });
+    if (started.kind !== 'started') {
+      throw new XSyncAdapterStopError('structure_changed');
+    }
+    this.lease = started.lease;
+    return started.lease;
+  }
+
+  private async sendBoundRequest(
+    lease: XSyncInvocationLease,
+    request: XSyncContentRequest,
+    performsScroll = false,
+  ) {
+    const outcome = await xSyncRuntime.executeContentRequest(
+      lease,
+      { kind: request.type === 'ping' ? 'ping' : 'batch', performsScroll },
+      async (signal) => {
+        if (signal.aborted || this.pauseReason) {
+          return { kind: 'pause', reason: this.pauseReason ?? 'user_paused' } as const;
+        }
+        let rawResponse: unknown;
+        try {
+          rawResponse = await sendTargetedXMessage(lease.binding, request, signal);
+        } catch {
+          return {
+            kind: 'pause',
+            reason: this.pauseReason ?? (signal.aborted ? 'budget_exceeded' : 'tab_changed'),
+          } as const;
+        }
+        if (
+          signal.aborted ||
+          this.pauseReason ||
+          !matchesXSyncContentResponseBinding(
+            rawResponse,
+            lease.binding,
+            request.step,
+            request.adapterVersion,
+          )
+        ) {
+          return {
+            kind: 'pause',
+            reason: this.pauseReason ?? (signal.aborted ? 'user_paused' : 'tab_changed'),
+          } as const;
+        }
+        try {
+          return { kind: 'response', value: parseXSyncContentResponse(rawResponse) } as const;
+        } catch {
+          return { kind: 'pause', reason: 'structure_changed' } as const;
+        }
+      },
+    );
+    if (outcome.kind === 'completed') {
+      return outcome.value;
+    }
+    if (outcome.kind === 'paused') {
+      throw new XSyncAdapterStopError(outcome.pause.reason);
+    }
+    throw new XSyncAdapterStopError('structure_changed');
+  }
+
+  private async ping(lease: XSyncInvocationLease, request: AdapterBatchRequest): Promise<void> {
+    const response = await this.sendBoundRequest(lease, {
+      protocol: X_SYNC_PROTOCOL,
+      type: 'ping',
+      jobId: lease.binding.jobId,
+      scanRevision: lease.binding.scanRevision,
+      adapterVersion: request.adapterVersion,
+      step: request.step,
+      nonce: lease.binding.nonce,
+    });
+    if (response.type !== 'pong') {
+      throw new XSyncAdapterStopError('structure_changed');
+    }
+  }
+
+  private async withCoordinatorSignal<T>(
+    signal: AbortSignal | undefined,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const abort = () => this.requestPause('budget_exceeded');
+    if (signal?.aborted) {
+      abort();
+      throw new XSyncAdapterStopError(this.pauseReason ?? 'budget_exceeded');
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      return await operation();
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
+  }
+}
+
+function limitsForNewXJob(previousJob: SyncJob | undefined): Readonly<XBookmarksLimits> {
+  const completedProbe =
+    previousJob?.status === 'complete' || previousJob?.status === 'complete_with_issues';
+  return completedProbe
+    ? X_BOOKMARKS_CEILINGS
+    : Object.freeze({
+        ...X_BOOKMARKS_CEILINGS,
+        maxItems: X_SYNC_INITIAL_CANDIDATE_LIMIT,
+        maxBatches: X_SYNC_INITIAL_SCROLL_LIMIT,
+        maxScrollActions: X_SYNC_INITIAL_SCROLL_LIMIT,
+      });
+}
+
+function limitsForPersistedJob(job: SyncJob): Readonly<XBookmarksLimits> {
+  return Object.freeze({
+    ...X_BOOKMARKS_CEILINGS,
+    maxItems: Math.min(job.budgets.maxItems, X_BOOKMARKS_CEILINGS.maxItems),
+    maxBatches: Math.min(job.budgets.maxPages, X_BOOKMARKS_CEILINGS.maxBatches),
+    maxScrollActions: Math.min(job.budgets.maxPages, X_BOOKMARKS_CEILINGS.maxScrollActions),
+    maxElapsedMs: Math.min(job.budgets.maxDurationMs, X_BOOKMARKS_CEILINGS.maxElapsedMs),
+    maxMedia: Math.min(job.budgets.maxMediaPerItem, X_BOOKMARKS_CEILINGS.maxMedia),
+  });
+}
+
+function createXJobId(): string {
+  const value = globalThis.crypto?.randomUUID?.();
+  if (!value) {
+    throw new XSyncServiceError('internal_error', 'launch');
+  }
+  return `x-${value}`;
+}
+
+function startXSyncRun(input: {
+  readonly store: SyncStore;
+  readonly job: SyncJob;
+  readonly document: XSyncInjectedDocument;
+  readonly limits: Readonly<XBookmarksLimits>;
+  readonly kind: 'start' | 'resume';
+}): void {
+  const profile: XSyncRuntimeProfile =
+    input.limits.maxItems <= X_SYNC_INITIAL_CANDIDATE_LIMIT &&
+    input.limits.maxScrollActions <= X_SYNC_INITIAL_SCROLL_LIMIT
+      ? 'bounded_probe'
+      : 'standard';
+  const adapter = new XSyncChromeAdapter(input.document, profile, input.limits.maxScrollActions);
+  const coordinator = new XSyncCoordinator(input.store, adapter, {
+    onProgress: ({ job, metrics }) => {
+      broadcastXSyncEvent({
+        protocol: X_SYNC_PROTOCOL,
+        type: 'runtime-event',
+        event: {
+          kind: 'progress',
+          jobId: job.id,
+          scanRevision: job.scanRevision,
+          step: metrics.steps,
+          candidateCount: job.checkpoint?.candidateCount ?? 0,
+          existingObservationCount: job.checkpoint?.catalogExistingObservationCount ?? 0,
+        },
+      });
+    },
+  });
+
+  const runPromise: Promise<XSyncInvocationResult> =
+    input.kind === 'start'
+      ? coordinator.start({
+          jobId: input.job.id,
+          expectedScanRevision: input.job.scanRevision,
+          limits: input.limits,
+        })
+      : coordinator.resume({
+          jobId: input.job.id,
+          expectedScanRevision: input.job.scanRevision,
+          limits: input.limits,
+        });
+  const completion = runPromise
+    .then((result) => {
+      if (result.outcome === 'paused') {
+        broadcastXSyncEvent({
+          protocol: X_SYNC_PROTOCOL,
+          type: 'runtime-event',
+          event: {
+            kind: 'paused',
+            jobId: result.job.id,
+            scanRevision: result.job.scanRevision,
+            reason: result.stopReason,
+          },
+        });
+      }
+      broadcastXSyncState(result.job);
+    })
+    .catch(async () => {
+      const current = await input.store.getJob(input.job.id).catch(() => undefined);
+      if (current?.status === 'scanning') {
+        const paused = await input.store
+          .pauseJobWithStopRecord(current.id, current.scanRevision, 'structure_changed', 'scanning')
+          .catch(() => undefined);
+        if (paused) {
+          broadcastXSyncState(paused);
+        }
+      }
+    })
+    .finally(() => {
+      adapter.finish();
+      if (activeXSyncRun?.jobId === input.job.id) {
+        activeXSyncRun = undefined;
+      }
+      input.store.close();
+    });
+  activeXSyncRun = {
+    jobId: input.job.id,
+    scanRevision: input.job.scanRevision + 1,
+    tabId: input.document.tabId,
+    windowId: input.document.windowId,
+    adapter,
+    promise: completion,
+  };
+}
+
+async function prepareXSyncStart(mode: SyncScanMode, launchNonce: string): Promise<SyncJob> {
+  const intent = await xSyncLaunchIntents.consume(launchNonce, async (windowId) => {
+    try {
+      await queryActiveXTab(windowId);
+      return { ok: true } as const;
+    } catch {
+      return { ok: false, code: 'tab_changed' } as const;
+    }
+  });
+  if (!(await containsXPermission())) {
+    throw new XSyncServiceError('permission_revoked', 'launch');
+  }
+  if (activeXSyncRun) {
+    throw new XSyncServiceError('source_conflict', 'launch');
+  }
+
+  const store = await openSyncStore();
+  try {
+    if (await store.getActiveJob('x')) {
+      throw new ActiveSyncJobExistsError('x');
+    }
+    const previousJob = (await store.listJobs({ source: 'x', limit: 1 }))[0];
+    const limits = limitsForNewXJob(previousJob);
+    const tab = await queryActiveXTab(intent.windowId);
+    const document = await injectXBookmarksReader(tab);
+    const job = await store.createJob({
+      id: createXJobId(),
+      source: 'x',
+      adapterVersion: X_BOOKMARKS_ADAPTER_VERSION,
+      scanMode: mode,
+      budgets: {
+        maxItems: limits.maxItems,
+        maxPages: limits.maxBatches,
+        maxDurationMs: limits.maxElapsedMs,
+        maxItemBytes: SYNC_LIMITS.socialItemBytes,
+        maxMediaPerItem: limits.maxMedia,
+      },
+    });
+    startXSyncRun({ store, job, document, limits, kind: 'start' });
+    return job;
+  } catch (error) {
+    store.close();
+    throw error;
+  }
+}
+
+async function prepareXSyncResume(jobId: string, expectedScanRevision: number): Promise<SyncJob> {
+  if (!(await containsXPermission())) {
+    throw new XSyncServiceError('permission_revoked', 'scanning', {
+      jobId,
+      scanRevision: expectedScanRevision,
+    });
+  }
+  if (activeXSyncRun) {
+    throw new XSyncServiceError('source_conflict', 'scanning', {
+      jobId,
+      scanRevision: expectedScanRevision,
+    });
+  }
+  const store = await openSyncStore();
+  try {
+    const job = await store.getJob(jobId);
+    const resumable =
+      job?.status === 'prepared' ||
+      (job?.status === 'paused' && job.stopRecord?.phase === 'scanning');
+    if (!job || job.source !== 'x' || job.scanRevision !== expectedScanRevision || !resumable) {
+      throw new XSyncServiceError('stale_revision', 'scanning', {
+        jobId,
+        scanRevision: expectedScanRevision,
+      });
+    }
+    const tab = await queryActiveXTab();
+    const document = await injectXBookmarksReader(tab);
+    const limits = limitsForPersistedJob(job);
+    startXSyncRun({
+      store,
+      job,
+      document,
+      limits,
+      kind: job.status === 'prepared' ? 'start' : 'resume',
+    });
+    return job;
+  } catch (error) {
+    store.close();
+    throw error;
+  }
+}
+
+async function handleXSyncCommand(request: XSyncUiRequest): Promise<XSyncUiResponse> {
+  try {
+    switch (request.type) {
+      case 'launch': {
+        const tab = await queryActiveXTab();
+        const intent = await xSyncLaunchIntents.create({
+          serverValidatedWindowId: tab.windowId,
+        });
+        return xSyncSuccess(request.requestId, {
+          kind: 'launch-intent',
+          nonce: intent.nonce,
+          expiresAtMs: intent.expiresAtMs,
+        });
+      }
+      case 'start': {
+        const job = await prepareXSyncStart(request.mode, request.launchNonce);
+        return xSyncSuccess(request.requestId, {
+          kind: 'accepted',
+          jobId: job.id,
+          scanRevision: job.scanRevision,
+          reviewRevision: job.reviewRevision,
+        });
+      }
+      case 'resume': {
+        const job = await prepareXSyncResume(request.jobId, request.expectedScanRevision);
+        return xSyncSuccess(request.requestId, {
+          kind: 'accepted',
+          jobId: job.id,
+          scanRevision: job.scanRevision,
+          reviewRevision: job.reviewRevision,
+        });
+      }
+      case 'pause': {
+        if (
+          !activeXSyncRun ||
+          activeXSyncRun.jobId !== request.jobId ||
+          activeXSyncRun.scanRevision !== request.expectedScanRevision
+        ) {
+          throw new XSyncServiceError('stale_revision', 'scanning', {
+            jobId: request.jobId,
+            scanRevision: request.expectedScanRevision,
+          });
+        }
+        activeXSyncRun.adapter.requestPause('user_paused');
+        return xSyncSuccess(request.requestId, {
+          kind: 'accepted',
+          jobId: request.jobId,
+          scanRevision: request.expectedScanRevision,
+        });
+      }
+      case 'finalize': {
+        const store = await openSyncStore();
+        try {
+          const job = await store.finalizePausedScan(request.jobId, request.expectedScanRevision);
+          broadcastXSyncState(job);
+          return xSyncSuccess(request.requestId, {
+            kind: 'accepted',
+            jobId: job.id,
+            scanRevision: job.scanRevision,
+            reviewRevision: job.reviewRevision,
+          });
+        } finally {
+          store.close();
+        }
+      }
+      case 'cancel': {
+        if (activeXSyncRun?.jobId === request.jobId) {
+          if (activeXSyncRun.scanRevision !== request.expectedScanRevision) {
+            throw new XSyncServiceError('stale_revision', 'scanning');
+          }
+          activeXSyncRun.adapter.requestPause('user_paused');
+          await activeXSyncRun.promise;
+        }
+        const store = await openSyncStore();
+        try {
+          const current = await store.getJob(request.jobId);
+          if (
+            !current ||
+            current.scanRevision !== request.expectedScanRevision ||
+            current.reviewRevision !== request.expectedReviewRevision
+          ) {
+            throw new XSyncServiceError('stale_revision', 'scanning');
+          }
+          const job =
+            current.status === 'writing' ||
+            current.status === 'partial' ||
+            (current.status === 'paused' && current.stopRecord?.phase === 'writing')
+              ? await store.abandonWriteJob(
+                  current.id,
+                  current.scanRevision,
+                  current.reviewRevision,
+                )
+              : await store.cancelJob(current.id, current.scanRevision, current.reviewRevision);
+          broadcastXSyncState(job);
+          return xSyncSuccess(request.requestId, {
+            kind: 'accepted',
+            jobId: job.id,
+            scanRevision: job.scanRevision,
+            reviewRevision: job.reviewRevision,
+          });
+        } finally {
+          store.close();
+        }
+      }
+      case 'save-selection': {
+        const store = await openSyncStore();
+        try {
+          const result = await store.saveReviewSelection(
+            request.jobId,
+            request.expectedReviewRevision,
+            request.selectedSourceItemIds,
+          );
+          broadcastXSyncState(result.job);
+          return xSyncSuccess(request.requestId, {
+            kind: 'accepted',
+            jobId: result.job.id,
+            scanRevision: result.job.scanRevision,
+            reviewRevision: result.job.reviewRevision,
+          });
+        } finally {
+          store.close();
+        }
+      }
+      case 'complete-without-writes': {
+        const store = await openSyncStore();
+        try {
+          const job = await store.completeReviewWithoutWrites(
+            request.jobId,
+            request.expectedReviewRevision,
+          );
+          broadcastXSyncState(job);
+          return xSyncSuccess(request.requestId, {
+            kind: 'accepted',
+            jobId: job.id,
+            scanRevision: job.scanRevision,
+            reviewRevision: job.reviewRevision,
+          });
+        } finally {
+          store.close();
+        }
+      }
+      case 'authorize': {
+        const store = await openSyncStore();
+        try {
+          const job = await store.authorizeReviewSelection(
+            request.jobId,
+            request.expectedReviewRevision,
+            request.selectedSourceItemIds,
+          );
+          broadcastXSyncState(job);
+          return xSyncSuccess(request.requestId, {
+            kind: 'accepted',
+            jobId: job.id,
+            scanRevision: job.scanRevision,
+            reviewRevision: job.reviewRevision,
+          });
+        } finally {
+          store.close();
+        }
+      }
+    }
+  } catch (error) {
+    return xSyncErrorResponse(request, error);
+  }
+}
+
+function handleXSyncUiMessage(
+  message: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<XSyncUiResponse> {
+  let request: XSyncUiRequest;
+  try {
+    request = parseXSyncUiRequest(message);
+  } catch {
+    return Promise.resolve(xSyncFailure('invalid-request', 'invalid_message', 'launch'));
+  }
+  const extensionOrigin = resolveXSyncExtensionOrigin(
+    chrome.runtime.id,
+    chrome.runtime.getURL('/'),
+  );
+  const senderValidation = extensionOrigin
+    ? validateXSyncUiSender(sender, chrome.runtime.id, extensionOrigin)
+    : undefined;
+  if (
+    !senderValidation?.ok ||
+    (request.type === 'launch'
+      ? senderValidation.value.surface !== 'popup'
+      : senderValidation.value.surface !== 'sidepanel')
+  ) {
+    return Promise.resolve(
+      xSyncFailure(request.requestId, 'forbidden_sender', xSyncPhaseForRequest(request)),
+    );
+  }
+  return runXSyncCommandExclusive(async () => {
+    const recovery = await xSyncRecovery;
+    if (!recovery.ok) {
+      return xSyncFailure(request.requestId, 'storage_corrupt', xSyncPhaseForRequest(request));
+    }
+    return handleXSyncCommand(request);
+  });
+}
+
+function handleXSyncPort(port: chrome.runtime.Port): void {
+  const extensionOrigin = resolveXSyncExtensionOrigin(
+    chrome.runtime.id,
+    chrome.runtime.getURL('/'),
+  );
+  const senderValidation =
+    extensionOrigin && port.sender
+      ? validateXSyncUiSender(port.sender, chrome.runtime.id, extensionOrigin)
+      : undefined;
+  if (!senderValidation?.ok || senderValidation.value.surface !== 'sidepanel') {
+    port.disconnect();
+    return;
+  }
+  xSyncPorts.add(port);
+  port.onDisconnect.addListener(() => {
+    xSyncPorts.delete(port);
+  });
+  port.onMessage.addListener((message: unknown) => {
+    void handleXSyncUiMessage(message, port.sender!).then((response) => {
+      postXSyncPortValue(port, response);
+    });
+  });
+}
+
+const xSyncRecovery = openSyncStore()
+  .then(async (store) => {
+    try {
+      await store.recoverInterruptedScanningJobs();
+      return { ok: true } as const;
+    } finally {
+      store.close();
+    }
+  })
+  .catch(() => ({ ok: false }) as const);
 
 async function getState(): Promise<ExtensionState> {
   const tree = await getFullTree();
@@ -809,12 +1866,21 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message: ExtensionRequest, _sender, sendResponse) => {
-  void handleRequest(message).then(sendResponse);
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  if (hasXSyncProtocolEnvelope(message)) {
+    void handleXSyncUiMessage(message, sender).then(sendResponse);
+    return true;
+  }
+  void handleRequest(message as ExtensionRequest).then(sendResponse);
   return true;
 });
 
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === X_SYNC_PROTOCOL) {
+    handleXSyncPort(port);
+    return;
+  }
+
   if (port.name === 'classify') {
     handleClassificationPort(port);
     return;
@@ -822,6 +1888,37 @@ chrome.runtime.onConnect.addListener((port) => {
 
   if (port.name === 'health') {
     handleHealthPort(port);
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (
+    activeXSyncRun?.tabId === tabId &&
+    (changeInfo.status === 'loading' ||
+      (changeInfo.url !== undefined && changeInfo.url !== X_SYNC_BOOKMARKS_URL))
+  ) {
+    activeXSyncRun.adapter.requestPause('tab_changed');
+  }
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  if (
+    activeXSyncRun?.windowId === activeInfo.windowId &&
+    activeXSyncRun.tabId !== activeInfo.tabId
+  ) {
+    activeXSyncRun.adapter.requestPause('tab_changed');
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (activeXSyncRun?.tabId === tabId) {
+    activeXSyncRun.adapter.requestPause('tab_changed');
+  }
+});
+
+chrome.permissions.onRemoved.addListener((permissions) => {
+  if (permissions.origins?.includes(X_SYNC_ORIGIN)) {
+    activeXSyncRun?.adapter.requestPause('permission_revoked');
   }
 });
 

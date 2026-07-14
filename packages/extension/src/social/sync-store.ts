@@ -7,6 +7,7 @@ import {
   IsoTimestampSchema,
   RelativeMarkdownPathSchema,
   SYNC_LIMITS,
+  SYNC_JOB_CONTRACT_VERSION,
   SYNC_SCHEMA_VERSION,
   SocialItemSchema,
   SocialSourceSchema,
@@ -20,10 +21,14 @@ import {
   SyncJobItemSchema,
   SyncJobRowSchema,
   SyncJobSchema,
+  SyncJobSummarySchema,
   SyncJobStatusSchema,
   SyncMetaSchema,
   SyncRecordSchema,
+  SyncScanCompletionSchema,
+  SyncScanModeSchema,
   SyncStopReasonSchema,
+  SyncStopRecordSchema,
   WriteIntentIdSchema,
   WriteIntentSchema,
   WriteOutcomeSchema,
@@ -39,22 +44,27 @@ import {
   type SyncJobItem,
   type SyncJobItemRow,
   type SyncJobRow,
+  type SyncJobSummary,
   type SyncJobStatus,
   type SyncMeta,
   type SyncRecord,
   type SyncReviewDecision,
+  type SyncScanCompletion,
+  type SyncScanMode,
   type SyncStopReason,
   type WriteIntent,
 } from './sync-schema.js';
 
 export const SYNC_DATABASE_NAME = 'shuhai-sync';
-export const SYNC_DATABASE_VERSION = 2;
+export const SYNC_DATABASE_VERSION = 3;
 
 export const SYNC_STORE_NAMES = ['jobs', 'items', 'records', 'intents', 'meta'] as const;
 export type SyncStoreName = (typeof SYNC_STORE_NAMES)[number];
 
 const MAX_LIST_RESULTS = 10_000;
 const MAX_TRANSACTION_INPUT_BYTES = 32 * 1_024 * 1_024;
+const MAX_OBSERVED_NODES_PER_INVOCATION = 200;
+const KNOWN_FRONTIER_LIMIT = 20;
 const encoder = new TextEncoder();
 
 interface SyncDatabase extends DBSchema {
@@ -158,12 +168,13 @@ const EXPECTED_LAYOUT: Readonly<Record<SyncStoreName, StoreLayout>> = {
 
 const ALLOWED_TRANSITIONS: Readonly<Record<SyncJobStatus, ReadonlySet<SyncJobStatus>>> = {
   prepared: new Set(['scanning']),
-  scanning: new Set(['paused', 'ready_for_review', 'failed', 'cancelled']),
+  scanning: new Set(['paused', 'ready_for_review', 'failed']),
   ready_for_review: new Set(['writing']),
   writing: new Set(['partial', 'complete', 'paused', 'failed']),
-  partial: new Set(['writing', 'cancelled']),
-  paused: new Set(['scanning', 'writing', 'cancelled']),
+  partial: new Set(['writing']),
+  paused: new Set(['scanning', 'writing']),
   complete: new Set(),
+  complete_with_issues: new Set(),
   failed: new Set(),
   cancelled: new Set(),
 };
@@ -173,6 +184,7 @@ export type SyncStoreErrorCode =
   | 'open_blocked'
   | 'unsupported_database_version'
   | 'invalid_database_layout'
+  | 'DB3_REOPEN_VALIDATION_FAILED'
   | 'unsafe_migration_state'
   | 'migration_budget_exceeded'
   | 'corrupt_row'
@@ -204,6 +216,7 @@ export class SyncStoreMigrationError extends SyncStoreError {
     code:
       | 'unsupported_database_version'
       | 'invalid_database_layout'
+      | 'DB3_REOPEN_VALIDATION_FAILED'
       | 'unsafe_migration_state'
       | 'migration_budget_exceeded',
     message: string,
@@ -285,6 +298,7 @@ export interface CreateJobInput {
   id: string;
   source: SocialSource;
   adapterVersion: number;
+  scanMode?: SyncScanMode;
   budgets: SyncBudgets;
   createdAt?: string;
 }
@@ -299,6 +313,22 @@ export interface PutScanBatchResult {
   inserted: number;
   existing: number;
   job: SyncJob;
+}
+
+export interface ClassifyAndPersistScanBatchResult {
+  insertedCandidates: number;
+  replayedCandidates: number;
+  catalogExistingObservations: number;
+  classifications: Array<{
+    sourceItemId: string;
+    classification: Exclude<SyncItemClassification, 'pending'>;
+  }>;
+  job: SyncJob;
+}
+
+export interface ScanTransactionGuard {
+  readonly signal?: AbortSignal;
+  readonly beforeCommit?: () => boolean;
 }
 
 export interface PutJobItemResult {
@@ -382,7 +412,7 @@ function keyPathsEqual(
   );
 }
 
-function createV2Database(database: IDBDatabase): void {
+function createV3Database(database: IDBDatabase): void {
   const jobs = database.createObjectStore('jobs', { keyPath: 'id' });
   jobs.createIndex('by-source', 'source');
   jobs.createIndex('by-status', 'status');
@@ -409,6 +439,7 @@ function createV2Database(database: IDBDatabase): void {
     key: 'schema',
     schemaVersion: SYNC_SCHEMA_VERSION,
     databaseVersion: SYNC_DATABASE_VERSION,
+    validationState: 'complete',
   } satisfies SyncMeta);
 }
 
@@ -418,7 +449,7 @@ function assertDatabaseLayout(database: IDBDatabase, upgradeTransaction?: IDBTra
   if (JSON.stringify(actualStores) !== JSON.stringify(expectedStores)) {
     throw new SyncStoreMigrationError(
       'invalid_database_layout',
-      'Sync database object stores do not match schema v2',
+      'Sync database object stores do not match schema v3',
     );
   }
 
@@ -429,7 +460,7 @@ function assertDatabaseLayout(database: IDBDatabase, upgradeTransaction?: IDBTra
     if (!keyPathsEqual(normalizeKeyPath(store.keyPath), expectedStore.keyPath)) {
       throw new SyncStoreMigrationError(
         'invalid_database_layout',
-        `Sync database ${storeName} keyPath does not match schema v2`,
+        `Sync database ${storeName} keyPath does not match schema v3`,
       );
     }
 
@@ -438,7 +469,7 @@ function assertDatabaseLayout(database: IDBDatabase, upgradeTransaction?: IDBTra
     if (JSON.stringify(actualIndexes) !== JSON.stringify(expectedIndexes)) {
       throw new SyncStoreMigrationError(
         'invalid_database_layout',
-        `Sync database ${storeName} indexes do not match schema v2`,
+        `Sync database ${storeName} indexes do not match schema v3`,
       );
     }
 
@@ -450,7 +481,7 @@ function assertDatabaseLayout(database: IDBDatabase, upgradeTransaction?: IDBTra
       ) {
         throw new SyncStoreMigrationError(
           'invalid_database_layout',
-          `Sync database ${storeName}.${indexName} does not match schema v2`,
+          `Sync database ${storeName}.${indexName} does not match schema v3`,
         );
       }
     }
@@ -512,6 +543,39 @@ interface LegacyV1JobItemRow {
   updatedAt: string;
 }
 
+type LegacyJobStatus = Exclude<SyncJobStatus, 'complete_with_issues'>;
+
+interface LegacyV2Checkpoint {
+  schemaVersion: 1;
+  adapterVersion: number;
+  scanRevision: number;
+  scannedCount: number;
+  acceptedCount: number;
+  acceptedBytes: number;
+  consecutiveKnownIds: number;
+  cursor?: string;
+  updatedAt: string;
+}
+
+interface LegacyV2JobRow {
+  schemaVersion: 1;
+  id: string;
+  source: SocialSource;
+  status: LegacyJobStatus;
+  adapterVersion: number;
+  scanRevision: number;
+  reviewRevision: number;
+  authorizedReviewRevision?: number;
+  createdAt: string;
+  updatedAt: string;
+  writeAuthorizedAt?: string;
+  stopRecord?: ReturnType<typeof SyncStopRecordSchema.parse>;
+  checkpoint?: LegacyV2Checkpoint;
+  budgets: SyncBudgets;
+  summary: SyncJobSummary;
+  activeSource?: SocialSource;
+}
+
 function migrationFailure(
   code: 'unsafe_migration_state' | 'migration_budget_exceeded' | 'invalid_database_layout',
   message: string,
@@ -525,7 +589,7 @@ function normalizeMigrationError(error: unknown): SyncStoreMigrationError {
     ? error
     : migrationFailure(
         'unsafe_migration_state',
-        'v1 data failed strict migration validation',
+        'Legacy data failed strict migration validation',
         error,
       );
 }
@@ -638,12 +702,27 @@ function migrationCount(value: unknown, label: string): number {
   return value as number;
 }
 
+function migrationBoundedCount(value: unknown, maximum: number, label: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > maximum) {
+    throw migrationFailure('unsafe_migration_state', `${label} is not a valid bounded count`);
+  }
+  return value as number;
+}
+
 function migrationPositiveVersion(value: unknown, label: string): number {
   const parsed = migrationCount(value, label);
   if (parsed < 1) {
     throw migrationFailure('unsafe_migration_state', `${label} must be positive`);
   }
   return parsed;
+}
+
+function parseLegacyJobStatus(value: unknown, label: string): LegacyJobStatus {
+  const status = SyncJobStatusSchema.parse(value);
+  if (status === 'complete_with_issues') {
+    throw migrationFailure('unsafe_migration_state', `${label} uses a v3-only status`);
+  }
+  return status;
 }
 
 function migrationCursor(value: unknown): string {
@@ -762,7 +841,7 @@ function parseLegacyV1JobRow(value: unknown): LegacyV1JobRow {
   }
   const createdAt = IsoTimestampSchema.parse(record.createdAt);
   const updatedAt = IsoTimestampSchema.parse(record.updatedAt);
-  const status = SyncJobStatusSchema.parse(record.status);
+  const status = parseLegacyJobStatus(record.status, 'v1 job');
   const source = SocialSourceSchema.parse(record.source);
   const writeAuthorizedAt =
     record.writeAuthorizedAt === undefined
@@ -886,6 +965,197 @@ function parseLegacyV1JobItemRow(value: unknown): LegacyV1JobItemRow {
   return row;
 }
 
+function parseLegacyV2Checkpoint(value: unknown): LegacyV2Checkpoint {
+  const record = migrationRecord(
+    value,
+    [
+      'schemaVersion',
+      'adapterVersion',
+      'scanRevision',
+      'scannedCount',
+      'acceptedCount',
+      'acceptedBytes',
+      'consecutiveKnownIds',
+      'updatedAt',
+    ],
+    ['cursor'],
+    'v2 checkpoint',
+  );
+  if (record.schemaVersion !== SYNC_SCHEMA_VERSION) {
+    throw migrationFailure('unsafe_migration_state', 'v2 checkpoint schemaVersion is invalid');
+  }
+  const checkpoint: LegacyV2Checkpoint = {
+    schemaVersion: SYNC_SCHEMA_VERSION,
+    adapterVersion: migrationPositiveVersion(record.adapterVersion, 'v2 checkpoint adapterVersion'),
+    scanRevision: migrationCount(record.scanRevision, 'v2 checkpoint scanRevision'),
+    scannedCount: migrationCount(record.scannedCount, 'v2 checkpoint scannedCount'),
+    acceptedCount: migrationCount(record.acceptedCount, 'v2 checkpoint acceptedCount'),
+    acceptedBytes: migrationBoundedCount(
+      record.acceptedBytes,
+      SYNC_LIMITS.maxAcceptedBytesPerJob,
+      'v2 checkpoint acceptedBytes',
+    ),
+    consecutiveKnownIds: migrationCount(
+      record.consecutiveKnownIds,
+      'v2 checkpoint consecutiveKnownIds',
+    ),
+    ...(record.cursor === undefined ? {} : { cursor: migrationCursor(record.cursor) }),
+    updatedAt: IsoTimestampSchema.parse(record.updatedAt),
+  };
+  if (
+    checkpoint.acceptedCount > checkpoint.scannedCount ||
+    checkpoint.consecutiveKnownIds > checkpoint.scannedCount ||
+    checkpoint.acceptedBytes > SYNC_LIMITS.maxAcceptedBytesPerJob
+  ) {
+    throw migrationFailure('unsafe_migration_state', 'v2 checkpoint counts are inconsistent');
+  }
+  return checkpoint;
+}
+
+function parseOperationCheckpoint(value: unknown): LegacyV2Checkpoint | SyncCheckpoint {
+  const current = SyncCheckpointSchema.safeParse(value);
+  if (current.success) {
+    return current.data;
+  }
+  inspectMigrationValue(value);
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.hasOwn(value, 'contractVersion')
+  ) {
+    return SyncCheckpointSchema.parse(value);
+  }
+  return parseLegacyV2Checkpoint(value);
+}
+
+function parseLegacyV2JobRow(value: unknown): LegacyV2JobRow {
+  const record = migrationRecord(
+    value,
+    [
+      'schemaVersion',
+      'id',
+      'source',
+      'status',
+      'adapterVersion',
+      'scanRevision',
+      'reviewRevision',
+      'createdAt',
+      'updatedAt',
+      'budgets',
+      'summary',
+    ],
+    ['authorizedReviewRevision', 'writeAuthorizedAt', 'stopRecord', 'checkpoint', 'activeSource'],
+    'v2 job row',
+  );
+  if (record.schemaVersion !== SYNC_SCHEMA_VERSION) {
+    throw migrationFailure('unsafe_migration_state', 'v2 job schemaVersion is invalid');
+  }
+  const status = parseLegacyJobStatus(record.status, 'v2 job');
+  const source = SocialSourceSchema.parse(record.source);
+  const createdAt = IsoTimestampSchema.parse(record.createdAt);
+  const updatedAt = IsoTimestampSchema.parse(record.updatedAt);
+  const writeAuthorizedAt =
+    record.writeAuthorizedAt === undefined
+      ? undefined
+      : IsoTimestampSchema.parse(record.writeAuthorizedAt);
+  const authorizedReviewRevision =
+    record.authorizedReviewRevision === undefined
+      ? undefined
+      : migrationPositiveVersion(record.authorizedReviewRevision, 'v2 authorizedReviewRevision');
+  const stopRecord =
+    record.stopRecord === undefined ? undefined : SyncStopRecordSchema.parse(record.stopRecord);
+  const checkpoint =
+    record.checkpoint === undefined ? undefined : parseLegacyV2Checkpoint(record.checkpoint);
+  const activeSource =
+    record.activeSource === undefined ? undefined : SocialSourceSchema.parse(record.activeSource);
+  const job: LegacyV2JobRow = {
+    schemaVersion: SYNC_SCHEMA_VERSION,
+    id: SyncJobIdSchema.parse(record.id),
+    source,
+    status,
+    adapterVersion: migrationPositiveVersion(record.adapterVersion, 'v2 job adapterVersion'),
+    scanRevision: migrationCount(record.scanRevision, 'v2 job scanRevision'),
+    reviewRevision: migrationCount(record.reviewRevision, 'v2 job reviewRevision'),
+    ...(authorizedReviewRevision === undefined ? {} : { authorizedReviewRevision }),
+    createdAt,
+    updatedAt,
+    ...(writeAuthorizedAt === undefined ? {} : { writeAuthorizedAt }),
+    ...(stopRecord === undefined ? {} : { stopRecord }),
+    ...(checkpoint === undefined ? {} : { checkpoint }),
+    budgets: SyncBudgetsSchema.parse(record.budgets),
+    summary: SyncJobSummarySchema.parse(record.summary),
+    ...(activeSource === undefined ? {} : { activeSource }),
+  };
+
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    throw migrationFailure('unsafe_migration_state', 'v2 job timestamps are not monotonic');
+  }
+  if (
+    writeAuthorizedAt &&
+    (Date.parse(writeAuthorizedAt) < Date.parse(createdAt) ||
+      Date.parse(writeAuthorizedAt) > Date.parse(updatedAt))
+  ) {
+    throw migrationFailure('unsafe_migration_state', 'v2 authorization timestamp is invalid');
+  }
+  if ((writeAuthorizedAt === undefined) !== (authorizedReviewRevision === undefined)) {
+    throw migrationFailure('unsafe_migration_state', 'v2 authorization fields are inconsistent');
+  }
+  if (authorizedReviewRevision !== undefined && authorizedReviewRevision !== job.reviewRevision) {
+    throw migrationFailure('unsafe_migration_state', 'v2 authorization revision is stale');
+  }
+  const isActive = ACTIVE_SYNC_JOB_STATUSES.has(status);
+  if ((isActive && activeSource !== source) || (!isActive && activeSource !== undefined)) {
+    throw migrationFailure('unsafe_migration_state', 'v2 active source index is inconsistent');
+  }
+  if (['writing', 'partial', 'complete'].includes(status) && writeAuthorizedAt === undefined) {
+    throw migrationFailure('unsafe_migration_state', 'v2 write state lacks authorization');
+  }
+  if (
+    ['prepared', 'scanning', 'ready_for_review'].includes(status) &&
+    writeAuthorizedAt !== undefined
+  ) {
+    throw migrationFailure('unsafe_migration_state', 'v2 pre-write state has authorization');
+  }
+  if (status === 'paused') {
+    if (!stopRecord) {
+      throw migrationFailure('unsafe_migration_state', 'v2 paused job lacks a stop record');
+    }
+    if ((stopRecord.phase === 'writing') !== (writeAuthorizedAt !== undefined)) {
+      throw migrationFailure('unsafe_migration_state', 'v2 pause phase is inconsistent');
+    }
+  } else if (stopRecord !== undefined) {
+    throw migrationFailure('unsafe_migration_state', 'v2 non-paused job has a stop record');
+  }
+  if (stopRecord && stopRecord.scanRevision !== job.scanRevision) {
+    throw migrationFailure('unsafe_migration_state', 'v2 stop record revision is stale');
+  }
+  if (checkpoint) {
+    if (
+      checkpoint.adapterVersion !== job.adapterVersion ||
+      checkpoint.scanRevision !== job.scanRevision ||
+      checkpoint.scannedCount !== job.summary.scannedCount ||
+      job.summary.uniqueItemCount > checkpoint.acceptedCount ||
+      Date.parse(checkpoint.updatedAt) > Date.parse(updatedAt)
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 checkpoint does not match its job');
+    }
+    if (
+      stopRecord &&
+      (stopRecord.scannedCount !== checkpoint.scannedCount ||
+        stopRecord.acceptedCount !== checkpoint.acceptedCount)
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 stop counts are inconsistent');
+    }
+  } else if (job.summary.scannedCount !== 0 || job.summary.uniqueItemCount !== 0) {
+    throw migrationFailure('unsafe_migration_state', 'v2 scan results lack a checkpoint');
+  }
+  if (job.summary.uniqueItemCount > job.budgets.maxItems) {
+    throw migrationFailure('unsafe_migration_state', 'v2 job exceeds its item budget');
+  }
+  return job;
+}
+
 function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly unknown[]>>): {
   jobs: SyncJobRow[];
   items: SyncJobItemRow[];
@@ -973,6 +1243,8 @@ function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly un
     let acceptedBytes = 0;
     let classificationPendingCount = 0;
     let classificationErrorCount = 0;
+    let candidateCount = 0;
+    let catalogExistingObservationCount = 0;
     let unreviewedCount = 0;
     let selectedCount = 0;
     let excludedCount = 0;
@@ -1001,6 +1273,12 @@ function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly un
       }
       classificationPendingCount += legacyItem.classification === 'pending' ? 1 : 0;
       classificationErrorCount += legacyItem.classification === 'error' ? 1 : 0;
+      candidateCount += ['new', 'changed', 'incomplete', 'error'].includes(
+        legacyItem.classification,
+      )
+        ? 1
+        : 0;
+      catalogExistingObservationCount += legacyItem.classification === 'existing' ? 1 : 0;
       writePendingCount += legacyItem.writeStatus === 'pending' ? 1 : 0;
       createdCount += legacyItem.writeStatus === 'created' ? 1 : 0;
       alreadyExistsCount += legacyItem.writeStatus === 'already_exists' ? 1 : 0;
@@ -1076,8 +1354,13 @@ function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly un
     const checkpoint = legacyJob.checkpoint
       ? {
           ...legacyJob.checkpoint,
+          contractVersion: SYNC_JOB_CONTRACT_VERSION,
           scanRevision: 0,
           acceptedBytes,
+          candidateCount,
+          classificationErrorCount,
+          catalogExistingObservationCount,
+          consecutiveKnownIds: 0,
         }
       : undefined;
     const stopRecord =
@@ -1093,15 +1376,28 @@ function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly un
         : undefined;
     const authorizedReviewRevision =
       legacyJob.writeAuthorizedAt === undefined ? undefined : reviewRevision;
+    const scanCompletion = [
+      'ready_for_review',
+      'writing',
+      'partial',
+      'complete',
+      'failed',
+      'cancelled',
+    ].includes(status)
+      ? ('legacy_migrated' as const)
+      : undefined;
     migratedJobs.push(
       SyncJobRowSchema.parse({
         ...legacyJob,
+        contractVersion: SYNC_JOB_CONTRACT_VERSION,
+        scanMode: 'incremental',
         status,
         scanRevision: 0,
         reviewRevision,
         ...(authorizedReviewRevision === undefined ? {} : { authorizedReviewRevision }),
         ...(stopRecord === undefined ? {} : { stopRecord }),
         ...(checkpoint === undefined ? {} : { checkpoint }),
+        ...(scanCompletion === undefined ? {} : { scanCompletion }),
         summary: {
           scannedCount: legacyJob.summary.scannedCount,
           uniqueItemCount: jobItems.length,
@@ -1124,9 +1420,236 @@ function migrateV1Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly un
   return { jobs: migratedJobs, items: migratedItems, records };
 }
 
-function migrateV1ToV2(
+function migrateV2Rows(valuesByStore: Readonly<Record<SyncStoreName, readonly unknown[]>>): {
+  jobs: SyncJobRow[];
+  items: SyncJobItemRow[];
+  records: SyncRecord[];
+  intents: WriteIntent[];
+} {
+  const totalRows = Object.values(valuesByStore).reduce((sum, values) => sum + values.length, 0);
+  if (totalRows > MAX_MIGRATION_ROWS) {
+    throw migrationFailure('migration_budget_exceeded', 'v2 database exceeds migration row limit');
+  }
+  let totalBytes = 0;
+  let totalNodes = 0;
+  for (const values of Object.values(valuesByStore)) {
+    for (const value of values) {
+      const metrics = inspectMigrationValue(value);
+      totalBytes += metrics.bytes;
+      totalNodes += metrics.nodes;
+      if (totalBytes > MAX_MIGRATION_BYTES) {
+        throw migrationFailure(
+          'migration_budget_exceeded',
+          'v2 database exceeds migration byte limit',
+        );
+      }
+      if (totalNodes > MAX_MIGRATION_NODES) {
+        throw migrationFailure(
+          'migration_budget_exceeded',
+          'v2 database exceeds migration structure limit',
+        );
+      }
+    }
+  }
+  if (valuesByStore.meta.length !== 1) {
+    throw migrationFailure('invalid_database_layout', 'v2 schema metadata is incomplete');
+  }
+  const meta = migrationRecord(
+    valuesByStore.meta[0],
+    ['key', 'schemaVersion', 'databaseVersion'],
+    [],
+    'v2 schema metadata',
+  );
+  if (
+    meta.key !== 'schema' ||
+    meta.schemaVersion !== SYNC_SCHEMA_VERSION ||
+    meta.databaseVersion !== 2
+  ) {
+    throw migrationFailure('invalid_database_layout', 'v2 schema metadata is invalid');
+  }
+
+  let legacyJobs: LegacyV2JobRow[];
+  let items: SyncJobItemRow[];
+  let records: SyncRecord[];
+  let intents: WriteIntent[];
+  try {
+    legacyJobs = valuesByStore.jobs.map(parseLegacyV2JobRow);
+    items = valuesByStore.items.map((value) => SyncJobItemRowSchema.parse(value));
+    records = valuesByStore.records.map((value) => SyncRecordSchema.parse(value));
+    intents = valuesByStore.intents.map((value) => WriteIntentSchema.parse(value));
+  } catch (error) {
+    throw migrationFailure('unsafe_migration_state', 'v2 rows failed strict validation', error);
+  }
+
+  const jobsById = new Map(legacyJobs.map((job) => [job.id, job]));
+  const itemsByKey = new Map(items.map((item) => [item.key, item]));
+  const recordsByKey = new Map(records.map((record) => [record.key, record]));
+  const intentsById = new Map(intents.map((intent) => [intent.id, intent]));
+  if (
+    jobsById.size !== legacyJobs.length ||
+    itemsByKey.size !== items.length ||
+    recordsByKey.size !== records.length ||
+    intentsById.size !== intents.length
+  ) {
+    throw migrationFailure('unsafe_migration_state', 'v2 database contains duplicate keys');
+  }
+  if (
+    new Set(records.map((record) => record.canonicalUrl)).size !== records.length ||
+    new Set(records.map((record) => record.contentHash)).size !== records.length
+  ) {
+    throw migrationFailure('unsafe_migration_state', 'v2 catalog identities are ambiguous');
+  }
+
+  const itemsByJob = new Map<string, SyncJobItemRow[]>();
+  for (const item of items) {
+    const job = jobsById.get(item.jobId);
+    if (!job) {
+      throw migrationFailure('unsafe_migration_state', 'v2 database has an orphan job item');
+    }
+    if (item.item.source !== job.source) {
+      throw migrationFailure('unsafe_migration_state', 'v2 item source differs from its job');
+    }
+    if (
+      Date.parse(item.discoveredAt) < Date.parse(job.createdAt) ||
+      Date.parse(item.updatedAt) > Date.parse(job.updatedAt)
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 item timestamps exceed its job');
+    }
+    const group = itemsByJob.get(item.jobId) ?? [];
+    group.push(item);
+    itemsByJob.set(item.jobId, group);
+  }
+
+  const intentsByJob = new Map<string, WriteIntent[]>();
+  const intentItemKeys = new Set<string>();
+  for (const intent of intents) {
+    const job = jobsById.get(intent.jobId);
+    const item = itemsByKey.get(intent.itemKey);
+    if (!job || !item || !intentMatchesJobItem(intent, item)) {
+      throw migrationFailure('unsafe_migration_state', 'v2 write intent is orphaned or stale');
+    }
+    if (
+      intentItemKeys.has(intent.itemKey) ||
+      item.writeStatus !== 'pending' ||
+      item.reviewDecision !== 'selected' ||
+      item.reviewRevision !== intent.reviewRevision ||
+      job.reviewRevision !== intent.reviewRevision ||
+      job.authorizedReviewRevision !== intent.reviewRevision
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 write intent state is inconsistent');
+    }
+    intentItemKeys.add(intent.itemKey);
+    const group = intentsByJob.get(intent.jobId) ?? [];
+    group.push(intent);
+    intentsByJob.set(intent.jobId, group);
+  }
+
+  const migratedJobs: SyncJobRow[] = [];
+  for (const legacyJob of legacyJobs) {
+    const jobItems = itemsByJob.get(legacyJob.id) ?? [];
+    const pendingReviewCount = jobItems.filter((item) => item.classification === 'pending').length;
+    const classificationErrorCount = jobItems.filter(
+      (item) => item.classification === 'error',
+    ).length;
+    const candidateCount = jobItems.filter((item) =>
+      ['new', 'changed', 'incomplete', 'error'].includes(item.classification),
+    ).length;
+    const catalogExistingObservationCount = jobItems.filter(
+      (item) => item.classification === 'existing',
+    ).length;
+    const unreviewedCount = jobItems.filter((item) => item.reviewDecision === 'unreviewed').length;
+    const selectedCount = jobItems.filter((item) => item.reviewDecision === 'selected').length;
+    const excludedCount = jobItems.filter((item) => item.reviewDecision === 'excluded').length;
+    const writePendingCount = jobItems.filter((item) => item.writeStatus === 'pending').length;
+    const createdCount = jobItems.filter((item) => item.writeStatus === 'created').length;
+    const alreadyExistsCount = jobItems.filter(
+      (item) => item.writeStatus === 'already_exists',
+    ).length;
+    const skippedCount = jobItems.filter((item) => item.writeStatus === 'skipped').length;
+    const writeErrorCount = jobItems.filter((item) => item.writeStatus === 'error').length;
+    const summary = legacyJob.summary;
+    if (
+      summary.uniqueItemCount !== jobItems.length ||
+      summary.pendingReviewCount !== pendingReviewCount ||
+      summary.classificationErrorCount !== classificationErrorCount ||
+      summary.unreviewedCount !== unreviewedCount ||
+      summary.selectedCount !== selectedCount ||
+      summary.excludedCount !== excludedCount ||
+      summary.writePendingCount !== writePendingCount ||
+      summary.createdCount !== createdCount ||
+      summary.alreadyExistsCount !== alreadyExistsCount ||
+      summary.skippedCount !== skippedCount ||
+      summary.writeErrorCount !== writeErrorCount ||
+      (intentsByJob.get(legacyJob.id)?.length ?? 0) !== writePendingCount
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 job summary differs from item rows');
+    }
+    for (const item of jobItems) {
+      if (
+        item.reviewDecision !== 'unreviewed' &&
+        item.reviewRevision !== legacyJob.reviewRevision
+      ) {
+        throw migrationFailure('unsafe_migration_state', 'v2 item review revision is stale');
+      }
+    }
+
+    const status = legacyJob.status === 'scanning' ? 'paused' : legacyJob.status;
+    const checkpoint = legacyJob.checkpoint
+      ? SyncCheckpointSchema.parse({
+          ...legacyJob.checkpoint,
+          contractVersion: SYNC_JOB_CONTRACT_VERSION,
+          candidateCount,
+          classificationErrorCount,
+          catalogExistingObservationCount,
+          consecutiveKnownIds: 0,
+        })
+      : undefined;
+    if (
+      checkpoint &&
+      (candidateCount > checkpoint.acceptedCount ||
+        catalogExistingObservationCount > checkpoint.acceptedCount)
+    ) {
+      throw migrationFailure('unsafe_migration_state', 'v2 checkpoint does not cover its rows');
+    }
+    const stopRecord =
+      legacyJob.status === 'scanning'
+        ? {
+            code: 'worker_interrupted' as const,
+            stoppedAt: legacyJob.updatedAt,
+            phase: 'scanning' as const,
+            scanRevision: legacyJob.scanRevision,
+            scannedCount: checkpoint?.scannedCount ?? 0,
+            acceptedCount: checkpoint?.acceptedCount ?? 0,
+          }
+        : legacyJob.stopRecord;
+    const scanCompletion =
+      ['ready_for_review', 'writing', 'partial', 'complete', 'failed', 'cancelled'].includes(
+        status,
+      ) ||
+      (status === 'paused' && stopRecord?.phase === 'writing')
+        ? ('legacy_migrated' as const)
+        : undefined;
+    migratedJobs.push(
+      SyncJobRowSchema.parse({
+        ...legacyJob,
+        contractVersion: SYNC_JOB_CONTRACT_VERSION,
+        scanMode: 'incremental',
+        status,
+        ...(scanCompletion === undefined ? {} : { scanCompletion }),
+        ...(stopRecord === undefined ? {} : { stopRecord }),
+        ...(checkpoint === undefined ? {} : { checkpoint }),
+        ...(ACTIVE_SYNC_JOB_STATUSES.has(status) ? { activeSource: legacyJob.source } : {}),
+      }),
+    );
+  }
+
+  return { jobs: migratedJobs, items, records, intents };
+}
+
+function migrateLegacyToV3(
   database: IDBDatabase,
   transaction: IDBTransaction,
+  oldVersion: 1 | 2,
   onError: (error: unknown) => void,
 ): void {
   assertDatabaseLayout(database, transaction);
@@ -1156,7 +1679,10 @@ function migrateV1ToV2(
 
   const writeMigratedRows = (): void => {
     try {
-      const migrated = migrateV1Rows(valuesByStore);
+      const migrated =
+        oldVersion === 1
+          ? { ...migrateV1Rows(valuesByStore), intents: [] as WriteIntent[] }
+          : migrateV2Rows(valuesByStore);
       const writes: IDBRequest<IDBValidKey>[] = [];
       for (const job of migrated.jobs) {
         writes.push(transaction.objectStore('jobs').put(job));
@@ -1167,17 +1693,21 @@ function migrateV1ToV2(
       for (const record of migrated.records) {
         writes.push(transaction.objectStore('records').put(record));
       }
+      for (const intent of migrated.intents) {
+        writes.push(transaction.objectStore('intents').put(intent));
+      }
       writes.push(
         transaction.objectStore('meta').put({
           key: 'schema',
           schemaVersion: SYNC_SCHEMA_VERSION,
           databaseVersion: SYNC_DATABASE_VERSION,
+          validationState: 'pending',
         } satisfies SyncMeta),
       );
       for (const write of writes) {
         write.addEventListener('error', () => {
           fail(
-            new SyncStoreMigrationError('unsafe_migration_state', 'Failed to write v2 rows', {
+            new SyncStoreMigrationError('unsafe_migration_state', 'Failed to write v3 rows', {
               cause: write.error,
             }),
           );
@@ -1203,7 +1733,7 @@ function migrateV1ToV2(
       fail(
         new SyncStoreMigrationError(
           'unsafe_migration_state',
-          `Failed to read v1 ${storeName} rows`,
+          `Failed to read v${oldVersion} ${storeName} rows`,
           { cause: request.error },
         ),
       );
@@ -1222,7 +1752,7 @@ function migrateV1ToV2(
         if (totalRows > MAX_MIGRATION_ROWS) {
           throw migrationFailure(
             'migration_budget_exceeded',
-            'v1 database exceeds migration row limit',
+            `v${oldVersion} database exceeds migration row limit`,
           );
         }
         const metrics = inspectMigrationValue(cursor.value);
@@ -1231,13 +1761,13 @@ function migrateV1ToV2(
         if (totalBytes > MAX_MIGRATION_BYTES) {
           throw migrationFailure(
             'migration_budget_exceeded',
-            'v1 database exceeds migration byte limit',
+            `v${oldVersion} database exceeds migration byte limit`,
           );
         }
         if (totalNodes > MAX_MIGRATION_NODES) {
           throw migrationFailure(
             'migration_budget_exceeded',
-            'v1 database exceeds migration structure limit',
+            `v${oldVersion} database exceeds migration structure limit`,
           );
         }
         valuesByStore[storeName].push(cursor.value);
@@ -1255,11 +1785,12 @@ function openRawDatabase(
   factory: IDBFactory,
   dbName: string,
   onBlocked?: (event: SyncStoreVersionEvent) => void,
-): Promise<IDBDatabase> {
+): Promise<{ database: IDBDatabase; upgradedFrom?: number }> {
   return new Promise((resolve, reject) => {
     const request = factory.open(dbName, SYNC_DATABASE_VERSION);
     let settled = false;
     let upgradeError: unknown;
+    let upgradedFrom: number | undefined;
 
     const fail = (error: unknown): void => {
       if (!settled) {
@@ -1279,16 +1810,17 @@ function openRawDatabase(
       }
 
       try {
+        upgradedFrom = event.oldVersion;
         if (event.oldVersion === 0) {
-          createV2Database(request.result);
-        } else if (event.oldVersion === 1 && request.transaction) {
-          migrateV1ToV2(request.result, request.transaction, (error) => {
+          createV3Database(request.result);
+        } else if ((event.oldVersion === 1 || event.oldVersion === 2) && request.transaction) {
+          migrateLegacyToV3(request.result, request.transaction, event.oldVersion, (error) => {
             upgradeError = error;
           });
         } else {
           throw new SyncStoreMigrationError(
             'unsupported_database_version',
-            'Only schema v1 can be migrated to schema v2',
+            'Only database versions 1 and 2 can be migrated to database version 3',
           );
         }
       } catch (error) {
@@ -1321,7 +1853,7 @@ function openRawDatabase(
         fail(
           new SyncStoreMigrationError(
             'unsupported_database_version',
-            'The sync database is newer than schema v2',
+            'The sync database is newer than database version 3',
             { cause: request.error },
           ),
         );
@@ -1340,7 +1872,10 @@ function openRawDatabase(
         return;
       }
       settled = true;
-      resolve(request.result);
+      resolve({
+        database: request.result,
+        ...(upgradedFrom === undefined ? {} : { upgradedFrom }),
+      });
     });
   });
 }
@@ -1358,12 +1893,194 @@ function parsePersistedRow<T>(
   return result.data;
 }
 
+async function validateV3RowsAfterUpgrade(database: IDBPDatabase<SyncDatabase>): Promise<void> {
+  const snapshot = await readTransaction(database, SYNC_STORE_NAMES, async (transaction) => {
+    const stores = {
+      jobs: transaction.objectStore('jobs'),
+      items: transaction.objectStore('items'),
+      records: transaction.objectStore('records'),
+      intents: transaction.objectStore('intents'),
+      meta: transaction.objectStore('meta'),
+    };
+    const counts = await Promise.all([
+      stores.jobs.count(),
+      stores.items.count(),
+      stores.records.count(),
+      stores.intents.count(),
+      stores.meta.count(),
+    ]);
+    if (counts.reduce((sum, count) => sum + count, 0) > MAX_MIGRATION_ROWS) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 exceeds the post-upgrade row validation budget',
+      );
+    }
+    const [jobs, items, records, intents, meta] = await Promise.all([
+      stores.jobs.getAll(),
+      stores.items.getAll(),
+      stores.records.getAll(),
+      stores.intents.getAll(),
+      stores.meta.getAll(),
+    ]);
+    return { jobs, items, records, intents, meta };
+  });
+  if (snapshot.meta.length !== 1) {
+    throw new SyncStoreMigrationError(
+      'DB3_REOPEN_VALIDATION_FAILED',
+      'DB3 schema metadata is incomplete or ambiguous',
+    );
+  }
+  parsePersistedRow(SyncMetaSchema, snapshot.meta[0], 'meta', 'schema');
+  const jobs = snapshot.jobs.map((value, index) =>
+    parsePersistedRow(SyncJobRowSchema, value, 'jobs', index),
+  );
+  const items = snapshot.items.map((value, index) =>
+    parsePersistedRow(SyncJobItemRowSchema, value, 'items', index),
+  );
+  const records = snapshot.records.map((value, index) =>
+    parsePersistedRow(SyncRecordSchema, value, 'records', index),
+  );
+  const intents = snapshot.intents.map((value, index) =>
+    parsePersistedRow(WriteIntentSchema, value, 'intents', index),
+  );
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
+  const itemsByKey = new Map(items.map((item) => [item.key, item]));
+  if (jobsById.size !== jobs.length || itemsByKey.size !== items.length) {
+    throw new SyncStoreMigrationError(
+      'DB3_REOPEN_VALIDATION_FAILED',
+      'DB3 contains duplicate job or item identities',
+    );
+  }
+  const itemsByJob = new Map<string, SyncJobItemRow[]>();
+  for (const item of items) {
+    const job = jobsById.get(item.jobId);
+    if (!job || item.item.source !== job.source) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 contains an orphan or cross-source item',
+      );
+    }
+    const group = itemsByJob.get(item.jobId) ?? [];
+    group.push(item);
+    itemsByJob.set(item.jobId, group);
+  }
+  if (
+    new Set(records.map((record) => record.key)).size !== records.length ||
+    new Set(records.map((record) => record.canonicalUrl)).size !== records.length ||
+    new Set(records.map((record) => record.contentHash)).size !== records.length
+  ) {
+    throw new SyncStoreMigrationError(
+      'DB3_REOPEN_VALIDATION_FAILED',
+      'DB3 catalog identities are ambiguous',
+    );
+  }
+  for (const job of jobs) {
+    const jobItems = itemsByJob.get(job.id) ?? [];
+    const candidateCount = jobItems.filter((item) =>
+      ['new', 'changed', 'incomplete', 'error'].includes(item.classification),
+    ).length;
+    const errorCount = jobItems.filter((item) => item.classification === 'error').length;
+    const existingRows = jobItems.filter((item) => item.classification === 'existing').length;
+    if (
+      jobItems.length !== job.summary.uniqueItemCount ||
+      errorCount !== job.summary.classificationErrorCount ||
+      (job.checkpoint?.candidateCount ?? 0) !== candidateCount ||
+      (job.checkpoint?.classificationErrorCount ?? 0) !== errorCount ||
+      (job.checkpoint?.catalogExistingObservationCount ?? 0) < existingRows
+    ) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 job counters differ from persisted item rows',
+      );
+    }
+  }
+  const intentItems = new Set<string>();
+  for (const intent of intents) {
+    const job = jobsById.get(intent.jobId);
+    const item = itemsByKey.get(intent.itemKey);
+    if (
+      !job ||
+      !item ||
+      intentItems.has(intent.itemKey) ||
+      !intentMatchesJobItem(intent, item) ||
+      item.writeStatus !== 'pending' ||
+      job.authorizedReviewRevision !== intent.reviewRevision
+    ) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 contains an unresolved intent with inconsistent identity',
+      );
+    }
+    intentItems.add(intent.itemKey);
+  }
+}
+
+async function readSyncMeta(database: IDBPDatabase<SyncDatabase>): Promise<SyncMeta> {
+  const metaRows = await readTransaction(database, ['meta'] as const, async (transaction) =>
+    transaction.objectStore('meta').getAll(),
+  );
+  if (metaRows.length !== 1) {
+    throw new SyncStoreMigrationError(
+      'invalid_database_layout',
+      'Sync database schema metadata is incomplete or ambiguous',
+    );
+  }
+  return parsePersistedRow(SyncMetaSchema, metaRows[0], 'meta', 'schema');
+}
+
+async function writeSyncMetaValidationState(
+  database: IDBPDatabase<SyncDatabase>,
+  meta: SyncMeta,
+  validationState: NonNullable<SyncMeta['validationState']>,
+): Promise<SyncMeta> {
+  const nextMeta: SyncMeta = { ...meta, validationState };
+  return writeTransaction(database, ['meta'] as const, async (transaction) => {
+    await transaction.objectStore('meta').put(nextMeta);
+    return nextMeta;
+  });
+}
+
+async function validateSyncDatabaseOnOpen(
+  database: IDBPDatabase<SyncDatabase>,
+  upgraded: boolean,
+): Promise<void> {
+  const meta = await readSyncMeta(database);
+  if (meta.validationState === 'failed') {
+    throw new SyncStoreMigrationError(
+      'DB3_REOPEN_VALIDATION_FAILED',
+      'DB3 is locked because a prior post-upgrade validation failed',
+    );
+  }
+  if (!upgraded && meta.validationState === 'complete') {
+    return;
+  }
+
+  try {
+    await validateV3RowsAfterUpgrade(database);
+    await writeSyncMetaValidationState(database, meta, 'complete');
+  } catch (error) {
+    try {
+      await writeSyncMetaValidationState(database, meta, 'failed');
+    } catch {
+      // Keep the original validation error. An unreadable marker will also fail closed on reopen.
+    }
+    throw new SyncStoreMigrationError(
+      'DB3_REOPEN_VALIDATION_FAILED',
+      'DB3 row validation failed after the upgrade committed',
+      { cause: error },
+    );
+  }
+}
+
 function publicJob(row: SyncJobRow): SyncJob {
   return SyncJobSchema.parse({
     schemaVersion: row.schemaVersion,
+    contractVersion: row.contractVersion,
     id: row.id,
     source: row.source,
     status: row.status,
+    scanMode: row.scanMode,
+    ...(row.scanCompletion !== undefined ? { scanCompletion: row.scanCompletion } : {}),
     adapterVersion: row.adapterVersion,
     scanRevision: row.scanRevision,
     reviewRevision: row.reviewRevision,
@@ -1396,11 +2113,17 @@ function publicJobItem(row: SyncJobItemRow): SyncJobItem {
   });
 }
 
-function rowWithStatus(row: SyncJobRow, status: SyncJobStatus, updatedAt: string): SyncJobRow {
+function rowWithStatus(
+  row: SyncJobRow,
+  status: SyncJobStatus,
+  updatedAt: string,
+  updates: Readonly<{ scanCompletion?: SyncScanCompletion }> = {},
+): SyncJobRow {
   const candidate: Record<string, unknown> = {
     ...row,
     status,
     updatedAt,
+    ...updates,
   };
   if (ACTIVE_SYNC_JOB_STATUSES.has(status)) {
     candidate.activeSource = row.source;
@@ -1442,18 +2165,17 @@ function assertRevision(value: number, label: string): number {
 function readBoundedPlainArray(value: unknown, maximum: number, label: string): unknown[] {
   let isArray: boolean;
   let prototype: object | null;
-  let descriptors: PropertyDescriptorMap;
+  let lengthDescriptor: PropertyDescriptor | undefined;
   try {
     isArray = Array.isArray(value);
     prototype = isArray ? Object.getPrototypeOf(value) : null;
-    descriptors = isArray ? Object.getOwnPropertyDescriptors(value) : {};
+    lengthDescriptor = isArray ? Object.getOwnPropertyDescriptor(value, 'length') : undefined;
   } catch {
     throw new TypeError(`${label} could not be inspected`);
   }
   if (!isArray || prototype !== Array.prototype) {
     throw new TypeError(`${label} must be a plain array`);
   }
-  const lengthDescriptor = descriptors.length;
   if (
     !lengthDescriptor ||
     !('value' in lengthDescriptor) ||
@@ -1464,6 +2186,12 @@ function readBoundedPlainArray(value: unknown, maximum: number, label: string): 
     throw new RangeError(`${label} exceeds its item limit`);
   }
   const length = lengthDescriptor.value as number;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new TypeError(`${label} could not be inspected`);
+  }
   const keys = Object.keys(descriptors).filter((key) => key !== 'length');
   if (keys.length !== length) {
     throw new TypeError(`${label} must not contain sparse or extra properties`);
@@ -1515,6 +2243,28 @@ function assertRecordKey(value: string): string {
 
 function sameSocialItem(left: SocialItem, right: SocialItem): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameStableSocialItem(left: SocialItem, right: SocialItem): boolean {
+  return (
+    left.source === right.source &&
+    left.sourceItemId === right.sourceItemId &&
+    left.canonicalUrl === right.canonicalUrl &&
+    left.contentHash === right.contentHash &&
+    left.completeness === right.completeness &&
+    left.extractorVersion === right.extractorVersion
+  );
+}
+
+function itemMatchesCatalogIdentity(item: SocialItem, record: SyncRecord): boolean {
+  return (
+    item.source === record.source &&
+    item.sourceItemId === record.sourceItemId &&
+    item.canonicalUrl === record.canonicalUrl &&
+    item.contentHash === record.contentHash &&
+    item.completeness === record.completeness &&
+    item.extractorVersion === record.extractorVersion
+  );
 }
 
 function sameRecordIdentity(left: SyncRecord, right: SyncRecord): boolean {
@@ -1669,12 +2419,15 @@ export class SyncStore {
     const createdAt = IsoTimestampSchema.parse(input.createdAt ?? this.now());
     const source = SocialSourceSchema.parse(input.source);
     const id = SyncJobIdSchema.parse(input.id);
+    const scanMode = SyncScanModeSchema.parse(input.scanMode ?? 'incremental');
     const budgets = SyncBudgetsSchema.parse(input.budgets);
     const row = SyncJobRowSchema.parse({
       schemaVersion: SYNC_SCHEMA_VERSION,
+      contractVersion: SYNC_JOB_CONTRACT_VERSION,
       id,
       source,
       status: 'prepared',
+      scanMode,
       adapterVersion: input.adapterVersion,
       scanRevision: 0,
       reviewRevision: 0,
@@ -1693,6 +2446,7 @@ export class SyncStore {
           const existing = parsePersistedRow(SyncJobRowSchema, existingValue, 'jobs', id);
           if (
             existing.source === source &&
+            existing.scanMode === scanMode &&
             existing.adapterVersion === row.adapterVersion &&
             JSON.stringify(existing.budgets) === JSON.stringify(row.budgets)
           ) {
@@ -1909,15 +2663,18 @@ export class SyncStore {
     jobId: string,
     expectedScanRevisionInput: number,
     updatedAtInput?: string,
-    guard: {
-      readonly signal?: AbortSignal;
-      readonly beforeCommit?: () => boolean;
-    } = {},
+    guard: ScanTransactionGuard & { readonly scanCompletion?: SyncScanCompletion } = {},
   ): Promise<SyncJob> {
     this.assertOpen();
     const id = SyncJobIdSchema.parse(jobId);
     const expectedScanRevision = assertRevision(expectedScanRevisionInput, 'expectedScanRevision');
     const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+    const scanCompletion = SyncScanCompletionSchema.parse(
+      guard.scanCompletion ?? 'trusted_terminal',
+    );
+    if (scanCompletion !== 'trusted_terminal' && scanCompletion !== 'known_frontier') {
+      throw new SyncStoreConflictError('finishScan requires a trusted terminal or known frontier');
+    }
     return writeTransaction(
       this.database,
       ['jobs', 'items'] as const,
@@ -1941,7 +2698,62 @@ export class SyncStore {
         if (pending !== 0) {
           throw new SyncStoreConflictError('A scan cannot finish while items remain unclassified');
         }
-        const next = rowWithStatus(current, 'ready_for_review', updatedAt);
+        const next = rowWithStatus(current, 'ready_for_review', updatedAt, { scanCompletion });
+        await jobs.put(next);
+        return publicJob(next);
+      },
+      guard,
+    );
+  }
+
+  async finalizePausedScan(
+    jobId: string,
+    expectedScanRevisionInput: number,
+    updatedAtInput?: string,
+    guard: ScanTransactionGuard = {},
+  ): Promise<SyncJob> {
+    this.assertOpen();
+    const id = SyncJobIdSchema.parse(jobId);
+    const expectedScanRevision = assertRevision(expectedScanRevisionInput, 'expectedScanRevision');
+    const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+    return writeTransaction(
+      this.database,
+      ['jobs', 'items', 'intents'] as const,
+      async (transaction) => {
+        const jobs = transaction.objectStore('jobs');
+        const items = transaction.objectStore('items');
+        const intents = transaction.objectStore('intents');
+        const value = await jobs.get(id);
+        if (value === undefined) {
+          throw new SyncStoreNotFoundError('job');
+        }
+        const current = parsePersistedRow(SyncJobRowSchema, value, 'jobs', id);
+        if (
+          current.status !== 'paused' ||
+          current.stopRecord?.phase !== 'scanning' ||
+          !['user_paused', 'budget_exceeded'].includes(current.stopRecord.code) ||
+          current.writeAuthorizedAt !== undefined ||
+          current.scanCompletion !== undefined
+        ) {
+          throw new SyncStoreConflictError('This paused scan cannot use its current batch');
+        }
+        if (current.scanRevision !== expectedScanRevision) {
+          throw new SyncStoreConflictError('Scan revision is stale');
+        }
+        if (Date.parse(updatedAt) < Date.parse(current.updatedAt)) {
+          throw new SyncStoreConflictError('Job timestamps must be monotonic');
+        }
+        const [pendingClassifications, unresolvedIntents, pendingWrites] = await Promise.all([
+          items.index('by-job-classification').count([id, 'pending']),
+          intents.index('by-job-id').count(id),
+          items.index('by-job-write-status').count([id, 'pending']),
+        ]);
+        if (pendingClassifications !== 0 || unresolvedIntents !== 0 || pendingWrites !== 0) {
+          throw new SyncStoreConflictError('The paused batch still has unresolved work');
+        }
+        const next = rowWithStatus(current, 'ready_for_review', updatedAt, {
+          scanCompletion: 'user_finalized_batch',
+        });
         await jobs.put(next);
         return publicJob(next);
       },
@@ -2034,6 +2846,253 @@ export class SyncStore {
       await Promise.all([...nextRows.map((row) => items.put(row)), jobs.put(nextJob)]);
       return { job: publicJob(nextJob), selectedSourceItemIds };
     });
+  }
+
+  async completeReviewWithoutWrites(
+    jobId: string,
+    expectedReviewRevisionInput: number,
+    updatedAtInput?: string,
+  ): Promise<SyncJob> {
+    this.assertOpen();
+    const id = SyncJobIdSchema.parse(jobId);
+    const expectedReviewRevision = assertRevision(
+      expectedReviewRevisionInput,
+      'expectedReviewRevision',
+    );
+    const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+    return writeTransaction(
+      this.database,
+      ['jobs', 'items', 'intents'] as const,
+      async (transaction) => {
+        const jobs = transaction.objectStore('jobs');
+        const items = transaction.objectStore('items');
+        const intents = transaction.objectStore('intents');
+        const jobValue = await jobs.get(id);
+        if (jobValue === undefined) {
+          throw new SyncStoreNotFoundError('job');
+        }
+        const job = parsePersistedRow(SyncJobRowSchema, jobValue, 'jobs', id);
+        if (
+          job.status !== 'ready_for_review' ||
+          job.scanCompletion === undefined ||
+          job.writeAuthorizedAt !== undefined ||
+          job.authorizedReviewRevision !== undefined
+        ) {
+          throw new SyncStoreConflictError('The job is not eligible for no-write completion');
+        }
+        if (job.reviewRevision !== expectedReviewRevision) {
+          throw new SyncStoreConflictError('Review revision is stale');
+        }
+        if (Date.parse(updatedAt) < Date.parse(job.updatedAt)) {
+          throw new SyncStoreConflictError('Review timestamps must be monotonic');
+        }
+        const [values, unresolvedIntents] = await Promise.all([
+          items.index('by-job-id').getAll(id, MAX_LIST_RESULTS),
+          intents.index('by-job-id').count(id),
+        ]);
+        const rows = values.map((value, index) =>
+          parsePersistedRow(SyncJobItemRowSchema, value, 'items', index),
+        );
+        if (rows.length !== job.summary.uniqueItemCount || unresolvedIntents !== 0) {
+          throw new SyncStoreConflictError('No-write completion state is incomplete');
+        }
+        if (
+          rows.some(
+            (row) =>
+              row.classification === 'pending' ||
+              row.writeStatus !== 'not_requested' ||
+              row.outcome !== undefined,
+          )
+        ) {
+          throw new SyncStoreConflictError(
+            'No-write completion cannot hide pending or written work',
+          );
+        }
+        const classificationErrorCount = rows.filter(
+          (row) => row.classification === 'error',
+        ).length;
+        if (
+          classificationErrorCount !== job.summary.classificationErrorCount ||
+          classificationErrorCount !== (job.checkpoint?.classificationErrorCount ?? 0)
+        ) {
+          throw new CorruptSyncRowError(
+            'jobs',
+            id,
+            new Error('Classification error counts differ from persisted items'),
+          );
+        }
+        const reviewRevision = job.reviewRevision + 1;
+        if (reviewRevision > 1_000_000) {
+          throw new SyncStoreConflictError('Review revision limit has been reached');
+        }
+        const nextRows = rows.map((row) =>
+          SyncJobItemRowSchema.parse({
+            ...row,
+            reviewDecision: 'excluded',
+            reviewRevision,
+            updatedAt,
+          }),
+        );
+        const status = classificationErrorCount === 0 ? 'complete' : 'complete_with_issues';
+        const nextJobCandidate: Record<string, unknown> = {
+          ...job,
+          status,
+          reviewRevision,
+          updatedAt,
+          summary: {
+            ...job.summary,
+            pendingReviewCount: 0,
+            classificationErrorCount,
+            unreviewedCount: 0,
+            selectedCount: 0,
+            excludedCount: rows.length,
+            writePendingCount: 0,
+            createdCount: 0,
+            alreadyExistsCount: 0,
+            skippedCount: 0,
+            writeErrorCount: 0,
+          },
+        };
+        delete nextJobCandidate.activeSource;
+        const nextJob = SyncJobRowSchema.parse(nextJobCandidate);
+        await Promise.all([...nextRows.map((row) => items.put(row)), jobs.put(nextJob)]);
+        return publicJob(nextJob);
+      },
+    );
+  }
+
+  async cancelJob(
+    jobId: string,
+    expectedScanRevisionInput: number,
+    expectedReviewRevisionInput: number,
+    updatedAtInput?: string,
+    guard: ScanTransactionGuard = {},
+  ): Promise<SyncJob> {
+    this.assertOpen();
+    const id = SyncJobIdSchema.parse(jobId);
+    const expectedScanRevision = assertRevision(expectedScanRevisionInput, 'expectedScanRevision');
+    const expectedReviewRevision = assertRevision(
+      expectedReviewRevisionInput,
+      'expectedReviewRevision',
+    );
+    const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+    return writeTransaction(
+      this.database,
+      ['jobs', 'items', 'intents'] as const,
+      async (transaction) => {
+        const jobs = transaction.objectStore('jobs');
+        const items = transaction.objectStore('items');
+        const intents = transaction.objectStore('intents');
+        const value = await jobs.get(id);
+        if (value === undefined) {
+          throw new SyncStoreNotFoundError('job');
+        }
+        const current = parsePersistedRow(SyncJobRowSchema, value, 'jobs', id);
+        const isPausedScan =
+          current.status === 'paused' && current.stopRecord?.phase === 'scanning';
+        if (
+          current.status !== 'prepared' &&
+          current.status !== 'scanning' &&
+          current.status !== 'ready_for_review' &&
+          !isPausedScan
+        ) {
+          throw new SyncStoreConflictError('Only pre-write jobs can be cancelled');
+        }
+        if (current.status === 'scanning' && guard.beforeCommit === undefined) {
+          throw new SyncStoreConflictError('A scanning cancellation requires the invocation guard');
+        }
+        if (
+          current.scanRevision !== expectedScanRevision ||
+          current.reviewRevision !== expectedReviewRevision
+        ) {
+          throw new SyncStoreConflictError('Cancellation revision is stale');
+        }
+        if (
+          current.writeAuthorizedAt !== undefined ||
+          current.authorizedReviewRevision !== undefined ||
+          Date.parse(updatedAt) < Date.parse(current.updatedAt)
+        ) {
+          throw new SyncStoreConflictError('Pre-write cancellation state is unsafe');
+        }
+        const [unresolvedIntents, itemValues] = await Promise.all([
+          intents.index('by-job-id').count(id),
+          items.index('by-job-id').getAll(id, MAX_LIST_RESULTS),
+        ]);
+        const itemRows = itemValues.map((itemValue, index) =>
+          parsePersistedRow(SyncJobItemRowSchema, itemValue, 'items', index),
+        );
+        if (
+          unresolvedIntents !== 0 ||
+          itemRows.some(
+            (item) => item.writeStatus !== 'not_requested' || item.outcome !== undefined,
+          )
+        ) {
+          throw new SyncStoreConflictError('Pre-write cancellation found write protocol state');
+        }
+        const next = rowWithStatus(current, 'cancelled', updatedAt);
+        await jobs.put(next);
+        return publicJob(next);
+      },
+      guard,
+    );
+  }
+
+  async abandonWriteJob(
+    jobId: string,
+    expectedScanRevisionInput: number,
+    expectedReviewRevisionInput: number,
+    updatedAtInput?: string,
+  ): Promise<SyncJob> {
+    this.assertOpen();
+    const id = SyncJobIdSchema.parse(jobId);
+    const expectedScanRevision = assertRevision(expectedScanRevisionInput, 'expectedScanRevision');
+    const expectedReviewRevision = assertRevision(
+      expectedReviewRevisionInput,
+      'expectedReviewRevision',
+    );
+    const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+    return writeTransaction(
+      this.database,
+      ['jobs', 'items', 'intents'] as const,
+      async (transaction) => {
+        const jobs = transaction.objectStore('jobs');
+        const items = transaction.objectStore('items');
+        const intents = transaction.objectStore('intents');
+        const value = await jobs.get(id);
+        if (value === undefined) {
+          throw new SyncStoreNotFoundError('job');
+        }
+        const current = parsePersistedRow(SyncJobRowSchema, value, 'jobs', id);
+        const isPausedWrite =
+          current.status === 'paused' && current.stopRecord?.phase === 'writing';
+        if (current.status !== 'writing' && current.status !== 'partial' && !isPausedWrite) {
+          throw new SyncStoreConflictError('The job is not in a reconcilable write state');
+        }
+        if (
+          current.scanRevision !== expectedScanRevision ||
+          current.reviewRevision !== expectedReviewRevision ||
+          current.writeAuthorizedAt === undefined ||
+          current.authorizedReviewRevision !== current.reviewRevision ||
+          Date.parse(updatedAt) < Date.parse(current.updatedAt)
+        ) {
+          throw new SyncStoreConflictError('Write abandonment revision or authorization is stale');
+        }
+        const [unresolvedIntents, pendingWrites] = await Promise.all([
+          intents.index('by-job-id').count(id),
+          items.index('by-job-write-status').count([id, 'pending']),
+        ]);
+        if (
+          unresolvedIntents !== 0 ||
+          pendingWrites !== 0 ||
+          current.summary.writePendingCount !== 0
+        ) {
+          throw new SyncStoreConflictError('Write intents must be reconciled before abandonment');
+        }
+        const next = rowWithStatus(current, 'cancelled', updatedAt);
+        await jobs.put(next);
+        return publicJob(next);
+      },
+    );
   }
 
   async authorizeReviewSelection(
@@ -2132,9 +3191,18 @@ export class SyncStore {
     const id = SyncJobIdSchema.parse(jobId);
     const nextStatus = SyncJobStatusSchema.parse(nextStatusInput);
     const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
-    if (['scanning', 'paused', 'ready_for_review', 'writing'].includes(nextStatus)) {
+    if (
+      [
+        'scanning',
+        'paused',
+        'ready_for_review',
+        'writing',
+        'complete_with_issues',
+        'cancelled',
+      ].includes(nextStatus)
+    ) {
       throw new SyncStoreConflictError(
-        'Scanning, pausing, review completion, and write authorization require dedicated methods',
+        'Scanning, pausing, review completion, cancellation, and write authorization require dedicated methods',
       );
     }
 
@@ -2211,7 +3279,7 @@ export class SyncStore {
               'A job cannot complete with unsettled review decisions, errors, or write intents',
             );
           }
-        } else if (nextStatus === 'failed' || nextStatus === 'cancelled') {
+        } else if (nextStatus === 'failed') {
           const [unresolvedIntents, pendingItems] = await Promise.all([
             intents.index('by-job-id').count(id),
             items.index('by-job-write-status').count([id, 'pending']),
@@ -2227,6 +3295,287 @@ export class SyncStore {
         await jobs.put(next);
         return publicJob(next);
       },
+    );
+  }
+
+  async classifyAndPersistScanBatch(
+    jobId: string,
+    expectedScanRevisionInput: number,
+    observationInputs: readonly unknown[],
+    observedNodeDeltaInput: number,
+    updatedAtInput?: string,
+    guard: ScanTransactionGuard = {},
+  ): Promise<ClassifyAndPersistScanBatchResult> {
+    this.assertOpen();
+    const id = SyncJobIdSchema.parse(jobId);
+    const expectedScanRevision = assertRevision(expectedScanRevisionInput, 'expectedScanRevision');
+    const rawObservations = readBoundedPlainArray(
+      observationInputs,
+      MAX_OBSERVED_NODES_PER_INVOCATION,
+      'Scan observations',
+    );
+    let batchBytes = 0;
+    const observations = rawObservations.map((input) => {
+      const item = SocialItemSchema.parse(input);
+      const bytes = encoder.encode(JSON.stringify(item)).byteLength;
+      batchBytes += bytes;
+      if (batchBytes > MAX_TRANSACTION_INPUT_BYTES) {
+        throw new RangeError('Scan observations exceed the transaction byte limit');
+      }
+      return { item, bytes };
+    });
+    if (
+      !Number.isSafeInteger(observedNodeDeltaInput) ||
+      observedNodeDeltaInput < observations.length ||
+      observedNodeDeltaInput > MAX_OBSERVED_NODES_PER_INVOCATION
+    ) {
+      throw new RangeError('observedNodeDelta must cover observations and remain within 200');
+    }
+    const observedIds = observations.map(({ item }) => item.sourceItemId);
+    if (new Set(observedIds).size !== observedIds.length) {
+      throw new SyncStoreConflictError('Scan observations contain duplicate source item IDs');
+    }
+    const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
+
+    return writeTransaction(
+      this.database,
+      ['jobs', 'items', 'records'] as const,
+      async (transaction) => {
+        const jobs = transaction.objectStore('jobs');
+        const items = transaction.objectStore('items');
+        const records = transaction.objectStore('records');
+        const jobValue = await jobs.get(id);
+        if (jobValue === undefined) {
+          throw new SyncStoreNotFoundError('job');
+        }
+        const job = parsePersistedRow(SyncJobRowSchema, jobValue, 'jobs', id);
+        if (
+          job.status !== 'scanning' ||
+          job.scanRevision !== expectedScanRevision ||
+          job.scanCompletion !== undefined
+        ) {
+          throw new SyncStoreConflictError('Only the current scanning worker may persist a batch');
+        }
+        if (Date.parse(updatedAt) < Date.parse(job.updatedAt)) {
+          throw new SyncStoreConflictError('Scan timestamps must be monotonic');
+        }
+
+        const existingValues = await items.index('by-job-id').getAll(id, MAX_LIST_RESULTS);
+        const existingRows = existingValues.map((value, index) =>
+          parsePersistedRow(SyncJobItemRowSchema, value, 'items', index),
+        );
+        if (existingRows.length !== job.summary.uniqueItemCount) {
+          throw new CorruptSyncRowError(
+            'jobs',
+            id,
+            new Error('Persisted item count differs from the job summary'),
+          );
+        }
+        const rowsBySourceItemId = new Map(existingRows.map((row) => [row.sourceItemId, row]));
+        if (rowsBySourceItemId.size !== existingRows.length) {
+          throw new CorruptSyncRowError(
+            'items',
+            id,
+            new Error('Persisted job items contain duplicate source identities'),
+          );
+        }
+        let candidateCount = existingRows.filter((row) =>
+          ['new', 'changed', 'incomplete', 'error'].includes(row.classification),
+        ).length;
+        let classificationErrorCount = existingRows.filter(
+          (row) => row.classification === 'error',
+        ).length;
+        const legacyExistingRows = existingRows.filter(
+          (row) => row.classification === 'existing',
+        ).length;
+        const previousCheckpoint = job.checkpoint;
+        if (
+          (previousCheckpoint?.candidateCount ?? 0) !== candidateCount ||
+          (previousCheckpoint?.classificationErrorCount ?? 0) !== classificationErrorCount ||
+          (previousCheckpoint?.catalogExistingObservationCount ?? 0) < legacyExistingRows ||
+          job.summary.classificationErrorCount !== classificationErrorCount
+        ) {
+          throw new CorruptSyncRowError(
+            'jobs',
+            id,
+            new Error('Persisted scan counters differ from job item rows'),
+          );
+        }
+
+        const classify = async (
+          item: SocialItem,
+        ): Promise<Exclude<SyncItemClassification, 'pending'>> => {
+          const recordKey = makeSyncRecordKey(item.source, item.sourceItemId);
+          const keyValue = await records.get(recordKey);
+          if (keyValue !== undefined) {
+            const record = parsePersistedRow(SyncRecordSchema, keyValue, 'records', recordKey);
+            return itemMatchesCatalogIdentity(item, record) ? 'existing' : 'changed';
+          }
+          const [canonicalValues, hashValues] = await Promise.all([
+            records.index('by-canonical-url').getAll(item.canonicalUrl, 2),
+            records.index('by-content-hash').getAll(item.contentHash, 2),
+          ]);
+          const canonicalMatches = canonicalValues.map((value, index) =>
+            parsePersistedRow(SyncRecordSchema, value, 'records', `canonical-${index}`),
+          );
+          const hashMatches = hashValues.map((value, index) =>
+            parsePersistedRow(SyncRecordSchema, value, 'records', `hash-${index}`),
+          );
+          if (canonicalMatches.length > 1 || hashMatches.length > 1) {
+            return 'error';
+          }
+          const canonicalMatch = canonicalMatches[0];
+          const hashMatch = hashMatches[0];
+          if (
+            canonicalMatch?.key === recordKey ||
+            hashMatch?.key === recordKey ||
+            (canonicalMatch && hashMatch && canonicalMatch.key !== hashMatch.key)
+          ) {
+            return 'error';
+          }
+          if (canonicalMatch || hashMatch) {
+            return 'incomplete';
+          }
+          return item.completeness === 'complete' || item.completeness === 'summary_only'
+            ? 'new'
+            : 'incomplete';
+        };
+
+        let insertedCandidates = 0;
+        let replayedCandidates = 0;
+        let catalogExistingObservations = 0;
+        let pendingReviewCount = job.summary.pendingReviewCount;
+        let unreviewedCount = job.summary.unreviewedCount;
+        let consecutiveKnownIds = previousCheckpoint?.consecutiveKnownIds ?? 0;
+        const classifications: ClassifyAndPersistScanBatchResult['classifications'] = [];
+        const rowsToWrite: SyncJobItemRow[] = [];
+
+        for (const { item, bytes } of observations) {
+          if (item.source !== job.source) {
+            throw new SyncStoreConflictError('SocialItem source does not match the job source');
+          }
+          if (item.media.length > job.budgets.maxMediaPerItem || bytes > job.budgets.maxItemBytes) {
+            throw new SyncStoreConflictError('SocialItem exceeds the persisted job budget');
+          }
+          const replay = rowsBySourceItemId.get(item.sourceItemId);
+          if (replay) {
+            if (!sameStableSocialItem(replay.item, item)) {
+              throw new SyncStoreConflictError(
+                'A replayed source item conflicts with the persisted job item',
+              );
+            }
+            let classification = replay.classification;
+            if (classification === 'pending') {
+              classification = await classify(item);
+              pendingReviewCount -= 1;
+              if (classification === 'existing') {
+                catalogExistingObservations += 1;
+              } else {
+                candidateCount += 1;
+                classificationErrorCount += classification === 'error' ? 1 : 0;
+              }
+              const classifiedReplay = SyncJobItemRowSchema.parse({
+                ...replay,
+                classification,
+                updatedAt,
+              });
+              rowsToWrite.push(classifiedReplay);
+              rowsBySourceItemId.set(item.sourceItemId, classifiedReplay);
+            }
+            replayedCandidates += 1;
+            consecutiveKnownIds = 0;
+            classifications.push({ sourceItemId: item.sourceItemId, classification });
+            continue;
+          }
+
+          const classification = await classify(item);
+          classifications.push({ sourceItemId: item.sourceItemId, classification });
+          if (classification === 'existing') {
+            catalogExistingObservations += 1;
+            consecutiveKnownIds = Math.min(KNOWN_FRONTIER_LIMIT, consecutiveKnownIds + 1);
+            continue;
+          }
+          candidateCount += 1;
+          classificationErrorCount += classification === 'error' ? 1 : 0;
+          insertedCandidates += 1;
+          unreviewedCount += 1;
+          consecutiveKnownIds = 0;
+          const row = SyncJobItemRowSchema.parse({
+            key: makeSyncJobItemKey(id, item.sourceItemId),
+            schemaVersion: SYNC_SCHEMA_VERSION,
+            jobId: id,
+            sourceItemId: item.sourceItemId,
+            item,
+            classification,
+            reviewDecision: 'unreviewed',
+            reviewRevision: 0,
+            writeStatus: 'not_requested',
+            discoveredAt: updatedAt,
+            updatedAt,
+          });
+          rowsToWrite.push(row);
+          rowsBySourceItemId.set(item.sourceItemId, row);
+        }
+
+        const scannedCount = (previousCheckpoint?.scannedCount ?? 0) + observations.length;
+        const acceptedCount = (previousCheckpoint?.acceptedCount ?? 0) + observations.length;
+        const acceptedBytes = (previousCheckpoint?.acceptedBytes ?? 0) + batchBytes;
+        const catalogExistingObservationCount =
+          (previousCheckpoint?.catalogExistingObservationCount ?? 0) + catalogExistingObservations;
+        if (
+          candidateCount > job.budgets.maxItems ||
+          acceptedBytes > SYNC_LIMITS.maxAcceptedBytesPerJob ||
+          scannedCount > 1_000_000 ||
+          acceptedCount > 1_000_000 ||
+          candidateCount !==
+            [...rowsBySourceItemId.values()].filter((row) =>
+              ['new', 'changed', 'incomplete', 'error'].includes(row.classification),
+            ).length ||
+          classificationErrorCount !==
+            [...rowsBySourceItemId.values()].filter((row) => row.classification === 'error').length
+        ) {
+          throw new SyncStoreConflictError('The scan batch would violate a persisted budget');
+        }
+        const checkpoint = SyncCheckpointSchema.parse({
+          schemaVersion: SYNC_SCHEMA_VERSION,
+          contractVersion: SYNC_JOB_CONTRACT_VERSION,
+          adapterVersion: job.adapterVersion,
+          scanRevision: job.scanRevision,
+          scannedCount,
+          acceptedCount,
+          acceptedBytes,
+          candidateCount,
+          classificationErrorCount,
+          catalogExistingObservationCount,
+          consecutiveKnownIds,
+          ...(previousCheckpoint?.cursor === undefined
+            ? {}
+            : { cursor: previousCheckpoint.cursor }),
+          updatedAt,
+        });
+        const nextJob = SyncJobRowSchema.parse({
+          ...job,
+          updatedAt,
+          checkpoint,
+          summary: {
+            ...job.summary,
+            scannedCount,
+            uniqueItemCount: rowsBySourceItemId.size,
+            pendingReviewCount,
+            classificationErrorCount,
+            unreviewedCount,
+          },
+        });
+        await Promise.all([...rowsToWrite.map((row) => items.put(row)), jobs.put(nextJob)]);
+        return {
+          insertedCandidates,
+          replayedCandidates,
+          catalogExistingObservations,
+          classifications,
+          job: publicJob(nextJob),
+        };
+      },
+      guard,
     );
   }
 
@@ -2250,7 +3599,7 @@ export class SyncStore {
       }
       return { item: parsed, bytes };
     });
-    const checkpoint = SyncCheckpointSchema.parse(checkpointInput);
+    const requestedCheckpoint = parseOperationCheckpoint(checkpointInput);
 
     return writeTransaction(this.database, ['jobs', 'items'] as const, async (transaction) => {
       const jobs = transaction.objectStore('jobs');
@@ -2265,17 +3614,17 @@ export class SyncStore {
       }
       if (
         job.scanRevision !== expectedScanRevision ||
-        checkpoint.scanRevision !== expectedScanRevision
+        requestedCheckpoint.scanRevision !== expectedScanRevision
       ) {
         throw new SyncStoreConflictError('Scan revision is stale');
       }
-      if (checkpoint.adapterVersion !== job.adapterVersion) {
+      if (requestedCheckpoint.adapterVersion !== job.adapterVersion) {
         throw new SyncStoreConflictError('Checkpoint adapterVersion does not match the job');
       }
       if (
-        Date.parse(checkpoint.updatedAt) < Date.parse(job.updatedAt) ||
-        checkpoint.scannedCount < job.summary.scannedCount ||
-        checkpoint.acceptedCount < (job.checkpoint?.acceptedCount ?? 0)
+        Date.parse(requestedCheckpoint.updatedAt) < Date.parse(job.updatedAt) ||
+        requestedCheckpoint.scannedCount < job.summary.scannedCount ||
+        requestedCheckpoint.acceptedCount < (job.checkpoint?.acceptedCount ?? 0)
       ) {
         throw new SyncStoreConflictError('Checkpoint progress must be monotonic');
       }
@@ -2317,8 +3666,8 @@ export class SyncStore {
           reviewDecision: 'unreviewed',
           reviewRevision: 0,
           writeStatus: 'not_requested',
-          discoveredAt: checkpoint.updatedAt,
-          updatedAt: checkpoint.updatedAt,
+          discoveredAt: requestedCheckpoint.updatedAt,
+          updatedAt: requestedCheckpoint.updatedAt,
         });
         await itemStore.add(row);
         inserted += 1;
@@ -2328,19 +3677,30 @@ export class SyncStore {
       const uniqueItemCount = job.summary.uniqueItemCount + inserted;
       if (
         uniqueItemCount > job.budgets.maxItems ||
-        checkpoint.acceptedCount < uniqueItemCount ||
-        checkpoint.scannedCount < uniqueItemCount
+        requestedCheckpoint.acceptedCount < uniqueItemCount ||
+        requestedCheckpoint.scannedCount < uniqueItemCount
       ) {
         throw new SyncStoreConflictError('Checkpoint counts do not cover persisted unique items');
       }
-      if (checkpoint.acceptedBytes < (job.checkpoint?.acceptedBytes ?? 0) + insertedBytes) {
+      if (
+        requestedCheckpoint.acceptedBytes <
+        (job.checkpoint?.acceptedBytes ?? 0) + insertedBytes
+      ) {
         throw new SyncStoreConflictError(
           'Checkpoint accepted bytes must cover newly persisted unique items',
         );
       }
+      const checkpoint = SyncCheckpointSchema.parse({
+        ...requestedCheckpoint,
+        contractVersion: SYNC_JOB_CONTRACT_VERSION,
+        candidateCount: job.checkpoint?.candidateCount ?? 0,
+        classificationErrorCount: job.summary.classificationErrorCount,
+        catalogExistingObservationCount: job.checkpoint?.catalogExistingObservationCount ?? 0,
+        consecutiveKnownIds: 0,
+      });
       const nextJob = SyncJobRowSchema.parse({
         ...job,
-        updatedAt: checkpoint.updatedAt,
+        updatedAt: requestedCheckpoint.updatedAt,
         checkpoint,
         summary: {
           ...job.summary,
@@ -2457,9 +3817,27 @@ export class SyncStore {
         classification,
         updatedAt,
       });
+      if (!job.checkpoint) {
+        throw new CorruptSyncRowError(
+          'jobs',
+          id,
+          new Error('A persisted item classification requires a checkpoint'),
+        );
+      }
+      const checkpoint = SyncCheckpointSchema.parse({
+        ...job.checkpoint,
+        candidateCount: job.checkpoint.candidateCount + (classification === 'existing' ? 0 : 1),
+        classificationErrorCount:
+          job.checkpoint.classificationErrorCount + (classification === 'error' ? 1 : 0),
+        catalogExistingObservationCount:
+          job.checkpoint.catalogExistingObservationCount + (classification === 'existing' ? 1 : 0),
+        consecutiveKnownIds: 0,
+        updatedAt,
+      });
       const nextJob = SyncJobRowSchema.parse({
         ...job,
         updatedAt,
+        checkpoint,
         summary: {
           ...job.summary,
           pendingReviewCount: job.summary.pendingReviewCount - 1,
@@ -2954,11 +4332,37 @@ export async function openSyncStore(options: OpenSyncStoreOptions = {}): Promise
   }
 
   let rawDatabase: IDBDatabase | undefined;
+  let upgraded = false;
   try {
-    rawDatabase = await openRawDatabase(factory, dbName, options.onBlocked);
+    const opened = await openRawDatabase(factory, dbName, options.onBlocked);
+    rawDatabase = opened.database;
+    upgraded = opened.upgradedFrom !== undefined;
+    if (upgraded) {
+      rawDatabase.close();
+      rawDatabase = undefined;
+      const reopened = await openRawDatabase(factory, dbName, options.onBlocked);
+      if (reopened.upgradedFrom !== undefined) {
+        reopened.database.close();
+        throw new SyncStoreMigrationError(
+          'DB3_REOPEN_VALIDATION_FAILED',
+          'DB3 unexpectedly attempted another upgrade during reopen validation',
+        );
+      }
+      rawDatabase = reopened.database;
+    }
     assertDatabaseLayout(rawDatabase);
   } catch (error) {
     rawDatabase?.close();
+    if (
+      upgraded &&
+      !(error instanceof SyncStoreMigrationError && error.code === 'DB3_REOPEN_VALIDATION_FAILED')
+    ) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 layout validation failed after the upgrade committed',
+        { cause: error },
+      );
+    }
     if (error instanceof SyncStoreError) {
       throw error;
     }
@@ -2972,6 +4376,13 @@ export async function openSyncStore(options: OpenSyncStoreOptions = {}): Promise
     database = wrap(rawDatabase) as IDBPDatabase<SyncDatabase>;
   } catch (error) {
     rawDatabase.close();
+    if (upgraded) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 could not be wrapped after the upgrade committed',
+        { cause: error },
+      );
+    }
     throw new SyncStoreOpenError('open_failed', 'idb could not wrap the sync database', {
       cause: error,
     });
@@ -3001,18 +4412,16 @@ export async function openSyncStore(options: OpenSyncStoreOptions = {}): Promise
     }
   });
   try {
-    const metaRows = await readTransaction(database, ['meta'] as const, async (transaction) =>
-      transaction.objectStore('meta').getAll(),
-    );
-    if (metaRows.length !== 1) {
-      throw new SyncStoreMigrationError(
-        'invalid_database_layout',
-        'Sync database schema metadata is incomplete or ambiguous',
-      );
-    }
-    parsePersistedRow(SyncMetaSchema, metaRows[0], 'meta', 'schema');
+    await validateSyncDatabaseOnOpen(database, upgraded);
   } catch (error) {
     store.close();
+    if (upgraded) {
+      throw new SyncStoreMigrationError(
+        'DB3_REOPEN_VALIDATION_FAILED',
+        'DB3 metadata validation failed after the upgrade committed',
+        { cause: error },
+      );
+    }
     if (error instanceof SyncStoreError) {
       throw error;
     }

@@ -388,31 +388,47 @@ describe('X bookmarks typed signals and immutable budgets', () => {
     });
 
     expect(clamped).toEqual(X_BOOKMARKS_CEILINGS);
-    expect(noEnd.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'accepted_items' });
+    expect(noEnd.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'candidate_items' });
     expect(noEnd.items).toHaveLength(50);
-    expect(overLimit.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'accepted_items' });
+    expect(overLimit.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'candidate_items' });
     expect(overLimit.items).toHaveLength(50);
-    expect(lowered.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'accepted_items' });
+    expect(lowered.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'candidate_items' });
     expect(lowered.items).toHaveLength(2);
   });
 
-  it('lets the coordinator deduplicate top-rescan observations before applying the job item cap', async () => {
+  it('bounds one raw batch by remaining candidate slots without guessing catalog identity', async () => {
     const replayBatch = await adapt(createXBookmarksFixtureObservation(10), {
       ...FIXTURE_CAPTURE_OPTIONS,
-      acceptedItemsBefore: 26,
+      remainingCandidateSlots: 24,
     });
     const alreadyFull = await adapt(createXBookmarksFixtureObservation(1), {
       ...FIXTURE_CAPTURE_OPTIONS,
-      acceptedItemsBefore: X_BOOKMARKS_CEILINGS.maxItems,
+      remainingCandidateSlots: 0,
     });
 
     expect(replayBatch.signal).toEqual({ kind: 'terminal' });
     expect(replayBatch.items).toHaveLength(10);
     expect(alreadyFull.signal).toMatchObject({
       kind: 'budget_exceeded',
-      budget: 'accepted_items',
+      budget: 'candidate_items',
     });
     expect(alreadyFull.items).toEqual([]);
+  });
+
+  it('allows a later batch to reuse candidate slots after catalog-existing observations', async () => {
+    const first = await adapt(createXBookmarksFixtureObservation(3, { kind: 'items' }), {
+      ...FIXTURE_CAPTURE_OPTIONS,
+      remainingCandidateSlots: 3,
+    });
+    const second = await adapt(createXBookmarksFixtureObservation(3, { kind: 'terminal' }), {
+      ...FIXTURE_CAPTURE_OPTIONS,
+      remainingCandidateSlots: 3,
+    });
+
+    expect(first.items).toHaveLength(3);
+    expect(first.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'candidate_items' });
+    expect(second.items).toHaveLength(3);
+    expect(second.signal).toEqual({ kind: 'terminal' });
   });
 
   it('enforces observed-node, elapsed-time and cumulative-byte ceilings', async () => {

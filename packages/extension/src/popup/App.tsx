@@ -57,6 +57,15 @@ import {
 } from '../utils/onboarding.js';
 import { toStructuredError, type StructuredError } from '../utils/error-messages.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
+import type { SyncJob } from '../social/sync-schema.js';
+import { openSyncStore } from '../social/sync-store.js';
+import {
+  X_SYNC_BOOKMARKS_URL,
+  X_SYNC_PROTOCOL,
+  parseXSyncUiResponse,
+  type XSyncUiRequest,
+  type XSyncUiResponse,
+} from '../social/x-sync-messages.js';
 import {
   addActivityEntry,
   summarizeHealthDelete,
@@ -70,6 +79,8 @@ import type { CurrentTabInfo, InlineSaveSource } from './pages/InlineSavePanel.j
 import { OnboardingChecklist } from './pages/OnboardingChecklist.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
+import XSyncPage from './pages/XSyncPage.js';
+import { formatXSyncShortStatus } from './pages/x-sync-ui-model.js';
 
 type Surface = 'popup' | 'sidepanel';
 type PageName = 'home' | 'organize' | 'health' | 'collection' | 'activity' | 'settings';
@@ -310,6 +321,53 @@ async function openSidePanel(): Promise<void> {
 
   const windowId = await getCurrentWindowId();
   await chrome.sidePanel.open({ windowId });
+}
+
+function isExactXBookmarksPage(tab: CurrentTabInfo | undefined): boolean {
+  return tab?.url === X_SYNC_BOOKMARKS_URL;
+}
+
+function isActiveXSyncJob(job: SyncJob | undefined): boolean {
+  return Boolean(
+    job &&
+      ['prepared', 'scanning', 'paused', 'ready_for_review', 'writing', 'partial'].includes(
+        job.status,
+      ),
+  );
+}
+
+async function readXSyncJob(activeOnly: boolean): Promise<SyncJob | undefined> {
+  const store = await openSyncStore();
+  try {
+    if (activeOnly) {
+      return await store.getActiveJob('x');
+    }
+    return (await store.listJobs({ source: 'x', limit: 1 }))[0];
+  } finally {
+    store.close();
+  }
+}
+
+function sendXSyncPopupMessage(request: XSyncUiRequest): Promise<XSyncUiResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(request, (rawResponse: unknown) => {
+      const runtimeError = chrome.runtime.lastError?.message;
+      if (runtimeError) {
+        reject(new Error('无法建立 X 同步任务'));
+        return;
+      }
+      try {
+        const response = parseXSyncUiResponse(rawResponse);
+        if (!response.ok) {
+          reject(new Error('当前 X 收藏页无法启动同步'));
+          return;
+        }
+        resolve(response);
+      } catch {
+        reject(new Error('X 同步后台返回了无法验证的响应'));
+      }
+    });
+  });
 }
 
 function requestHealthCheckPermission(): Promise<boolean> {
@@ -675,6 +733,76 @@ function PopupLauncher({
   );
 }
 
+interface XSyncPopupLauncherProps {
+  lastJob?: SyncJob;
+  opening: boolean;
+  ready: boolean;
+  onOpen(): void;
+  onOpenSettings(): void;
+}
+
+function XSyncPopupLauncher({
+  lastJob,
+  opening,
+  ready,
+  onOpen,
+  onOpenSettings,
+}: XSyncPopupLauncherProps) {
+  const continuing = isActiveXSyncJob(lastJob);
+
+  return (
+    <main className="flex min-h-[380px] flex-col bg-background p-4 text-foreground">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandMark />
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold tracking-tight">
+              <TitleWithSerifTail>ShuHai</TitleWithSerifTail>
+            </h1>
+            <p className="mt-1 text-xs text-muted-foreground">X 收藏同步</p>
+          </div>
+        </div>
+        <Button
+          aria-label="打开设置"
+          onClick={onOpenSettings}
+          size="icon"
+          title="设置"
+          variant="ghost"
+        >
+          <SettingsIcon className="h-4 w-4" />
+        </Button>
+      </header>
+
+      <Separator className="my-4" />
+
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-base font-semibold">
+            {continuing ? '继续上次 X 同步任务' : '同步新增收藏'}
+          </h2>
+          <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
+            打开侧边栏后检查新增收藏。扫描受固定预算限制，复核前不会写入 Vault。
+          </p>
+        </div>
+
+        <div className="rounded-md border border-border bg-muted/40 p-3 text-[13px]">
+          <span className="text-muted-foreground">上次任务</span>
+          <p className="mt-1 font-medium">{formatXSyncShortStatus(lastJob)}</p>
+        </div>
+
+        <Button className="h-10 w-full" disabled={!ready} loading={opening} onClick={onOpen}>
+          <PanelRightOpen className="h-4 w-4" />
+          {continuing ? '打开同步任务' : '同步新增收藏'}
+        </Button>
+      </div>
+
+      <p className="mt-auto pt-5 text-xs leading-5 text-muted-foreground">
+        只处理当前 X 收藏页；不会读取 Cookie、token、其它标签页，也不会自动重试平台限制。
+      </p>
+    </main>
+  );
+}
+
 interface ProgressPanelProps {
   progress?: ClassificationProgress;
   onCancel(): void;
@@ -733,6 +861,11 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [currentTabInfo, setCurrentTabInfo] = useState<CurrentTabInfo | undefined>();
   const [focusedCaptureId, setFocusedCaptureId] = useState('');
   const [lastAppliedMoveCount, setLastAppliedMoveCount] = useState(0);
+  const [contextResolved, setContextResolved] = useState(false);
+  const [xSyncRoute, setXSyncRoute] = useState(false);
+  const [xSyncWindowId, setXSyncWindowId] = useState<number>();
+  const [xSyncLastJob, setXSyncLastJob] = useState<SyncJob>();
+  const [xSyncOpening, setXSyncOpening] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const healthPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const previousPendingCaptureCountRef = useRef<number | undefined>(undefined);
@@ -829,24 +962,59 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   useEffect(() => {
-    if (surface === 'sidepanel') {
-      void loadState();
-    } else {
-      void loadSummary();
-    }
-    void getActiveTabInfo().then(setCurrentTabInfo);
-  }, []);
+    let disposed = false;
+    void (async () => {
+      const tab = await getActiveTabInfo();
+      if (disposed) return;
+      setCurrentTabInfo(tab);
+      const exactXBookmarks = isExactXBookmarksPage(tab);
 
-  useEffect(() => {
-    void takePreferredPage().then((preferredPage) => {
-      if (preferredPage) {
-        setPage(preferredPage);
+      if (surface === 'popup' && exactXBookmarks) {
+        const [windowId, lastJob] = await Promise.all([
+          getCurrentWindowId().catch(() => undefined),
+          readXSyncJob(false).catch(() => undefined),
+        ]);
+        if (disposed) return;
+        setXSyncWindowId(windowId);
+        setXSyncLastJob(lastJob);
+        setXSyncRoute(true);
+        setBusyAction(undefined);
+        setContextResolved(true);
+        return;
       }
+
+      if (surface === 'sidepanel') {
+        const activeJob = await readXSyncJob(true).catch(() => undefined);
+        if (disposed) return;
+        if (activeJob || exactXBookmarks) {
+          setXSyncLastJob(activeJob);
+          setXSyncRoute(true);
+          setBusyAction(undefined);
+          setContextResolved(true);
+          return;
+        }
+        const preferredPage = await takePreferredPage();
+        if (disposed) return;
+        if (preferredPage) setPage(preferredPage);
+        await loadState();
+      } else {
+        await loadSummary();
+      }
+      if (!disposed) setContextResolved(true);
+    })().catch((error) => {
+      if (disposed) return;
+      showError(error);
+      setBusyAction(undefined);
+      setContextResolved(true);
     });
+
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!chrome.storage?.onChanged) {
+    if (!chrome.storage?.onChanged || xSyncRoute) {
       return undefined;
     }
 
@@ -876,7 +1044,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
-  }, [forcePopupWorkspace, surface]);
+  }, [forcePopupWorkspace, surface, xSyncRoute]);
 
   useEffect(() => {
     const pendingCount = state?.pendingCaptures?.length ?? 0;
@@ -1346,6 +1514,44 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const handleOpenXSync = () => {
+    if (!chrome.sidePanel?.open || xSyncWindowId === undefined) {
+      showError(new Error('当前窗口无法打开 X 同步侧边栏'));
+      return;
+    }
+
+    let panelPromise: Promise<void>;
+    try {
+      // This call must stay first in the click handler so Chrome preserves the user gesture.
+      panelPromise = chrome.sidePanel.open({ windowId: xSyncWindowId });
+    } catch (error) {
+      showError(error);
+      return;
+    }
+
+    setXSyncOpening(true);
+    const launchPromise = isActiveXSyncJob(xSyncLastJob)
+      ? Promise.resolve()
+      : (() => {
+          const randomId = globalThis.crypto?.randomUUID?.();
+          if (!randomId) return Promise.reject(new Error('无法创建安全的同步请求'));
+          return sendXSyncPopupMessage({
+            protocol: X_SYNC_PROTOCOL,
+            type: 'launch',
+            requestId: `popup-${randomId}`,
+          }).then(() => undefined);
+        })();
+
+    void Promise.all([panelPromise, launchPromise])
+      .catch(showError)
+      .finally(() => setXSyncOpening(false));
+  };
+
+  const handleOpenSettingsFromX = () => {
+    setXSyncRoute(false);
+    usePopupWorkspace('settings');
+  };
+
   const quickClassifyFromPopup = () => {
     usePopupWorkspace('organize');
     setOrganizeMode('plan');
@@ -1437,6 +1643,51 @@ function AppContent({ surface = 'popup' }: AppProps) {
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
   }, [busy, busyAction, confirmApplyOpen, organizeMode, page, plan, selectedCount, showWorkspace]);
+
+  if (!contextResolved) {
+    return (
+      <main
+        className={`flex ${workspaceClass} items-center justify-center bg-background text-foreground`}
+      >
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在识别当前任务
+        </div>
+      </main>
+    );
+  }
+
+  if (xSyncRoute && surface === 'popup') {
+    return (
+      <XSyncPopupLauncher
+        lastJob={xSyncLastJob}
+        onOpen={handleOpenXSync}
+        onOpenSettings={handleOpenSettingsFromX}
+        opening={xSyncOpening}
+        ready={xSyncWindowId !== undefined && !xSyncOpening}
+      />
+    );
+  }
+
+  if (xSyncRoute && surface === 'sidepanel') {
+    return (
+      <main className="flex h-screen flex-col bg-background text-foreground">
+        <header className="px-3 py-3">
+          <div className="flex items-center gap-2">
+            <BrandMark />
+            <div>
+              <h1 className="text-base font-semibold tracking-tight">X 收藏同步</h1>
+              <p className="mt-0.5 text-xs text-muted-foreground">当前任务工作台</p>
+            </div>
+          </div>
+          <Separator className="mt-3" />
+        </header>
+        <div className="min-h-0 flex-1 px-3 pt-2">
+          <XSyncPage />
+        </div>
+      </main>
+    );
+  }
 
   if (!showWorkspace) {
     return (

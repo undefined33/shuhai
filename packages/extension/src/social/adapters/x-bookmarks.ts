@@ -26,6 +26,7 @@ export const X_BOOKMARKS_ADAPTER_VERSION = 1 as const;
 export interface XBookmarksLimits {
   readonly maxItems: number;
   readonly maxBatches: number;
+  readonly maxScrollActions: number;
   readonly maxObservedNodes: number;
   readonly maxElapsedMs: number;
   readonly maxTextBytes: number;
@@ -38,6 +39,7 @@ export interface XBookmarksLimits {
 export const X_BOOKMARKS_CEILINGS: Readonly<XBookmarksLimits> = Object.freeze({
   maxItems: 50,
   maxBatches: 20,
+  maxScrollActions: 20,
   maxObservedNodes: 200,
   maxElapsedMs: 15_000,
   maxTextBytes: 8 * 1_024,
@@ -87,9 +89,16 @@ export interface XBookmarksDomReadPort {
   readEntry(index: number): unknown;
 }
 
+export interface XBookmarksDomObservation {
+  readonly pageUrl: string;
+  readonly signal: XBookmarksDomSignal;
+  readonly observedNodeCount: number;
+  readonly entries: readonly XBookmarkDomEntryObservation[];
+}
+
 export interface XBookmarksAdapterOptions {
   readonly capturedAt?: string;
-  readonly acceptedItemsBefore?: number;
+  readonly remainingCandidateSlots?: number;
   readonly acceptedBytesBefore?: number;
   readonly limits?: Partial<XBookmarksLimits>;
   readonly now?: () => number;
@@ -699,7 +708,8 @@ export function resolveXBookmarksLimits(candidate: unknown): Readonly<XBookmarks
       continue;
     }
     const value = record[key];
-    if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    const minimum = key === 'maxMedia' ? 0 : 1;
+    if (!Number.isSafeInteger(value) || (value as number) < minimum) {
       return null;
     }
     resolved[key] = Math.min(value as number, X_BOOKMARKS_CEILINGS[key]);
@@ -740,13 +750,13 @@ export async function adaptXBookmarksDom(
   }
 
   const limits = resolveXBookmarksLimits(options.limits);
-  const acceptedItemsBefore = options.acceptedItemsBefore ?? 0;
+  const remainingCandidateSlots = options.remainingCandidateSlots ?? limits?.maxItems ?? 0;
   const acceptedBytesBefore = options.acceptedBytesBefore ?? 0;
   if (
     !limits ||
-    !Number.isSafeInteger(acceptedItemsBefore) ||
-    acceptedItemsBefore < 0 ||
-    acceptedItemsBefore > X_BOOKMARKS_CEILINGS.maxItems ||
+    !Number.isSafeInteger(remainingCandidateSlots) ||
+    remainingCandidateSlots < 0 ||
+    remainingCandidateSlots > X_BOOKMARKS_CEILINGS.maxItems ||
     !Number.isSafeInteger(acceptedBytesBefore) ||
     acceptedBytesBefore < 0 ||
     acceptedBytesBefore > X_BOOKMARKS_CEILINGS.maxTotalBytes
@@ -766,8 +776,8 @@ export async function adaptXBookmarksDom(
       baseMetrics({ elapsedMs: elapsedBeforeRead }),
     );
   }
-  if (acceptedItemsBefore >= limits.maxItems) {
-    return budgetExceeded(capability, 'accepted_items', [], baseMetrics());
+  if (remainingCandidateSlots === 0) {
+    return budgetExceeded(capability, 'candidate_items', [], baseMetrics());
   }
   if (acceptedBytesBefore > limits.maxTotalBytes) {
     return budgetExceeded(capability, 'accepted_bytes', [], baseMetrics());
@@ -912,10 +922,11 @@ export async function adaptXBookmarksDom(
     }
     // Only the coordinator can distinguish a replayed identity from a newly accepted item.
     // Keep this adapter bound to one batch; the persisted job ceiling is enforced after dedupe.
-    if (items.length >= limits.maxItems) {
+    const batchItemLimit = Math.min(limits.maxItems, remainingCandidateSlots);
+    if (items.length >= batchItemLimit) {
       return budgetExceeded(
         capability,
-        'accepted_items',
+        'candidate_items',
         items,
         baseMetrics({
           observedNodes: safeObservedNodes,
@@ -959,10 +970,32 @@ export async function adaptXBookmarksDom(
   if (finalElapsedMs >= limits.maxElapsedMs) {
     return budgetExceeded(capability, 'elapsed_time', items, metrics);
   }
-  if (items.length >= limits.maxItems && signal.kind !== 'terminal') {
-    return budgetExceeded(capability, 'accepted_items', items, metrics);
+  if (
+    items.length >= Math.min(limits.maxItems, remainingCandidateSlots) &&
+    signal.kind !== 'terminal'
+  ) {
+    return budgetExceeded(capability, 'candidate_items', items, metrics);
   }
   return result(capability, { kind: signal.kind }, items, metrics);
+}
+
+export function createXBookmarksDomReadPort(
+  observation: XBookmarksDomObservation,
+): XBookmarksDomReadPort {
+  return {
+    readPageUrl: () => observation.pageUrl,
+    readSignal: () => observation.signal,
+    readObservedNodeCount: () => observation.observedNodeCount,
+    readEntryCount: () => observation.entries.length,
+    readEntry: (index) => observation.entries[index],
+  };
+}
+
+export async function adaptXBookmarksObservation(
+  observation: XBookmarksDomObservation,
+  options: XBookmarksAdapterOptions = {},
+): Promise<AdapterBatchResult> {
+  return adaptXBookmarksDom(createXBookmarksDomReadPort(observation), options);
 }
 
 export const xBookmarksAdapter = Object.freeze({

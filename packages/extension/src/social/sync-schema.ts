@@ -10,6 +10,7 @@ const X_SOURCE_ITEM_ID_PATTERN = /^\d{1,19}$/u;
 const WEIBO_SOURCE_ITEM_ID_PATTERN = /^[A-Za-z0-9]{6,32}$/u;
 
 export const SYNC_SCHEMA_VERSION = 1 as const;
+export const SYNC_JOB_CONTRACT_VERSION = 2 as const;
 
 export const SYNC_LIMITS = {
   sourceItemIdBytes: 256,
@@ -85,6 +86,9 @@ function inspectStructuredInput(
     if (value === null) {
       bytes += 4;
     } else if (typeof value === 'string') {
+      if (value.length > limits.maxBytes - bytes) {
+        return { path: current.path, message: 'Structured input exceeds the byte limit' };
+      }
       bytes += utf8Bytes(value);
     } else if (typeof value === 'number') {
       if (!Number.isFinite(value)) {
@@ -117,8 +121,20 @@ function inspectStructuredInput(
         let length: number;
         try {
           prototype = Object.getPrototypeOf(value);
+          const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+          if (
+            !lengthDescriptor ||
+            !('value' in lengthDescriptor) ||
+            !Number.isSafeInteger(lengthDescriptor.value) ||
+            lengthDescriptor.value < 0
+          ) {
+            return { path: current.path, message: 'Array length is invalid' };
+          }
+          length = lengthDescriptor.value as number;
+          if (length > limits.maxNodes - nodes) {
+            return { path: current.path, message: 'Structured input has too many values' };
+          }
           keys = Object.keys(value);
-          length = (value as unknown[]).length;
         } catch {
           return { path: current.path, message: 'Array properties could not be inspected' };
         }
@@ -192,6 +208,12 @@ function inspectStructuredInput(
             return {
               path: [...current.path, key],
               message: 'Hidden and accessor properties are not allowed',
+            };
+          }
+          if (key.length > limits.maxBytes - bytes) {
+            return {
+              path: [...current.path, key],
+              message: 'Structured input exceeds the byte limit',
             };
           }
           bytes += utf8Bytes(key);
@@ -518,6 +540,7 @@ export const SyncJobStatusSchema = z.enum([
   'writing',
   'partial',
   'complete',
+  'complete_with_issues',
   'failed',
   'cancelled',
 ]);
@@ -532,6 +555,7 @@ export const SyncStopReasonSchema = z.enum([
   'tab_changed',
   'permission_revoked',
   'worker_interrupted',
+  'no_progress',
 ]);
 export type SyncStopReason = z.infer<typeof SyncStopReasonSchema>;
 
@@ -582,14 +606,29 @@ export const SyncBudgetsSchema = budgetedSchema(
 );
 export type SyncBudgets = z.infer<typeof SyncBudgetsSchema>;
 
+export const SyncScanModeSchema = z.enum(['incremental', 'backfill']);
+export type SyncScanMode = z.infer<typeof SyncScanModeSchema>;
+
+export const SyncScanCompletionSchema = z.enum([
+  'trusted_terminal',
+  'known_frontier',
+  'user_finalized_batch',
+  'legacy_migrated',
+]);
+export type SyncScanCompletion = z.infer<typeof SyncScanCompletionSchema>;
+
 const syncCheckpointObjectSchema = z
   .strictObject({
     schemaVersion: z.literal(SYNC_SCHEMA_VERSION),
+    contractVersion: z.literal(SYNC_JOB_CONTRACT_VERSION),
     adapterVersion: positiveVersionSchema,
     scanRevision: revisionSchema,
     scannedCount: countSchema,
     acceptedCount: countSchema,
     acceptedBytes: z.number().int().min(0).max(SYNC_LIMITS.maxAcceptedBytesPerJob),
+    candidateCount: countSchema,
+    classificationErrorCount: countSchema,
+    catalogExistingObservationCount: countSchema,
     consecutiveKnownIds: countSchema,
     cursor: boundedString(SYNC_LIMITS.cursorBytes, 1).refine(isSafeIdentifier).optional(),
     updatedAt: IsoTimestampSchema,
@@ -607,6 +646,34 @@ const syncCheckpointObjectSchema = z
         code: 'custom',
         path: ['consecutiveKnownIds'],
         message: 'consecutiveKnownIds cannot exceed scannedCount',
+      });
+    }
+    if (checkpoint.candidateCount > checkpoint.acceptedCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['candidateCount'],
+        message: 'candidateCount cannot exceed acceptedCount',
+      });
+    }
+    if (checkpoint.classificationErrorCount > checkpoint.candidateCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['classificationErrorCount'],
+        message: 'classificationErrorCount cannot exceed candidateCount',
+      });
+    }
+    if (checkpoint.catalogExistingObservationCount > checkpoint.acceptedCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['catalogExistingObservationCount'],
+        message: 'catalogExistingObservationCount cannot exceed acceptedCount',
+      });
+    }
+    if (checkpoint.consecutiveKnownIds > checkpoint.catalogExistingObservationCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['consecutiveKnownIds'],
+        message: 'consecutiveKnownIds must be backed by catalog-existing observations',
       });
     }
   });
@@ -696,9 +763,12 @@ export const EMPTY_SYNC_JOB_SUMMARY: Readonly<SyncJobSummary> = Object.freeze({
 
 const syncJobShape = {
   schemaVersion: z.literal(SYNC_SCHEMA_VERSION),
+  contractVersion: z.literal(SYNC_JOB_CONTRACT_VERSION),
   id: SyncJobIdSchema,
   source: SocialSourceSchema,
   status: SyncJobStatusSchema,
+  scanMode: SyncScanModeSchema,
+  scanCompletion: SyncScanCompletionSchema.optional(),
   adapterVersion: positiveVersionSchema,
   scanRevision: revisionSchema,
   reviewRevision: revisionSchema,
@@ -734,7 +804,22 @@ function validateSyncJob(
       message: 'writeAuthorizedAt must fall within the job lifetime',
     });
   }
-  const requiresWriteAuthorization = ['writing', 'partial', 'complete'].includes(job.status);
+  const writeOutcomeCount =
+    job.summary.createdCount +
+    job.summary.alreadyExistsCount +
+    job.summary.skippedCount +
+    job.summary.writeErrorCount;
+  const isNoWriteTerminal =
+    (job.status === 'complete' || job.status === 'complete_with_issues') &&
+    job.summary.selectedCount === 0 &&
+    job.summary.writePendingCount === 0 &&
+    writeOutcomeCount === 0 &&
+    job.writeAuthorizedAt === undefined &&
+    job.authorizedReviewRevision === undefined;
+  const requiresWriteAuthorization =
+    job.status === 'writing' ||
+    job.status === 'partial' ||
+    (job.status === 'complete' && !isNoWriteTerminal);
   if (
     requiresWriteAuthorization &&
     (!job.writeAuthorizedAt || job.authorizedReviewRevision === undefined)
@@ -746,7 +831,7 @@ function validateSyncJob(
     });
   }
   if (
-    ['prepared', 'scanning', 'ready_for_review'].includes(job.status) &&
+    ['prepared', 'scanning', 'ready_for_review', 'complete_with_issues'].includes(job.status) &&
     (job.writeAuthorizedAt !== undefined || job.authorizedReviewRevision !== undefined)
   ) {
     context.addIssue({
@@ -791,6 +876,28 @@ function validateSyncJob(
       code: 'custom',
       path: ['stopRecord'],
       message: 'Only paused jobs may retain a stop record',
+    });
+  }
+  const scanMustBeComplete =
+    ['ready_for_review', 'writing', 'partial', 'complete', 'complete_with_issues'].includes(
+      job.status,
+    ) ||
+    (job.status === 'paused' && job.stopRecord?.phase === 'writing');
+  if (scanMustBeComplete && job.scanCompletion === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['scanCompletion'],
+      message: 'Review and write states require a persisted scan completion reason',
+    });
+  }
+  if (
+    (job.status === 'prepared' || job.status === 'scanning') &&
+    job.scanCompletion !== undefined
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['scanCompletion'],
+      message: 'An active scan cannot claim a completion reason',
     });
   }
   if (job.stopRecord && job.stopRecord.scanRevision !== job.scanRevision) {
@@ -854,6 +961,20 @@ function validateSyncJob(
         message: 'Persisted unique items must be covered by the checkpoint',
       });
     }
+    if (job.checkpoint.candidateCount > job.summary.uniqueItemCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['checkpoint', 'candidateCount'],
+        message: 'Candidate count cannot exceed persisted unique items',
+      });
+    }
+    if (job.summary.classificationErrorCount !== job.checkpoint.classificationErrorCount) {
+      context.addIssue({
+        code: 'custom',
+        path: ['checkpoint', 'classificationErrorCount'],
+        message: 'Checkpoint and job classification error counts must match',
+      });
+    }
   } else if (job.summary.scannedCount !== 0 || job.summary.uniqueItemCount !== 0) {
     context.addIssue({
       code: 'custom',
@@ -884,6 +1005,37 @@ function validateSyncJob(
       code: 'custom',
       path: ['summary'],
       message: 'A complete job must account for every unique item',
+    });
+  }
+  if (isNoWriteTerminal) {
+    if (
+      job.summary.pendingReviewCount !== 0 ||
+      job.summary.unreviewedCount !== 0 ||
+      job.summary.excludedCount !== job.summary.uniqueItemCount ||
+      job.scanCompletion === undefined
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['summary'],
+        message: 'A no-write terminal job must exclude every persisted item',
+      });
+    }
+    if (job.status === 'complete' && job.summary.classificationErrorCount !== 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['summary', 'classificationErrorCount'],
+        message: 'No-write completion with classification errors must use complete_with_issues',
+      });
+    }
+  }
+  if (
+    job.status === 'complete_with_issues' &&
+    (!isNoWriteTerminal || job.summary.classificationErrorCount < 1)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['summary'],
+      message: 'complete_with_issues is reserved for no-write classification failures',
     });
   }
 }
@@ -1182,7 +1334,8 @@ export const SyncMetaSchema = budgetedSchema(
   z.strictObject({
     key: z.literal('schema'),
     schemaVersion: z.literal(SYNC_SCHEMA_VERSION),
-    databaseVersion: z.literal(2),
+    databaseVersion: z.literal(3),
+    validationState: z.enum(['pending', 'complete', 'failed']).optional(),
   }),
   persistedInputLimits,
 );

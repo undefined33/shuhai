@@ -191,14 +191,17 @@ export async function requestVaultAccess(): Promise<FileSystemDirectoryHandle> {
 export async function checkVaultPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
   const permissioned = handle as PermissionedDirectoryHandle;
   const descriptor = { mode: 'readwrite' as const };
-  const current = await permissioned.queryPermission(descriptor);
-
-  if (current === 'granted') {
+  if (await queryVaultPermission(handle)) {
     return true;
   }
 
   const requested = await permissioned.requestPermission(descriptor);
   return requested === 'granted';
+}
+
+export async function queryVaultPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  const permissioned = handle as PermissionedDirectoryHandle;
+  return (await permissioned.queryPermission({ mode: 'readwrite' })) === 'granted';
 }
 
 function moveByBookmarkId(moves: MovePlan[] = []): Map<string, MovePlan> {

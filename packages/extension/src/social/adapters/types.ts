@@ -10,12 +10,18 @@ export type AdapterCapability =
 
 export type AdapterChallenge = 'login_required' | 'captcha' | 'rate_limited';
 
-export type AdapterBudget = 'accepted_items' | 'accepted_bytes' | 'elapsed_time' | 'observed_nodes';
+export type AdapterBudget =
+  | 'candidate_items'
+  | 'accepted_bytes'
+  | 'elapsed_time'
+  | 'observed_nodes'
+  | 'scroll_actions';
 
 export type AdapterSignal =
   | { readonly kind: 'items' }
   | { readonly kind: 'empty' }
   | { readonly kind: 'terminal' }
+  | { readonly kind: 'no_progress'; readonly stopReason: 'no_progress' }
   | {
       readonly kind: 'challenge';
       readonly challenge: AdapterChallenge;

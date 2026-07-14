@@ -25,7 +25,7 @@ function timestamp(second: number): string {
   return `2026-07-13T00:00:${String(second).padStart(2, '0')}Z`;
 }
 
-function budgets(maxItems = SYNC_LIMITS.maxItemsPerJob) {
+function budgets(maxItems: number = SYNC_LIMITS.maxItemsPerJob) {
   return {
     maxItems,
     maxPages: 1_000,
@@ -73,11 +73,15 @@ function checkpoint(
 ): SyncCheckpoint {
   return {
     schemaVersion: 1,
+    contractVersion: 2,
     adapterVersion: 1,
     scanRevision: 1,
     scannedCount,
     acceptedCount: scannedCount,
     acceptedBytes: scannedCount * 1_024,
+    candidateCount: 0,
+    classificationErrorCount: 0,
+    catalogExistingObservationCount: 0,
     consecutiveKnownIds: 0,
     updatedAt,
     ...overrides,
@@ -196,7 +200,14 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function createLegacyV1Layout(database: IDBDatabase): void {
+function requestResult<Result>(request: IDBRequest<Result>): Promise<Result> {
+  return new Promise((resolve, reject) => {
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+  });
+}
+
+function createLegacyLayout(database: IDBDatabase, databaseVersion: 1 | 2): void {
   const jobs = database.createObjectStore('jobs', { keyPath: 'id' });
   jobs.createIndex('by-source', 'source');
   jobs.createIndex('by-status', 'status');
@@ -219,7 +230,15 @@ function createLegacyV1Layout(database: IDBDatabase): void {
   intents.createIndex('by-record-key', 'recordKey');
 
   const meta = database.createObjectStore('meta', { keyPath: 'key' });
-  meta.put({ key: 'schema', schemaVersion: 1, databaseVersion: 1 });
+  meta.put({ key: 'schema', schemaVersion: 1, databaseVersion });
+}
+
+function createLegacyV1Layout(database: IDBDatabase): void {
+  createLegacyLayout(database, 1);
+}
+
+function createLegacyV2Layout(database: IDBDatabase): void {
+  createLegacyLayout(database, 2);
 }
 
 async function seedLegacyV1Database(
@@ -228,6 +247,25 @@ async function seedLegacyV1Database(
   rows: Partial<Record<'jobs' | 'items' | 'records' | 'intents', readonly unknown[]>>,
 ): Promise<void> {
   const database = await openNativeDatabase(factory, dbName, 1, createLegacyV1Layout);
+  const storeNames = Object.keys(rows) as Array<'jobs' | 'items' | 'records' | 'intents'>;
+  if (storeNames.length > 0) {
+    const transaction = database.transaction(storeNames, 'readwrite');
+    for (const storeName of storeNames) {
+      for (const row of rows[storeName] ?? []) {
+        transaction.objectStore(storeName).put(row);
+      }
+    }
+    await transactionDone(transaction);
+  }
+  database.close();
+}
+
+async function seedLegacyV2Database(
+  factory: IDBFactory,
+  dbName: string,
+  rows: Partial<Record<'jobs' | 'items' | 'records' | 'intents', readonly unknown[]>>,
+): Promise<void> {
+  const database = await openNativeDatabase(factory, dbName, 2, createLegacyV2Layout);
   const storeNames = Object.keys(rows) as Array<'jobs' | 'items' | 'records' | 'intents'>;
   if (storeNames.length > 0) {
     const transaction = database.transaction(storeNames, 'readwrite');
@@ -298,6 +336,73 @@ function legacyItem(
   };
 }
 
+function legacyV2Job(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const job: Record<string, unknown> = {
+    schemaVersion: 1,
+    id: 'legacy-v2-job',
+    source: 'x',
+    status: 'scanning',
+    adapterVersion: 1,
+    scanRevision: 1,
+    reviewRevision: 0,
+    createdAt: timestamp(0),
+    updatedAt: timestamp(2),
+    checkpoint: {
+      schemaVersion: 1,
+      adapterVersion: 1,
+      scanRevision: 1,
+      scannedCount: 1,
+      acceptedCount: 1,
+      acceptedBytes: 1_024,
+      consecutiveKnownIds: 1,
+      updatedAt: timestamp(2),
+    },
+    budgets: budgets(50),
+    summary: {
+      scannedCount: 1,
+      uniqueItemCount: 1,
+      pendingReviewCount: 0,
+      classificationErrorCount: 0,
+      unreviewedCount: 1,
+      selectedCount: 0,
+      excludedCount: 0,
+      writePendingCount: 0,
+      createdCount: 0,
+      alreadyExistsCount: 0,
+      skippedCount: 0,
+      writeErrorCount: 0,
+    },
+    activeSource: 'x',
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete job[key];
+    }
+  }
+  return job;
+}
+
+function legacyV2Item(
+  item: SocialItem,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    key: `${'legacy-v2-job'.length}:legacy-v2-job:${item.sourceItemId}`,
+    schemaVersion: 1,
+    jobId: 'legacy-v2-job',
+    sourceItemId: item.sourceItemId,
+    item,
+    classification: 'new',
+    reviewDecision: 'unreviewed',
+    reviewRevision: 0,
+    writeStatus: 'not_requested',
+    discoveredAt: timestamp(2),
+    updatedAt: timestamp(2),
+    ...overrides,
+  };
+}
+
 function factoryWithBlockedOpen(factory: IDBFactory): IDBFactory {
   return new Proxy(factory, {
     get(target, property) {
@@ -321,15 +426,35 @@ function factoryWithBlockedOpen(factory: IDBFactory): IDBFactory {
   });
 }
 
+function factoryWithFailedReopen(factory: IDBFactory): IDBFactory {
+  let openCount = 0;
+  return new Proxy(factory, {
+    get(target, property) {
+      if (property === 'open') {
+        return (name: string, version?: number) => {
+          openCount += 1;
+          if (openCount === 2) {
+            throw new Error('synthetic reopen failure');
+          }
+          return target.open(name, version);
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 describe('SyncStore database and jobs', () => {
-  it('creates the isolated shuhai-sync schema v2 and exposes metadata', async () => {
+  it('creates the isolated shuhai-sync database v3 and exposes metadata', async () => {
     const factory = new IDBFactory();
     const store = await openSyncStore({ indexedDB: factory, dbName: 'sync-layout' });
 
     await expect(store.getMeta()).resolves.toEqual({
       key: 'schema',
       schemaVersion: 1,
-      databaseVersion: 2,
+      databaseVersion: 3,
+      validationState: 'complete',
     });
     await expect(store.listJobs()).resolves.toEqual([]);
     await expect(store.listRecords()).resolves.toEqual([]);
@@ -339,7 +464,7 @@ describe('SyncStore database and jobs', () => {
 
   it('fails closed for newer versions and malformed schema-v1 layouts', async () => {
     const newerFactory = new IDBFactory();
-    const newer = await openNativeDatabase(newerFactory, 'sync-newer', 3);
+    const newer = await openNativeDatabase(newerFactory, 'sync-newer', 4);
     newer.close();
     await expect(
       openSyncStore({ indexedDB: newerFactory, dbName: 'sync-newer' }),
@@ -368,7 +493,7 @@ describe('SyncStore database and jobs', () => {
         onBlocked: (event) => blockedEvents.push(event),
       }),
     ).rejects.toMatchObject({ code: 'open_blocked' });
-    expect(blockedEvents).toEqual([{ currentVersion: 1, requestedVersion: 2 }]);
+    expect(blockedEvents).toEqual([{ currentVersion: 1, requestedVersion: 3 }]);
   });
 
   it('closes the store on versionchange even when the observer throws', async () => {
@@ -384,7 +509,7 @@ describe('SyncStore database and jobs', () => {
       },
     });
 
-    const upgraded = await openNativeDatabase(factory, dbName, 3);
+    const upgraded = await openNativeDatabase(factory, dbName, 4);
     expect(observed).toBe(1);
     await expect(store.getMeta()).rejects.toMatchObject({ code: 'transaction_failed' });
     upgraded.close();
@@ -402,7 +527,7 @@ describe('SyncStore database and jobs', () => {
       createdAt: timestamp(0),
     });
 
-    const native = await openNativeDatabase(factory, dbName, 2);
+    const native = await openNativeDatabase(factory, dbName, 3);
     const transaction = native.transaction('jobs', 'readwrite');
     transaction.objectStore('jobs').put({
       id: 'job-corrupt',
@@ -474,7 +599,7 @@ describe('SyncStore database and jobs', () => {
 
     await store.createJob({ ...input, id: 'job-weibo-1', source: 'weibo' });
     await store.claimScanRevision('job-x-1', 0, timestamp(1));
-    await store.transitionJob('job-x-1', 'cancelled', timestamp(2));
+    await store.cancelJob('job-x-1', 1, 0, timestamp(2), { beforeCommit: () => true });
     await expect(store.createJob({ ...input, id: 'job-x-2' })).resolves.toMatchObject({
       id: 'job-x-2',
       status: 'prepared',
@@ -536,9 +661,66 @@ describe('SyncStore database and jobs', () => {
     });
     store.close();
   });
+
+  it('atomically replaces a previously selected review with an empty no-write completion', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-complete-no-write-after-selection',
+    });
+    await createScanningJob(store);
+    const item = socialItem(101);
+    await persistScanBatch(
+      store,
+      'job-1',
+      [item],
+      checkpoint(1, timestamp(2), { candidateCount: 1 }),
+    );
+    await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+    await store.finishScan('job-1', 1, timestamp(4));
+    await store.saveReviewSelection('job-1', 0, [item.sourceItemId], timestamp(5));
+
+    const completed = await store.completeReviewWithoutWrites('job-1', 1, timestamp(6));
+    const persisted = await store.getJobItem('job-1', item.sourceItemId);
+
+    expect(completed).toMatchObject({
+      status: 'complete',
+      reviewRevision: 2,
+      summary: { selectedCount: 0, excludedCount: 1, createdCount: 0 },
+    });
+    expect(persisted).toMatchObject({
+      reviewDecision: 'excluded',
+      reviewRevision: 2,
+      writeStatus: 'not_requested',
+    });
+    store.close();
+  });
+
+  it('completes a zero-candidate review without a synthetic selection save', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-complete-zero-candidate-review',
+    });
+    await createScanningJob(store);
+    await store.finishScan('job-1', 1, timestamp(2));
+
+    const completed = await store.completeReviewWithoutWrites('job-1', 0, timestamp(3));
+
+    expect(completed).toMatchObject({
+      status: 'complete',
+      reviewRevision: 1,
+      summary: {
+        uniqueItemCount: 0,
+        selectedCount: 0,
+        excludedCount: 0,
+        writePendingCount: 0,
+      },
+    });
+    expect(await store.listWriteIntents({ jobId: 'job-1' })).toEqual([]);
+    store.close();
+  });
 });
 
-describe('SyncStore v1 to v2 migration', () => {
+describe('SyncStore v1 to v3 migration', () => {
   it('migrates interrupted scanning data as unreviewed and explicitly paused', async () => {
     const factory = new IDBFactory();
     const dbName = 'sync-migrate-scanning';
@@ -552,10 +734,13 @@ describe('SyncStore v1 to v2 migration', () => {
     await expect(store.getMeta()).resolves.toEqual({
       key: 'schema',
       schemaVersion: 1,
-      databaseVersion: 2,
+      databaseVersion: 3,
+      validationState: 'complete',
     });
     await expect(store.getJob('legacy-job')).resolves.toMatchObject({
       status: 'paused',
+      contractVersion: 2,
+      scanMode: 'incremental',
       scanRevision: 0,
       reviewRevision: 0,
       stopRecord: {
@@ -563,7 +748,12 @@ describe('SyncStore v1 to v2 migration', () => {
         phase: 'scanning',
         scanRevision: 0,
       },
-      checkpoint: { scanRevision: 0 },
+      checkpoint: {
+        contractVersion: 2,
+        scanRevision: 0,
+        candidateCount: 1,
+        classificationErrorCount: 0,
+      },
       summary: { unreviewedCount: 1, selectedCount: 0, excludedCount: 0 },
     });
     await expect(store.getJobItem('legacy-job', item.sourceItemId)).resolves.toMatchObject({
@@ -777,6 +967,191 @@ describe('SyncStore v1 to v2 migration', () => {
   }, 20_000);
 });
 
+describe('SyncStore v2 to v3 migration', () => {
+  it('migrates scanning jobs atomically and derives the v3 counters from persisted rows', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-v2-scanning';
+    const item = socialItem(401);
+    await seedLegacyV2Database(factory, dbName, {
+      jobs: [legacyV2Job()],
+      items: [legacyV2Item(item)],
+    });
+
+    const store = await openSyncStore({ indexedDB: factory, dbName });
+    await expect(store.getMeta()).resolves.toEqual({
+      key: 'schema',
+      schemaVersion: 1,
+      databaseVersion: 3,
+      validationState: 'complete',
+    });
+    await expect(store.getJob('legacy-v2-job')).resolves.toMatchObject({
+      contractVersion: 2,
+      scanMode: 'incremental',
+      status: 'paused',
+      scanRevision: 1,
+      stopRecord: {
+        code: 'worker_interrupted',
+        phase: 'scanning',
+        scanRevision: 1,
+        scannedCount: 1,
+        acceptedCount: 1,
+      },
+      checkpoint: {
+        contractVersion: 2,
+        candidateCount: 1,
+        classificationErrorCount: 0,
+        catalogExistingObservationCount: 0,
+        consecutiveKnownIds: 0,
+      },
+      summary: {
+        uniqueItemCount: 1,
+        classificationErrorCount: 0,
+        unreviewedCount: 1,
+      },
+    });
+    await expect(store.getJobItem('legacy-v2-job', item.sourceItemId)).resolves.toMatchObject({
+      item,
+      classification: 'new',
+      reviewDecision: 'unreviewed',
+    });
+    store.close();
+  });
+
+  it('aborts an inconsistent v2 upgrade and leaves the original database readable', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-v2-rollback';
+    const item = socialItem(402);
+    const invalidJob = legacyV2Job({
+      summary: {
+        scannedCount: 1,
+        uniqueItemCount: 2,
+        pendingReviewCount: 0,
+        classificationErrorCount: 0,
+        unreviewedCount: 1,
+        selectedCount: 0,
+        excludedCount: 0,
+        writePendingCount: 0,
+        createdCount: 0,
+        alreadyExistsCount: 0,
+        skippedCount: 0,
+        writeErrorCount: 0,
+      },
+    });
+    await seedLegacyV2Database(factory, dbName, {
+      jobs: [invalidJob],
+      items: [legacyV2Item(item)],
+    });
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'unsafe_migration_state',
+    });
+    const raw = await openNativeDatabase(factory, dbName, 2);
+    expect(raw.version).toBe(2);
+    const transaction = raw.transaction(['jobs', 'meta'], 'readonly');
+    const jobRequest = transaction.objectStore('jobs').get('legacy-v2-job');
+    const metaRequest = transaction.objectStore('meta').get('schema');
+    await expect(
+      Promise.all([
+        new Promise((resolve, reject) => {
+          jobRequest.addEventListener('success', () => resolve(jobRequest.result));
+          jobRequest.addEventListener('error', () => reject(jobRequest.error));
+        }),
+        new Promise((resolve, reject) => {
+          metaRequest.addEventListener('success', () => resolve(metaRequest.result));
+          metaRequest.addEventListener('error', () => reject(metaRequest.error));
+        }),
+      ]),
+    ).resolves.toEqual([invalidJob, { key: 'schema', schemaVersion: 1, databaseVersion: 2 }]);
+    await transactionDone(transaction);
+    raw.close();
+  });
+
+  it('fails closed when post-upgrade reopen validation cannot run', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-v2-reopen-failure';
+    const item = socialItem(403);
+    await seedLegacyV2Database(factory, dbName, {
+      jobs: [legacyV2Job()],
+      items: [legacyV2Item(item)],
+    });
+
+    await expect(
+      openSyncStore({ indexedDB: factoryWithFailedReopen(factory), dbName }),
+    ).rejects.toMatchObject({ code: 'DB3_REOPEN_VALIDATION_FAILED' });
+
+    const raw = await openNativeDatabase(factory, dbName, 3);
+    expect(raw.version).toBe(3);
+    const transaction = raw.transaction(['jobs', 'meta'], 'readonly');
+    const jobRequest = transaction.objectStore('jobs').get('legacy-v2-job');
+    const metaRequest = transaction.objectStore('meta').get('schema');
+    await expect(
+      Promise.all([
+        new Promise((resolve, reject) => {
+          jobRequest.addEventListener('success', () => resolve(jobRequest.result));
+          jobRequest.addEventListener('error', () => reject(jobRequest.error));
+        }),
+        new Promise((resolve, reject) => {
+          metaRequest.addEventListener('success', () => resolve(metaRequest.result));
+          metaRequest.addEventListener('error', () => reject(metaRequest.error));
+        }),
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({ contractVersion: 2, scanMode: 'incremental', status: 'paused' }),
+      { key: 'schema', schemaVersion: 1, databaseVersion: 3, validationState: 'pending' },
+    ]);
+    await transactionDone(transaction);
+    raw.close();
+
+    const recovered = await openSyncStore({ indexedDB: factory, dbName });
+    await expect(recovered.getMeta()).resolves.toMatchObject({ validationState: 'complete' });
+    recovered.close();
+  });
+
+  it('persists a failed validation marker so repaired rows cannot bypass explicit recovery', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-migrate-v2-sticky-validation-failure';
+    const item = socialItem(404);
+    await seedLegacyV2Database(factory, dbName, {
+      jobs: [legacyV2Job()],
+      items: [legacyV2Item(item)],
+    });
+
+    await expect(
+      openSyncStore({ indexedDB: factoryWithFailedReopen(factory), dbName }),
+    ).rejects.toMatchObject({ code: 'DB3_REOPEN_VALIDATION_FAILED' });
+
+    const corrupted = await openNativeDatabase(factory, dbName, 3);
+    const corruptTransaction = corrupted.transaction('jobs', 'readwrite');
+    const jobs = corruptTransaction.objectStore('jobs');
+    const originalJob = await requestResult(jobs.get('legacy-v2-job'));
+    await requestResult(jobs.put({ ...(originalJob as object), status: 'not-a-real-status' }));
+    await transactionDone(corruptTransaction);
+    corrupted.close();
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'DB3_REOPEN_VALIDATION_FAILED',
+    });
+
+    const repaired = await openNativeDatabase(factory, dbName, 3);
+    const repairTransaction = repaired.transaction(['jobs', 'meta'], 'readwrite');
+    await requestResult(repairTransaction.objectStore('jobs').put(originalJob));
+    await transactionDone(repairTransaction);
+    repaired.close();
+
+    await expect(openSyncStore({ indexedDB: factory, dbName })).rejects.toMatchObject({
+      code: 'DB3_REOPEN_VALIDATION_FAILED',
+    });
+
+    const inspected = await openNativeDatabase(factory, dbName, 3);
+    const inspectTransaction = inspected.transaction('meta', 'readonly');
+    await expect(
+      requestResult(inspectTransaction.objectStore('meta').get('schema')),
+    ).resolves.toMatchObject({ validationState: 'failed' });
+    await transactionDone(inspectTransaction);
+    inspected.close();
+  });
+});
+
 describe('SyncStore checkpoint and item recovery', () => {
   it('atomically persists checkpoints, rolls back interrupted batches, and deduplicates replay', async () => {
     const factory = new IDBFactory();
@@ -869,7 +1244,7 @@ describe('SyncStore checkpoint and item recovery', () => {
         checkpoint(5, timestamp(6), {
           scanRevision: 2,
           cursor: 'page-2',
-          consecutiveKnownIds: 2,
+          consecutiveKnownIds: 0,
         }),
       ),
     ).resolves.toMatchObject({ inserted: 1, existing: 2 });

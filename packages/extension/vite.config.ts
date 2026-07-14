@@ -91,6 +91,7 @@ export default defineConfig({
         'content/toast': resolve(__dirname, 'src/content/toast.ts'),
         'content/twitter': resolve(__dirname, 'src/content/twitter.ts'),
         'content/weibo': resolve(__dirname, 'src/content/weibo.ts'),
+        'content/x-bookmarks': resolve(__dirname, 'src/content/x-bookmarks.ts'),
       },
       output: {
         assetFileNames: 'assets/[name].[ext]',

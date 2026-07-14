@@ -157,6 +157,31 @@ describe('SocialItemSchema', () => {
     expect(SocialItemSchema.safeParse(socialItem({ media: hostileArray })).success).toBe(false);
   });
 
+  it('rejects oversized strings and wide arrays before unbounded validation work', () => {
+    expect(
+      SocialItemSchema.safeParse(
+        socialItem({ text: 'x'.repeat(SYNC_LIMITS.persistedRowBytes + 1) }),
+      ).success,
+    ).toBe(false);
+
+    let descriptorReads = 0;
+    const wideMedia = new Proxy(
+      Array.from({ length: SYNC_LIMITS.structuredNodes + 1 }, () => ({
+        type: 'image' as const,
+        url: 'https://cdn.example.test/image.jpg',
+      })),
+      {
+        getOwnPropertyDescriptor(target, property) {
+          descriptorReads += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      },
+    );
+
+    expect(SocialItemSchema.safeParse(socialItem({ media: wideMedia })).success).toBe(false);
+    expect(descriptorReads).toBe(1);
+  });
+
   it.each([
     'http://x.com/example/status/1',
     'javascript:alert(1)',
@@ -254,9 +279,12 @@ describe('persisted sync schemas', () => {
   it('keeps job objects strict and enforces complete summary invariants', () => {
     const job = {
       schemaVersion: 1,
+      contractVersion: 2,
       id: 'job-1',
       source: 'x',
       status: 'complete',
+      scanMode: 'incremental',
+      scanCompletion: 'trusted_terminal',
       adapterVersion: 1,
       scanRevision: 1,
       reviewRevision: 1,
@@ -266,11 +294,15 @@ describe('persisted sync schemas', () => {
       writeAuthorizedAt: '2026-07-13T00:00:01Z',
       checkpoint: {
         schemaVersion: 1,
+        contractVersion: 2,
         adapterVersion: 1,
         scanRevision: 1,
         scannedCount: 1,
         acceptedCount: 1,
         acceptedBytes: 100,
+        candidateCount: 1,
+        classificationErrorCount: 0,
+        catalogExistingObservationCount: 0,
         consecutiveKnownIds: 0,
         updatedAt: '2026-07-13T00:00:01Z',
       },
@@ -318,6 +350,78 @@ describe('persisted sync schemas', () => {
         ...job,
         summary: { ...job.summary, createdCount: 0 },
       }).success,
+    ).toBe(false);
+  });
+
+  it('distinguishes no-write completion from complete_with_issues', () => {
+    const base = {
+      schemaVersion: 1,
+      contractVersion: 2,
+      id: 'job-no-write',
+      source: 'x',
+      status: 'complete',
+      scanMode: 'incremental',
+      scanCompletion: 'user_finalized_batch',
+      adapterVersion: 1,
+      scanRevision: 1,
+      reviewRevision: 1,
+      createdAt: '2026-07-13T00:00:00Z',
+      updatedAt: '2026-07-13T00:00:01Z',
+      checkpoint: {
+        schemaVersion: 1,
+        contractVersion: 2,
+        adapterVersion: 1,
+        scanRevision: 1,
+        scannedCount: 1,
+        acceptedCount: 1,
+        acceptedBytes: 100,
+        candidateCount: 1,
+        classificationErrorCount: 0,
+        catalogExistingObservationCount: 0,
+        consecutiveKnownIds: 0,
+        updatedAt: '2026-07-13T00:00:01Z',
+      },
+      budgets: {
+        maxItems: 50,
+        maxPages: 20,
+        maxDurationMs: 15_000,
+        maxItemBytes: SYNC_LIMITS.socialItemBytes,
+        maxMediaPerItem: SYNC_LIMITS.mediaItems,
+      },
+      summary: {
+        scannedCount: 1,
+        uniqueItemCount: 1,
+        pendingReviewCount: 0,
+        classificationErrorCount: 0,
+        unreviewedCount: 0,
+        selectedCount: 0,
+        excludedCount: 1,
+        writePendingCount: 0,
+        createdCount: 0,
+        alreadyExistsCount: 0,
+        skippedCount: 0,
+        writeErrorCount: 0,
+      },
+    };
+    expect(SyncJobSchema.safeParse(base).success).toBe(true);
+    const withIssues = {
+      ...base,
+      status: 'complete_with_issues',
+      checkpoint: { ...base.checkpoint, classificationErrorCount: 1 },
+      summary: { ...base.summary, classificationErrorCount: 1 },
+    };
+    expect(SyncJobSchema.safeParse(withIssues).success).toBe(true);
+    expect(
+      SyncJobSchema.safeParse({
+        ...withIssues,
+        checkpoint: { ...withIssues.checkpoint, classificationErrorCount: 0 },
+        summary: { ...withIssues.summary, classificationErrorCount: 0 },
+      }).success,
+    ).toBe(false);
+    expect(SyncJobSchema.safeParse({ ...base, scanCompletion: undefined }).success).toBe(false);
+    expect(SyncJobSchema.safeParse({ ...base, contractVersion: 1 }).success).toBe(false);
+    expect(
+      SyncJobSchema.safeParse({ ...withIssues, writeAuthorizedAt: base.updatedAt }).success,
     ).toBe(false);
   });
 
@@ -438,11 +542,15 @@ describe('persisted sync schemas', () => {
     });
     const hostileCheckpoint = Object.assign(Object.create({ inherited: true }), {
       schemaVersion: 1,
+      contractVersion: 2,
       adapterVersion: 1,
       scanRevision: 1,
       scannedCount: 1,
       acceptedCount: 1,
       acceptedBytes: 100,
+      candidateCount: 1,
+      classificationErrorCount: 0,
+      catalogExistingObservationCount: 0,
       consecutiveKnownIds: 0,
       updatedAt: '2026-07-13T00:00:01Z',
     });

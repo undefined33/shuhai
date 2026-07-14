@@ -5,12 +5,7 @@
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
   "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel", "activeTab", "scripting"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "host_permissions": [
-    "https://x.com/*",
-    "https://twitter.com/*",
-    "https://weibo.com/*",
-    "https://m.weibo.cn/*"
-  ],
+  "host_permissions": ["https://weibo.com/*", "https://m.weibo.cn/*"],
   "action": {
     "default_popup": "popup/index.html",
     "default_title": "ShuHai"
@@ -23,11 +18,6 @@
     "type": "module"
   },
   "content_scripts": [
-    {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
-      "js": ["content/twitter.js"],
-      "run_at": "document_idle"
-    },
     {
       "matches": ["https://weibo.com/*", "https://m.weibo.cn/*"],
       "js": ["content/weibo.js"],

@@ -482,11 +482,11 @@ content script 只接受来自本扩展 service worker 的消息：`sender.id` �
 
 ### 13.5 一次性启动意图
 
-Popup 点击后创建 `chrome.storage.session` intent，固定 key、最大 1 KiB、TTL 60 秒、随机 nonce，并由 service worker 串行消费一次。intent 只包含 protocol、action、mode、server-revalidated window ID、created/expires time 和 nonce；不包含正文、URL、tab ID、Vault path 或账号信息。session storage 保持默认 access level，不暴露给 content script，并接受浏览器/扩展 reload 后自动清除。
+Popup 点击后创建 `chrome.storage.session` intent，固定 key、最大 1 KiB、TTL 60 秒、随机 nonce，并由 service worker 串行消费一次。intent 只包含 protocol、action、server-revalidated window ID、created/expires time 和 nonce；不包含 scan mode、正文、URL、tab ID、Vault path 或账号信息。session storage 保持默认 access level，不暴露给 content script，并接受浏览器/扩展 reload 后自动清除。
 
-`chrome.sidePanel.open()` 必须在 Popup click handler 的同一用户手势中直接发起，前面不得 `await` intent/storage/tab 操作。intent 创建与 panel open 可以并发；Side Panel 只允许在 2 秒内按 nonce 做有限次数等待，超过即显示“启动已过期，请重试”，不能无限轮询或在没有 intent 时自行开始扫描。
+`chrome.sidePanel.open()` 必须在 Popup click handler 的同一用户手势中直接发起，前面不得 `await` intent/storage/tab 操作。intent 创建与 panel open 可以并发；Side Panel 只允许在 2 秒内按 nonce 做有限次数等待，超过即显示“启动已过期，请重试”，不能无限轮询、发送 `launch` 或在没有 intent 时自行开始扫描。只有 Popup sender 可以创建 intent。
 
-Side Panel 消费时 service worker 必须按 intent window 重新查询 active tab 并验证精确 URL。过期、重复消费、storage corruption、窗口消失或 tab 改变均删除/拒绝 intent，不降级读取旧 `chrome.storage.local` preference。Popup/Side Panel 打开失败只留下可过期 intent，不启动扫描。
+Side Panel 的真实“开始”点击把严格枚举的 `incremental | backfill` mode 与 nonce 一并发送；service worker 消费 intent 后按 intent window 重新查询 active tab、验证精确 URL，并以该 mode 原子创建 job。mode 不属于 Popup 上下文授权，也不能由过期 intent 或组件缓存推导。过期、重复消费、storage corruption、窗口消失或 tab 改变均删除/拒绝 intent，不降级读取旧 `chrome.storage.local` preference。Popup/Side Panel 打开失败只留下可过期 intent，不启动扫描。
 
 ### 13.6 Content script DOM 与滚动合同
 
@@ -563,6 +563,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 
 #### 允许修改测试与证据文件
 
+- `vitest.config.ts`（仅允许在 test discovery exclude 增加 `**/.pnpm-store/**`；不得修改 coverage include、threshold、reporter 或其它全仓测试语义）
 - `packages/extension/tests/sync-schema.test.ts`
 - `packages/extension/tests/sync-store.test.ts`
 - `packages/extension/tests/x-bookmarks-adapter.test.ts`
@@ -581,6 +582,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `docs/reviews/goal-043-x-bookmarks-incremental-sync-review.md`
 - `docs/goals/README.md`
 - `docs/PROJECT_STATUS.md`
+- `docs/product-roadmap-v4.md`（仅同步当前 Goal 状态与验证顺序，不得改变产品范围）
 - `docs/workflows/README.md`
 
 #### 只读/禁止
@@ -646,6 +648,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 
 #### 最终质量门禁
 
+- 根 Vitest discovery 必须显式排除 `**/.pnpm-store/**`，避免发现 worktree 内 Git ignored 的隔离 Chrome profile、Playwright 产物或 pnpm cache 中的第三方测试；不得降低 coverage threshold 或排除任何 `packages/*/src` 生产代码。
 - `pnpm lint`
 - `pnpm typecheck`
 - `pnpm test`

@@ -264,3 +264,62 @@ Helmholtz 第二轮给出 `PASS`，确认其首轮四项问题全部关闭。Gib
 隔离测试账号随后无法登录，用户明确授权日常 Chrome 只操作 X，并要求限制并发。项目把该授权收窄为后续真实 QA 只绑定或新建单个 `https://x.com/i/bookmarks` 标签，不枚举、读取、切换、刷新或关闭其它标签，不读取整个 profile，不扩展到其它站点；并固定 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试。Codex Chrome 插件当前出现注册存在但核心运行文件不完整的外部门禁；恢复只允许使用插件 UI 和正常应用重启，不手工删除缓存、不下载 CRX/浏览器，也不以其它自动化绕过。该故障只阻塞实现后的真实 probe，不阻塞离线生产实现。
 
 独立只读 reviewer Hubble (`019f5dbb-d072-7193-babb-38c6c64beb29`) 对首轮状态、门禁顺序、日常 Chrome 单标签例外和 X 限速合同给出 `PASS`。用户随后指出 Chrome 连接不应被误设为离线实现的串行前置，本轮据此修正为 `IN_PROGRESS_OFFLINE_IMPLEMENTATION`；最终实际文档 diff 仍需在格式、链接和状态一致性门禁后复核。该状态只授权 043B 合同内离线生产实现，不授权真实页面读取、真实 probe 或 Vault 写入。
+
+## 16. 043B 离线实现候选、独立审查与规范收口
+
+### 16.1 当前候选
+
+043B 已在独立 worktree 内完成合同白名单中的 manifest 权限迁移、DB3/单事务分类持久化、X DOM reader、runtime message/sender/document 绑定、单任务 coordinator、Popup 上下文入口、Side Panel 工作台和 Vault 逐项写入接线。实现期间没有读取真实 X、Cookie、token、日常 Chrome 其它标签或真实 Vault，也没有启动 Docker、服务、监听端口或下载浏览器。
+
+当前仍是离线实现候选，不是 Goal 完成。单元、集成、coverage、build、复杂度审查和最终 post-fix actual-diff review 已通过；离线 extension fixture E2E 因本机 Chrome 未注册命令行加载的 unpacked extension 而未通过，Node 20 CI、受界真实 X probe 和 disposable Vault 1-3 条写入仍未完成。
+
+### 16.2 首轮 actual-diff findings
+
+独立 reviewer Huygens (`019f5f21-4c4e-76d0-a5e0-37848ec3a116`) 首轮给出 `FAIL`，P0 none：
+
+- P1：adapter 在 catalog 分类前按 raw candidate batch 报 `candidate_items` 预算，若整批都是 catalog-existing，持久化 candidate count 仍为 0，但 coordinator 会提前暂停；反复恢复可能无法越过这批历史项。
+- P1：Chrome 的宽 `https://*/*` 实际授权会覆盖精确 X contains 查询，旧健康检查权限可能被误标成“已仅授权 X”，违反最小权限表达。
+- P2：Side Panel 在 intent 缺失、过期或 mode 不一致时会自行发送 `launch`，绕过“Popup 创建一次性上下文意图”的合同。
+- P2：根 `pnpm test:coverage` 会发现保留在 Git ignored `.pnpm-store/goal-043/chrome-profile` 下的第三方扩展测试；项目测试本身通过，但标准命令不稳定。
+
+### 16.3 已完成修复
+
+- coordinator 只在持久化后的 `candidateCount` 达到上限时因 candidate budget 暂停；其它 node/time/byte/scroll budget 仍 fail closed。新增回归证明 raw batch 全部命中 catalog 后会继续读取下一批新候选。
+- X 权限检查改为同时核对 `permissions.contains` 与 `permissions.getAll`：存在 `http://*/*` 或 `https://*/*` 时进入 `overbroad`，不会创建 job 或注入脚本；UI 提供显式撤销旧全网站权限后再申请精确 X。旧健康检查仍可能重新申请宽权限，完整 per-origin 健康权限重构留给后续 Goal，不能在 043B 暗改。
+- launch intent 收敛为一次性窗口上下文授权，不再携带 mode。只有 Popup sender 能创建 intent；Side Panel 的真实开始点击携带严格枚举 mode 并消费 nonce，无法自行补发 launch。service-worker 回归证明 Side Panel launch 被拒绝且 backfill mode 只在消费时写入 job。
+- 为关闭 coverage discovery 漂移，合同新增根 `vitest.config.ts` 的单行白名单：只允许 test discovery 排除 `**/.pnpm-store/**`，不得降低阈值或排除生产代码。独立 reviewer Wegener (`019f5f81-d11f-7013-a8fb-2d4196c82b01`) 对该 coverage 修订单独给出 `PASS`，并确认无需修改已由 `packages/*/src` include 收窄的 `coverage.exclude`；配置随后只增加这一项 discovery exclude。
+- 精确 X、宽 HTTP、宽 HTTPS 及“精确 + 宽权限”统一由纯函数分类；所有宽权限分支都 fail closed。service-worker 测试直接读取 IndexedDB，证明拒绝或宽权限状态不会创建 X job，也不会注入 content script。
+- Popup intent 消费后的标签页校验先查询 `lastFocusedWindow`，再限定原始 `windowId`；多窗口回归证明活动标签在 Popup 与 Side Panel 点击之间变化时返回 `tab_changed`，不注入、不建 job，且 intent 保持一次性消费。
+- 旧 Side Panel nonce 不再能删除较新的 Popup intent：nonce 不匹配只返回错误，只有匹配 nonce 才先删除再做服务端窗口复核。新增回归覆盖 A/B 两个连续 Popup intent 的竞态。
+- 旧全网站权限的撤销入口已移到 terminal/result 状态也可见的位置；Goal 文件补入仅用于状态同步的 `docs/product-roadmap-v4.md` allowlist，关闭实现与合同文件范围不一致。
+- 复杂度复核移除了 UI model 中四个生产未使用字段；旧 SyncStore 兼容 API 涉及跨测试和迁移边界，本 Goal 不做无证据删改，作为后续结构债务记录。
+
+### 16.4 当前自动化证据
+
+- `pnpm lint`：PASS。
+- `pnpm typecheck`：PASS。
+- `pnpm test`：PASS，426/426（extension 400、desktop 25、shared 1）。
+- `pnpm --filter @shuhai/extension run build`：PASS，Vite 6.4.3 转换 1,992 modules；`assets/styles.js` 为 541.95 kB，仍有超过 500 kB 的非阻塞拆包警告。
+- 标准 `pnpm test:coverage`：PASS，41 files / 426 tests；全局 statements 53.41%、branches 72.85%、functions 72.91%、lines 53.41%，均超过现有阈值。保留的 ignored Chrome profile 未再进入 test discovery，coverage include 与 thresholds 没有变化。
+- Prettier、`git diff --check` 与 lock SHA-256 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`：PASS/未漂移。
+- full audit：low 1 / moderate 1 / high 0 / critical 0，均位于既有 ESLint 开发依赖链；production audit：0。没有为规避 advisory 临时升级依赖或漂移 lock。
+
+### 16.5 复杂度审查与当前 verdict
+
+应保留的复杂度是 DB3 原子迁移与事务、运行时 schema/sender/document/nonce 绑定、单 invocation/单 outstanding request、write-intent/partial/reconcile 和持久化逐项结果；这些直接保护用户数据与真实平台账号，不属于可删的“架构装饰”。
+
+当前不在 043B 扩大的结构债务包括大型 `service-worker.ts`、`App.tsx`、`XSyncPage.tsx`、`sync-store.ts` 和 542 kB UI chunk。它们需要按用户旅程拆分的独立 Goal 与 bundle budget，不能在安全接线收尾时做无关重构。
+
+独立复杂度 reviewer Carson (`019f6006-2b58-7cc2-a498-24cebbbf967c`) 确认 DB3、原子事务、sender/document/nonce、单 invocation/单 outstanding request、write-intent/reconcile/partial/cancel 都是必要复杂度，并给出无 P0/P1 的 `PASS`；其发现的旧 nonce 删除新 intent 竞态已修复并新增回归。此前 Wegener 的整体 `FAIL` 只说明当时没有完成启动边界 actual-diff 验收，不能用来否定后续实现，也不能替代最新修复后的最终独立复审。
+
+最终只读 reviewer Kant (`019f6027-1906-7ca3-a3b1-2f86aad7410d`) 对基线 `5acdcc7` 到当前工作树的 post-fix actual diff 给出 `PASS`，P0/P1/P2 均无未解决项。复审确认权限 fail-closed 与零 job/零注入、sender/document/tab/window/nonce 绑定、terminal 宽权限撤销、candidate/backfill budget、partial/cancel/reconcile/Vault write-intent 和 Goal allowlist 均未发现绕过；没有发现需要在本 Goal 强拆的实质过度设计。该 reviewer 未修改文件，也未把逻辑测试冒充浏览器验收。
+
+当前 verdict 更新为 `043B OFFLINE CODE CANDIDATE PASS / GOAL NOT PASS`。剩余阻塞是 extension-level Chrome E2E、Node 20 CI、受界真实 X 和 disposable Vault QA，而不是当前代码门禁或 actual-diff review。
+
+### 16.6 Chrome extension E2E 门禁
+
+使用本机已安装 Chrome `150.0.7871.101`、当前 worktree 下全新且被 Git 忽略的 profile `.pnpm-store/goal-043/chrome-profile/permission-spike-20260714-1736` 进行了一次 fail-closed 启动验证。运行仅使用构建产物、离线参数和 host resolver fail-closed；没有读取日常 Chrome profile、访问真实 X/Vault、下载浏览器、操作端口或结束其它进程。
+
+Chrome 在 30 秒内没有注册 unpacked extension 的 service worker，验证以 timeout 失败；Playwright context 随后正常关闭，进程检查未发现仍携带该 profile 的 Chrome。该证据只能说明当前安装版 Chrome 的命令行加载路径不可用，不能写成 extension E2E `PASS`。
+
+下一步需要用户在独立项目 Chrome profile 的 `chrome://extensions` 中手动加载 `packages/extension/dist`，再运行离线 fixture。浏览器扩展安装属于需要当次人工确认的 UI 操作；不得改用日常 profile、自动下载 Chrome/Chromium，或绕过该门禁直接进入真实 X。

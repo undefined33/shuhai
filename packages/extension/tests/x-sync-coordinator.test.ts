@@ -2,15 +2,16 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  XSyncAdapterStopError,
   XSyncCoordinator,
   type AdapterBatchPort,
   type AdapterBatchRequest,
-  type SyncCatalogLookupPort,
 } from '../src/social/x-sync-coordinator.js';
 import { SyncEngine } from '../src/social/sync-engine.js';
 import {
   X_BOOKMARKS_ADAPTER_VERSION,
   X_BOOKMARKS_CEILINGS,
+  resolveXBookmarksLimits,
 } from '../src/social/adapters/x-bookmarks.js';
 import type { AdapterBatchResult, AdapterSignal } from '../src/social/adapters/types.js';
 import { openSyncStore, type SyncStore } from '../src/social/sync-store.js';
@@ -19,6 +20,7 @@ import {
   makeSyncRecordKey,
   type SocialItem,
   type SyncRecord,
+  type SyncScanMode,
 } from '../src/social/sync-schema.js';
 import type { VaultFileOutcome } from '../src/utils/vault-writer.js';
 
@@ -184,13 +186,46 @@ async function createStore(now = timestampSequence(1)): Promise<SyncStore> {
   return store;
 }
 
+class TestXSyncCoordinator extends XSyncCoordinator {
+  constructor(
+    private readonly syncStore: SyncStore,
+    adapter: AdapterBatchPort,
+    options: ConstructorParameters<typeof XSyncCoordinator>[2],
+  ) {
+    super(syncStore, adapter, options);
+  }
+
+  async createAndStart(input: {
+    readonly jobId: string;
+    readonly mode?: SyncScanMode;
+    readonly limits?: unknown;
+  }) {
+    const limits = resolveXBookmarksLimits(input.limits);
+    if (!limits) throw new TypeError('Fixture X sync limits are invalid');
+    await this.syncStore.createJob({
+      id: input.jobId,
+      source: 'x',
+      adapterVersion: X_BOOKMARKS_ADAPTER_VERSION,
+      scanMode: input.mode ?? 'incremental',
+      budgets: {
+        maxItems: limits.maxItems,
+        maxPages: limits.maxBatches,
+        maxDurationMs: limits.maxElapsedMs,
+        maxItemBytes: SYNC_LIMITS.socialItemBytes,
+        maxMediaPerItem: limits.maxMedia,
+      },
+      createdAt: timestamp(0),
+    });
+    return this.start({ jobId: input.jobId, expectedScanRevision: 0, limits });
+  }
+}
+
 function coordinator(
   store: SyncStore,
   adapter: AdapterBatchPort,
-  catalog: SyncCatalogLookupPort = store,
   nowIso = timestampSequence(1),
-): XSyncCoordinator {
-  return new XSyncCoordinator(store, catalog, adapter, {
+): TestXSyncCoordinator {
+  return new TestXSyncCoordinator(store, adapter, {
     now: () => 0,
     nowIso,
   });
@@ -251,7 +286,7 @@ describe('XSyncCoordinator', () => {
     expect(result.job.checkpoint).toMatchObject({
       scanRevision: 1,
       scannedCount: 3,
-      acceptedCount: 2,
+      acceptedCount: 3,
       consecutiveKnownIds: 0,
     });
     expect(result.metrics).toMatchObject({ steps: 2, insertedItems: 2, replayedItems: 1 });
@@ -271,7 +306,7 @@ describe('XSyncCoordinator', () => {
       batch({ kind: 'terminal' }, [second]),
     ]);
     const putBatchSpy = vi
-      .spyOn(store, 'putScanBatch')
+      .spyOn(store, 'classifyAndPersistScanBatch')
       .mockRejectedValueOnce(new Error('fixture transaction aborted'));
     try {
       await expect(
@@ -315,46 +350,106 @@ describe('XSyncCoordinator', () => {
     expect(await store.listJobItems('adapter-deadline')).toHaveLength(0);
   });
 
-  it('applies the same invocation deadline to catalog lookups', async () => {
+  it('propagates the invocation abort signal and ignores a late adapter response', async () => {
     const store = await createStore();
-    const candidate = await item(40);
-    const catalog: SyncCatalogLookupPort = {
-      getRecordByKey: () => new Promise<never>(() => undefined),
-      getRecordByCanonicalUrl: async () => undefined,
-      getRecordByContentHash: async () => undefined,
+    const candidate = await item(45);
+    let observedSignal: AbortSignal | undefined;
+    const adapter: AdapterBatchPort = {
+      readBatch: (_request, signal) => {
+        observedSignal = signal;
+        return new Promise((resolve) => {
+          signal?.addEventListener(
+            'abort',
+            () => setTimeout(() => resolve(batch({ kind: 'terminal' }, [candidate])), 10),
+            { once: true },
+          );
+        });
+      },
     };
-    const startedAt = Date.now();
 
-    const result = await coordinator(
-      store,
-      new QueueAdapter([batch({ kind: 'terminal' }, [candidate])]),
-      catalog,
-    ).createAndStart({
-      jobId: 'catalog-deadline',
-      limits: { maxElapsedMs: 20 },
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'adapter-abort-signal',
+      limits: { maxElapsedMs: 5 },
     });
 
     expect(result).toMatchObject({
       outcome: 'paused',
       stopReason: 'budget_exceeded',
+      job: { status: 'paused', summary: { uniqueItemCount: 0 } },
+    });
+    expect(observedSignal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(await store.listJobItems('adapter-abort-signal')).toHaveLength(0);
+  });
+
+  it('revalidates the bound document after persistence before committing a terminal scan', async () => {
+    const store = await createStore();
+    const candidate = await item(46);
+    const adapter: AdapterBatchPort = {
+      readBatch: async () => batch({ kind: 'terminal' }, [candidate]),
+      verifyBinding: async () => {
+        throw new XSyncAdapterStopError('tab_changed');
+      },
+    };
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'binding-changed-before-terminal',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'paused',
+      stopReason: 'tab_changed',
       job: {
         status: 'paused',
-        summary: { uniqueItemCount: 1, pendingReviewCount: 1 },
-        stopRecord: { code: 'budget_exceeded', phase: 'scanning' },
+        summary: { uniqueItemCount: 1 },
+        stopRecord: { code: 'tab_changed', phase: 'scanning' },
       },
     });
-    expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(20);
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
     await expect(
-      store.getJobItem('catalog-deadline', candidate.sourceItemId),
-    ).resolves.toMatchObject({ classification: 'pending' });
+      store.getJobItem('binding-changed-before-terminal', candidate.sourceItemId),
+    ).resolves.toMatchObject({ classification: 'new' });
+  });
+
+  it('applies the invocation deadline to the atomic catalog classification transaction', async () => {
+    const store = await createStore();
+    const candidate = await item(40);
+    const classifySpy = vi
+      .spyOn(store, 'classifyAndPersistScanBatch')
+      .mockImplementationOnce(() => new Promise<never>(() => undefined));
+    const startedAt = Date.now();
+    try {
+      const result = await coordinator(
+        store,
+        new QueueAdapter([batch({ kind: 'terminal' }, [candidate])]),
+      ).createAndStart({
+        jobId: 'catalog-deadline',
+        limits: { maxElapsedMs: 20 },
+      });
+
+      expect(result).toMatchObject({
+        outcome: 'paused',
+        stopReason: 'budget_exceeded',
+        job: {
+          status: 'paused',
+          summary: { uniqueItemCount: 0, pendingReviewCount: 0 },
+          stopRecord: { code: 'budget_exceeded', phase: 'scanning' },
+        },
+      });
+      expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(20);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      await expect(
+        store.getJobItem('catalog-deadline', candidate.sourceItemId),
+      ).resolves.toBeUndefined();
+    } finally {
+      classifySpy.mockRestore();
+    }
   });
 
   it('does not wait forever for batch persistence before pausing the invocation', async () => {
     const store = await createStore();
     const candidate = await item(41);
     const putBatchSpy = vi
-      .spyOn(store, 'putScanBatch')
+      .spyOn(store, 'classifyAndPersistScanBatch')
       .mockImplementationOnce(() => new Promise<never>(() => undefined));
     const startedAt = Date.now();
     try {
@@ -487,40 +582,26 @@ describe('XSyncCoordinator', () => {
     }
   });
 
-  it('classifies exact catalog identity, changes, conflicts, incomplete items, new items, and lookup errors', async () => {
+  it('atomically classifies exact identity, changes, incomplete items, and new items', async () => {
     const store = await createStore();
-    const [existing, changed, hashConflict, fresh, metadata, lookupError, otherIdentity] =
-      await Promise.all([
-        item(10),
-        item(11),
-        item(12),
-        item(13),
-        item(14, { text: undefined, completeness: 'metadata_only' }),
-        item(15),
-        item(99),
-      ]);
+    const [existing, changed, hashConflict, fresh, metadata, otherIdentity] = await Promise.all([
+      item(10),
+      item(11),
+      item(12),
+      item(13),
+      item(14, { text: undefined, completeness: 'metadata_only' }),
+      item(99),
+    ]);
     await store.putRecords([
       record(existing),
       record(changed, { contentHash: 'f'.repeat(64) }),
       record(otherIdentity, { contentHash: hashConflict.contentHash }),
     ]);
-
-    const errorKey = makeSyncRecordKey('x', lookupError.sourceItemId);
-    const catalog: SyncCatalogLookupPort = {
-      getRecordByKey: (key) => {
-        if (key === errorKey) {
-          throw new Error('Fixture catalog failure');
-        }
-        return store.getRecordByKey(key);
-      },
-      getRecordByCanonicalUrl: (url) => store.getRecordByCanonicalUrl(url),
-      getRecordByContentHash: (hash) => store.getRecordByContentHash(hash),
-    };
     const adapter = new QueueAdapter([
-      batch({ kind: 'terminal' }, [existing, changed, hashConflict, fresh, metadata, lookupError]),
+      batch({ kind: 'terminal' }, [existing, changed, hashConflict, fresh, metadata]),
     ]);
 
-    const result = await coordinator(store, adapter, catalog).createAndStart({
+    const result = await coordinator(store, adapter).createAndStart({
       jobId: 'catalog-five-way',
     });
     expect(result.outcome).toBe('ready_for_review');
@@ -531,17 +612,19 @@ describe('XSyncCoordinator', () => {
       ]),
     );
     expect(classifications).toEqual({
-      [existing.sourceItemId]: 'existing',
       [changed.sourceItemId]: 'changed',
       [hashConflict.sourceItemId]: 'incomplete',
       [fresh.sourceItemId]: 'new',
       [metadata.sourceItemId]: 'incomplete',
-      [lookupError.sourceItemId]: 'error',
     });
     expect(result.job.summary).toMatchObject({
       pendingReviewCount: 0,
-      classificationErrorCount: 1,
-      uniqueItemCount: 6,
+      classificationErrorCount: 0,
+      uniqueItemCount: 4,
+    });
+    expect(result.job.checkpoint).toMatchObject({
+      candidateCount: 4,
+      catalogExistingObservationCount: 1,
     });
   });
 
@@ -560,7 +643,10 @@ describe('XSyncCoordinator', () => {
     ).createAndStart({ jobId: 'review-to-vault' });
     expect(scan).toMatchObject({
       outcome: 'ready_for_review',
-      job: { summary: { uniqueItemCount: 2 } },
+      job: {
+        summary: { uniqueItemCount: 1 },
+        checkpoint: { catalogExistingObservationCount: 1 },
+      },
     });
     const persisted = Object.fromEntries(
       (await store.listJobItems('review-to-vault')).map((row) => [
@@ -570,7 +656,6 @@ describe('XSyncCoordinator', () => {
     );
     expect(persisted).toEqual({
       [fresh.sourceItemId]: 'new',
-      [existing.sourceItemId]: 'existing',
     });
 
     const selection = await store.saveReviewSelection(
@@ -592,7 +677,7 @@ describe('XSyncCoordinator', () => {
     });
 
     await expect(engine.writeItem('review-to-vault', existing, 'ShuHai')).rejects.toThrow(
-      'persisted review authorization',
+      'not persisted in the sync job',
     );
     expect(writer.writeCalls).toBe(0);
     expect(writer.readCalls).toBe(0);
@@ -610,37 +695,93 @@ describe('XSyncCoordinator', () => {
       store.transitionJob('review-to-vault', 'complete', timestamp(33)),
     ).resolves.toMatchObject({
       status: 'complete',
-      summary: { selectedCount: 1, excludedCount: 1, createdCount: 1 },
+      summary: { selectedCount: 1, excludedCount: 0, createdCount: 1 },
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects catalog results that do not bind the canonical URL or content hash query', async () => {
+  it('reaches the known frontier without consuming candidate slots or creating exact-existing rows', async () => {
     const store = await createStore();
-    const [wrongUrlLookup, wrongHashLookup, unrelated] = await Promise.all([
-      item(16),
-      item(17),
-      item(18),
+    const existing = await Promise.all(Array.from({ length: 20 }, (_, index) => item(300 + index)));
+    await store.putRecords(existing.map((entry) => record(entry)));
+    const adapter = new QueueAdapter([
+      batch({ kind: 'items' }, existing),
+      batch({ kind: 'terminal' }, [await item(399)]),
     ]);
-    const unrelatedRecord = record(unrelated);
-    const catalog: SyncCatalogLookupPort = {
-      getRecordByKey: async () => undefined,
-      getRecordByCanonicalUrl: async (url) =>
-        url === wrongUrlLookup.canonicalUrl ? unrelatedRecord : undefined,
-      getRecordByContentHash: async (hash) =>
-        hash === wrongHashLookup.contentHash ? unrelatedRecord : undefined,
-    };
-    const result = await coordinator(
-      store,
-      new QueueAdapter([batch({ kind: 'terminal' }, [wrongUrlLookup, wrongHashLookup])]),
-      catalog,
-    ).createAndStart({ jobId: 'catalog-query-binding' });
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'known-frontier',
+    });
 
     expect(result.outcome).toBe('ready_for_review');
-    expect(
-      (await store.listJobItems('catalog-query-binding')).map((row) => row.classification),
-    ).toEqual(['error', 'error']);
-    expect(result.job.summary.classificationErrorCount).toBe(2);
+    expect(result.job.scanCompletion).toBe('known_frontier');
+    expect(result.job.checkpoint).toMatchObject({
+      acceptedCount: 20,
+      candidateCount: 0,
+      catalogExistingObservationCount: 20,
+      consecutiveKnownIds: 20,
+    });
+    expect(await store.listJobItems('known-frontier')).toEqual([]);
+    expect(adapter.requests).toHaveLength(1);
+    expect(adapter.requests[0]).toMatchObject({
+      jobCandidateItems: 0,
+      remainingCandidateSlots: 50,
+    });
+  });
+
+  it('does not treat existing records as a terminal frontier during backfill', async () => {
+    const store = await createStore();
+    const existing = await Promise.all(Array.from({ length: 20 }, (_, index) => item(400 + index)));
+    const older = await item(499);
+    await store.putRecords(existing.map((entry) => record(entry)));
+    const adapter = new QueueAdapter([
+      batch({ kind: 'items' }, existing),
+      batch({ kind: 'terminal' }, [older]),
+    ]);
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'backfill-past-known-records',
+      mode: 'backfill',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'ready_for_review',
+      job: {
+        scanMode: 'backfill',
+        scanCompletion: 'trusted_terminal',
+        summary: { uniqueItemCount: 1 },
+      },
+    });
+    expect(adapter.requests).toHaveLength(2);
+    expect(await store.listJobItems('backfill-past-known-records')).toHaveLength(1);
+  });
+
+  it('continues after a raw candidate batch boundary when catalog classification frees every slot', async () => {
+    const store = await createStore();
+    const existing = await Promise.all(Array.from({ length: 3 }, (_, index) => item(450 + index)));
+    const older = await item(499);
+    await store.putRecords(existing.map((entry) => record(entry)));
+    const adapter = new QueueAdapter([
+      batch(
+        { kind: 'budget_exceeded', budget: 'candidate_items', stopReason: 'budget_exceeded' },
+        existing,
+      ),
+      batch({ kind: 'terminal' }, [older]),
+    ]);
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'raw-boundary-after-existing',
+      mode: 'backfill',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'ready_for_review',
+      job: {
+        scanCompletion: 'trusted_terminal',
+        checkpoint: { candidateCount: 1, catalogExistingObservationCount: 3 },
+      },
+    });
+    expect(adapter.requests).toHaveLength(2);
+    expect(await store.listJobItems('raw-boundary-after-existing')).toHaveLength(1);
   });
 
   it('revalidates exact X permalinks, canonical media URLs, and the fixed SHA-256 input', async () => {
@@ -710,14 +851,15 @@ describe('XSyncCoordinator', () => {
     expect(completed.job.scanRevision).toBe(2);
     expect(completed.job.checkpoint).toMatchObject({
       scannedCount: 3,
-      acceptedCount: 2,
+      acceptedCount: 3,
       acceptedBytes: encodedBytes(first) + encodedBytes(replayedFirst) + encodedBytes(second),
       scanRevision: 2,
     });
     expect(completed.metrics).toMatchObject({ insertedItems: 1, replayedItems: 1 });
     expect(adapter.requests[1]).toMatchObject({
       scanRevision: 2,
-      jobAcceptedItems: 1,
+      jobCandidateItems: 1,
+      remainingCandidateSlots: 49,
     });
   });
 
@@ -753,7 +895,7 @@ describe('XSyncCoordinator', () => {
     expect(adapter.requests[0]?.limits).toEqual(X_BOOKMARKS_CEILINGS);
   });
 
-  it('never requests a twenty-first batch when a supported terminal was not observed', async () => {
+  it('pauses after three consecutive batches repeat only already-seen stable IDs', async () => {
     const store = await createStore();
     const repeated = await item(200);
     const adapter = new QueueAdapter(
@@ -769,11 +911,11 @@ describe('XSyncCoordinator', () => {
 
     expect(result).toMatchObject({
       outcome: 'paused',
-      stopReason: 'budget_exceeded',
-      metrics: { steps: 20, insertedItems: 1, replayedItems: 19 },
-      job: { checkpoint: { scannedCount: 20, acceptedCount: 1 } },
+      stopReason: 'no_progress',
+      metrics: { steps: 4, insertedItems: 1, replayedItems: 3 },
+      job: { checkpoint: { scannedCount: 4, acceptedCount: 4, candidateCount: 1 } },
     });
-    expect(adapter.requests).toHaveLength(20);
+    expect(adapter.requests).toHaveLength(4);
   });
 
   it('counts raw cross-batch replay bytes against the sixteen MiB job ceiling', async () => {
@@ -787,7 +929,7 @@ describe('XSyncCoordinator', () => {
       ]),
       batch({ kind: 'terminal' }, [replay]),
     ]);
-    const first = await coordinator(store, adapter, store, timestampSequence(1)).createAndStart({
+    const first = await coordinator(store, adapter, timestampSequence(1)).createAndStart({
       jobId: 'byte-ceiling-resume',
     });
     expect(first.outcome).toBe('paused');
@@ -808,7 +950,7 @@ describe('XSyncCoordinator', () => {
       timestamp(22),
     );
 
-    const result = await coordinator(store, adapter, store, timestampSequence(23)).resume({
+    const result = await coordinator(store, adapter, timestampSequence(23)).resume({
       jobId: 'byte-ceiling-resume',
       expectedScanRevision: 2,
     });
@@ -854,12 +996,7 @@ describe('XSyncCoordinator', () => {
       createdAt: timestamp(0),
     });
     const mismatchAdapter = new QueueAdapter([]);
-    const mismatch = await coordinator(
-      mismatchStore,
-      mismatchAdapter,
-      mismatchStore,
-      timestampSequence(1),
-    ).start({
+    const mismatch = await coordinator(mismatchStore, mismatchAdapter, timestampSequence(1)).start({
       jobId: 'adapter-version-mismatch',
       expectedScanRevision: 0,
     });
@@ -868,6 +1005,51 @@ describe('XSyncCoordinator', () => {
       stopReason: 'structure_changed',
     });
     expect(mismatchAdapter.requests).toHaveLength(0);
+  });
+
+  it('preserves a trusted adapter stop reason instead of relabeling it as a structure failure', async () => {
+    const store = await createStore();
+    const adapter: AdapterBatchPort = {
+      readBatch: async () => {
+        throw new XSyncAdapterStopError('permission_revoked');
+      },
+    };
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'permission-revoked-adapter-stop',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'paused',
+      stopReason: 'permission_revoked',
+      job: { status: 'paused', stopRecord: { code: 'permission_revoked' } },
+    });
+  });
+
+  it('reports progress only after the parsed batch has committed to the store', async () => {
+    const store = await createStore();
+    const first = await item(301);
+    const snapshots: Array<{ candidateCount: number; persistedCount: number }> = [];
+    const instance = new TestXSyncCoordinator(
+      store,
+      new QueueAdapter([batch({ kind: 'terminal' }, [first])]),
+      {
+        now: () => 0,
+        nowIso: timestampSequence(1),
+        onProgress: ({ job }) => {
+          snapshots.push({
+            candidateCount: job.checkpoint?.candidateCount ?? 0,
+            persistedCount: -1,
+          });
+        },
+      },
+    );
+
+    const result = await instance.createAndStart({ jobId: 'progress-after-commit' });
+    snapshots[0]!.persistedCount = (await store.listJobItems('progress-after-commit')).length;
+
+    expect(result.outcome).toBe('ready_for_review');
+    expect(snapshots).toEqual([{ candidateCount: 1, persistedCount: 1 }]);
   });
 
   it('fails closed on a duplicate or stale start command without calling the adapter', async () => {
@@ -883,7 +1065,7 @@ describe('XSyncCoordinator', () => {
     const adapter = new QueueAdapter([]);
 
     await expect(
-      coordinator(store, adapter, store, timestampSequence(2)).start({
+      coordinator(store, adapter, timestampSequence(2)).start({
         jobId: 'duplicate-start',
         expectedScanRevision: 0,
       }),

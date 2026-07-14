@@ -8,6 +8,7 @@ import {
   exportBookmarksToVault,
   exportCaptureToVault,
   previewBookmarkExport,
+  queryVaultPermission,
   readVaultTextFile,
   readVaultTextPrefix,
   MAX_SAFE_VAULT_PREFIX_BYTES,
@@ -572,6 +573,47 @@ describe('vault writer', () => {
 
     await expect(checkVaultPermission(root)).resolves.toBe(true);
     expect(requested).toBe(1);
+  });
+
+  it('queries read-write permission without requesting it', async () => {
+    let requested = 0;
+    class PromptDirectoryHandle extends FakeDirectoryHandle {
+      override async queryPermission(): Promise<PermissionState> {
+        return 'prompt';
+      }
+
+      override async requestPermission(): Promise<PermissionState> {
+        requested += 1;
+        return 'granted';
+      }
+    }
+
+    const root = new PromptDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
+
+    await expect(queryVaultPermission(root)).resolves.toBe(false);
+    expect(requested).toBe(0);
+  });
+
+  it('reuses the query-only helper before requesting read-write permission', async () => {
+    let queried = 0;
+    let requested = 0;
+    class GrantedDirectoryHandle extends FakeDirectoryHandle {
+      override async queryPermission(): Promise<PermissionState> {
+        queried += 1;
+        return 'granted';
+      }
+
+      override async requestPermission(): Promise<PermissionState> {
+        requested += 1;
+        return 'denied';
+      }
+    }
+
+    const root = new GrantedDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
+
+    await expect(checkVaultPermission(root)).resolves.toBe(true);
+    expect(queried).toBe(1);
+    expect(requested).toBe(0);
   });
 
   it('reports create and write failures without claiming a file was created', async () => {

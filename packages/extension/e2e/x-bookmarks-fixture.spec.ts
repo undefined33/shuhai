@@ -5,8 +5,11 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import {
   adaptXBookmarksDom,
+  X_BOOKMARKS_ADAPTER_VERSION,
+  resolveXBookmarksLimits,
   type XBookmarkDomEntryObservation,
 } from '../src/social/adapters/x-bookmarks.js';
+import { SYNC_LIMITS } from '../src/social/sync-schema.js';
 import {
   XSyncCoordinator,
   type AdapterBatchPort,
@@ -116,7 +119,7 @@ class BrowserFixtureAdapter implements AdapterBatchPort {
   }
 
   async readBatch(request: AdapterBatchRequest): Promise<unknown> {
-    const batch = this.batches[request.step - 1];
+    const batch = this.batches[request.step];
     if (!batch) {
       return { capability: { kind: 'unsupported' }, signal: { kind: 'unsupported' } };
     }
@@ -132,7 +135,7 @@ class BrowserFixtureAdapter implements AdapterBatchPort {
       }),
       {
         capturedAt: '2026-07-13T12:00:00.000Z',
-        acceptedItemsBefore: request.jobAcceptedItems,
+        remainingCandidateSlots: request.remainingCandidateSlots,
         acceptedBytesBefore: request.jobAcceptedBytes,
         limits: request.limits,
         now: () => 0,
@@ -193,12 +196,34 @@ test('rescans a recycled X fixture from the top and resumes without duplicate it
       dbName: 'x-bookmarks-browser-fixture',
       now: nowIso,
     });
-    let coordinator = new XSyncCoordinator(store, store, adapter, {
+    const limits = resolveXBookmarksLimits();
+    if (!limits) {
+      throw new Error('The fixture limits must satisfy the production X adapter contract');
+    }
+    await store.createJob({
+      id: 'browser-fixture-job',
+      source: 'x',
+      adapterVersion: X_BOOKMARKS_ADAPTER_VERSION,
+      scanMode: 'incremental',
+      budgets: {
+        maxItems: limits.maxItems,
+        maxPages: limits.maxBatches,
+        maxDurationMs: limits.maxElapsedMs,
+        maxItemBytes: SYNC_LIMITS.socialItemBytes,
+        maxMediaPerItem: limits.maxMedia,
+      },
+      createdAt: '2026-07-13T00:00:00.000Z',
+    });
+    let coordinator = new XSyncCoordinator(store, adapter, {
       now: () => 0,
       nowIso,
     });
 
-    const paused = await coordinator.createAndStart({ jobId: 'browser-fixture-job' });
+    const paused = await coordinator.start({
+      jobId: 'browser-fixture-job',
+      expectedScanRevision: 0,
+      limits,
+    });
     expect(paused).toMatchObject({
       outcome: 'paused',
       stopReason: 'budget_exceeded',
@@ -217,13 +242,14 @@ test('rescans a recycled X fixture from the top and resumes without duplicate it
       dbName: 'x-bookmarks-browser-fixture',
       now: nowIso,
     });
-    coordinator = new XSyncCoordinator(store, store, adapter, {
+    coordinator = new XSyncCoordinator(store, adapter, {
       now: () => 0,
       nowIso,
     });
     const resumed = await coordinator.resume({
       jobId: 'browser-fixture-job',
       expectedScanRevision: paused.job.scanRevision,
+      limits,
     });
 
     expect(resumed).toMatchObject({
