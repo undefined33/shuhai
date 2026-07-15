@@ -417,3 +417,20 @@ Harvey 第二轮对最新 working tree 给出 `PASS`，P0/P1/P2 均为 0。复�
 Locke 的一次中间复审在最终 test/docs patch 前仍给出 `FAIL`（P2 两项）：合同摘要还写 5,000，且第五个冲突 permalink 当时只有 fallback 直接覆盖。候选随后统一所有 current 文档、在固定预算表正式增加单次 DOM read 共享 10,000 上限，并让同一测试分别走 fallback 与真实 TreeWalker 分支。Locke 对最新实际 diff 的最终 verdict 为 `PASS`，P0/P1/P2 均为 0；reviewer 明确确认固定预算表、生产常量、每次 read 唯一共享 budget 以及 10,000/10,001 和跨 selector 累计测试一致。reviewer 没有运行测试、构建、网络或 Chrome，也没有修改文件，因此该结论只关闭 actual-diff review，不替代新 Node 20 CI 或后续受界真实 X probe。
 
 修复提交 `9f176e7` 已普通 push 到 draft PR `#5`。同一 head SHA `9f176e777f60b7b83af60fdca13225976df6bf91` 的 GitHub Actions runs `29395799014` / job `87288903680` 与 `29395798874` / job `87288903481` 均在 Node 20、pnpm `10.34.5` 下 `PASS`；两条 run 都完成 frozen/ignore-scripts official-registry install、lint、typecheck、coverage、全仓 build 和 coverage artifact。当前 verdict 为 `DOM BUDGET REPAIR PASS / GOAL NOT PASS`；用户重载并确认允许创建新的扩展本地 SyncJob/candidate 数据前不得再次扫描真实 X。
+
+### 16.14 第三次真实 probe 的虚拟列表重复前沿与修复
+
+用户重载 DOM 预算修复后，第三次受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe 已真实读到 `8/10` 条候选，随后连续三批没有发现新的 stable ID，以 `no_progress` 暂停。没有写入 Vault、读取凭据、调用私有 API、增加并发或触碰其它标签。生产实现也没有模拟物理鼠标：content script 每个受约束 message 最多执行一次 `window.scrollBy` 与等待，然后只读取 X 当前渲染的虚拟列表 DOM。X 不会把整个收藏库同时留在 DOM 中，因此在不使用官方 OAuth API、私有 GraphQL、Cookie/token 或 MAIN world 的边界下，受限程序化滚动仍是必要的平台适配动作。
+
+根因不是“滚动太慢”，而是三类稳定 ID 被旧协议混在一起：同一 job 已持久化的 candidate、catalog 中已入库的 exact-existing frontier，以及当前 invocation 本轮实际见过的 ID。X 回收虚拟列表 DOM 后会重复返回顶部或相邻 card；旧 content 输出窗口又最多保留 50 个 candidate，导致旧 card 可以占住窗口并遮蔽更后的未知 card。resume 时若把持久化 ID 预先放入 invocation no-progress 集合，还会让旧观察被错误当成本轮重复。首次未提交候选试图把所有 job item 都作为一个 known 集合发送，但独立 reviewer Erdos (`019f654a-ac8b-7bd2-9974-48b5a050759f`) 指出两个 P1：catalog-existing frontier 不一定存在于 job items，重复 resume 会错误累计；只读取前 50 张 card 时，第 51 张新 card 仍会被隐藏。该候选没有提交。
+
+最终修复采用分层、受界状态：
+
+- `SyncCheckpoint` 新增可选 `knownFrontierSourceItemIds`，最多 20 个，必须唯一且数量与 `consecutiveKnownIds` 一致；旧 DB3 checkpoint 缺少该字段时，不猜测旧前沿，而是在下一批保守重建。
+- runtime message 分离最多 50 个 `candidateSourceItemIds` 与最多 20 个 `knownFrontierSourceItemIds`，两组必须唯一且互不重叠。candidate replay 会重置 frontier，exact-existing observation 才推进 frontier；重复 exact-existing ID 不会二次累计。
+- coordinator 的三批 no-progress 集合从当前 invocation 的空集合开始，不再由持久化 job items 预填；每批分类后再更新 candidate 集合。
+- DOM reader 在固定 200 内容观察节点、整次共享 10,000 布局遍历、50 candidate 输出和既有时间/字节预算内继续读取 card identity，跳过 exact-known frontier。为保持页面顺序和 store 的 frontier reset 语义，只保留未知 card 前最近一个必要 candidate replay barrier，而不是返回全部旧 card。
+
+新增回归覆盖 8 个 known 后的后续 card、恰好 50 个 candidate 后第 51 个新 card、candidate/frontier overlap 与超量、暂停恢复不重复增加 frontier、重复 exact-existing 去重、barrier 顺序，以及旧 DB3 checkpoint 缺少 frontier ID 时 close/reopen/resume 的保守重建。最终本地证据为：lint、typecheck、extension 432 tests、全仓 41 files / 458 tests coverage 和 extension build 全部 `PASS`；coverage 为 statements 54.11%、branches 73.27%、functions 73.20%、lines 54.11%。构建产物 `content/x-bookmarks.js` 为 125,421 bytes，SHA-256 `55CF1A9C0624308AA1CA86EF11AD80A623F5F3E90099D344F589C52371910822`，通过 `node --check` 且无顶层静态 `import/export`。pnpm 10 audit endpoint 仍返回官方 410 retirement 错误；本机 pnpm `11.3.0` 只读 fallback 为 full low 1 / moderate 1 / high 0 / critical 0，均为开发工具链路径，production 为 0。lock SHA-256 保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`。
+
+Erdos 对最终 actual diff 的 verdict 为 `PASS`，P0/P1/P2 均为 0，并确认首轮两项 P1 已关闭；reviewer 建议补充的旧 DB3 reopen/resume 测试已加入并通过。reviewer 没有运行测试、Chrome 或网络，也没有修改文件。修复提交 `76a3a60` 已普通 push 到 draft PR `#5`；GitHub Actions run `29413005934` / job `87344295492` 在 Node 20、pnpm `10.34.5` 下 `PASS`。当前 verdict 为 `VIRTUAL LIST FRONTIER REPAIR PASS / GOAL NOT PASS`；用户重载并确认允许创建或更新扩展本地 SyncJob/candidate 数据前，不得再次扫描真实 X。
