@@ -465,13 +465,18 @@ function detectInlineSaveSource(url: string): InlineSaveSource | undefined {
   return undefined;
 }
 
-function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
+export function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
   if (!chrome.tabs?.query) {
     return Promise.resolve(undefined);
   }
 
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        resolve(undefined);
+        return;
+      }
+
       const tab = tabs[0];
       const url = tab?.url ?? '';
       if (!url) {

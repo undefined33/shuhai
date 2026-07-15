@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-15
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 离线代码、route integration、人工 toolbar E2E、Node 20 CI 和固定扩展 ID 门禁已通过，等待受界真实 X no-Vault probe
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 固定 ID 的真实 toolbar 路由回归已修复并通过本地门禁/独立复审，等待用户重载确认后再进入受界 X no-Vault probe
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。最新候选提交 `8565c98` 已通过 439 项测试、coverage、build、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 GitHub Node 20 CI run `29381583537`。人工证据确认 Popup 只有 `同步新增收藏` 一个主动作、Side Panel 先显示 exact X permission preflight，取消任务后的终态也能返回工作区；无权限零 job/零注入仍由自动化 service-worker 测试证明，不把人工截图冒充 IndexedDB 检查。Goal 042 已 `DONE/PASS`；Goal 043 G0 与 043A fixture-only 候选均已 `PASS`。用户授权的固定开发 ID 门禁已通过本地、CI 和独立静态 review：ID 为 `jdjmpeogiojjhdabdjmpeclcbjcekbje`，私钥 ACL 和仓库 secret 边界通过验证。当前阶段恢复为 `IN_PROGRESS_REAL_X_PROBE_GATE`；后续仍保持 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定 ID 和既有 Node 20 CI 均已通过。用户在日常 Chrome 固定 ID 上的首次精确 X toolbar 回归暴露 Popup 错误回落通用 launcher；候选已把 active-tab 查询改为 Chrome 官方推荐的 `lastFocusedWindow` 语义，严格只依据当前已加载 URL，并通过 441 项测试、coverage、build、完整本地门禁和独立只读 review。当前仍处于 `IN_PROGRESS_REAL_X_PROBE_GATE` 的路由复验子门禁，必须先由用户重新加载并确认“X 收藏同步 / 同步新增收藏”Popup，之后才允许执行 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试的 no-Vault probe。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -105,13 +105,12 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 043B 最新候选 `8565c98`、439 项测试、完整质量门禁、独立 actual-diff review、preloaded-extension route integration、人工 toolbar E2E 和 Node 20 CI run `29381583537` 已通过；正式状态仍为 `IN_PROGRESS`。
-2. 人工 toolbar E2E 已在独立项目 Chrome profile 的离线脱敏 X route 中确认 Popup 单动作、Side Panel exact X permission preflight、取消和终态返回；该证据不证明真实 X selector，也没有读取真实页面或写 Vault。
-3. Goal 043 第 3.4 节固定扩展 ID 本地门禁已 `PASS`；用户需从当前 `dist` 手动重载一次并确认 Chrome 显示固定 ID，不能把本地测试冒充真实浏览器证据。
-4. 重载后只允许新建或绑定日常 Chrome 中由用户明确指定的单个 `https://x.com/i/bookmarks` 标签；不得枚举、读取、切换、刷新或关闭其它标签，也不得读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile。
-5. 首次 probe 固定为 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动完成到下一批请求至少 2 秒、不写 Vault；遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
-6. no-Vault probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
-7. 真实 Chrome 只使用本机已安装浏览器；禁止自行下载浏览器、干扰其它 Chrome 进程或把单标签授权扩大到日常 profile。
+1. X toolbar 路由修复候选已通过 lint、typecheck、441 项 test/coverage、extension build 和独立只读 review；正式状态仍为 `IN_PROGRESS`，尚未执行真实扫描。
+2. 用户在 `chrome://extensions` 对固定 ID `jdjmpeogiojjhdabdjmpeclcbjcekbje` 点击一次重新加载，再回到原 `https://x.com/i/bookmarks` 标签点击 ShuHai；预期 Popup 显示“X 收藏同步 / 同步新增收藏”。
+3. 路由确认前不要授权 X 或开始同步；若仍显示通用 launcher，保留页面并报告截图，不重复卸载、不迁移存储，也不触碰其它标签。
+4. 路由确认后才进入首次 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；单 tab/job/invocation/outstanding request，滚动完成到下一批请求至少 2 秒，遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
+5. no-Vault probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
+6. 真实 Chrome 只使用本机已安装浏览器；不得枚举、读取、切换、刷新或关闭其它标签，不读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile，也不得下载浏览器或干扰其它 Chrome 进程。
 
 ## 10. 当前文档
 

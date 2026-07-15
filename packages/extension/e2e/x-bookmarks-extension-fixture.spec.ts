@@ -120,7 +120,7 @@ async function installRouteOnlyActiveTabFixture(page: Page): Promise<void> {
         queryInfo: Record<string, unknown>,
         callback: (tabs: Array<{ title: string; url: string }>) => void,
       ) => {
-        if (queryInfo.active === true && queryInfo.currentWindow === true) {
+        if (queryInfo.active === true && queryInfo.lastFocusedWindow === true) {
           callback([{ title: 'Bookmarks / X', url }]);
           return;
         }
@@ -177,7 +177,7 @@ const fixtureHtml = `<!doctype html>
   </body>
 </html>`;
 
-test('loads the current extension and renders the X popup route with a mocked activeTab boundary', async () => {
+test('loads the current extension and renders the X popup route with a mocked last-focused activeTab boundary', async () => {
   if (!existsSync(path.join(extensionPath, 'manifest.json'))) {
     throw new Error('Build @shuhai/extension before running the extension fixture');
   }

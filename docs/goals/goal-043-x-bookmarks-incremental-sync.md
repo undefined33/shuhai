@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `8565c98` 已通过 439 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29381583537`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。2026-07-15 用户授权的第 3.4 节固定开发 ID 门禁已通过本地和 CI 验证；当前恢复等待受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归暴露 Popup 仍回落通用 launcher；修复候选已按 Chrome 官方 active-tab 查询方式修正并通过 441 项测试、完整本地门禁和独立只读 review。当前先等待用户重载并确认 X 上下文 Popup，再进入受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E、Node 20 CI 和第 3.4 节固定 ID 门禁均已通过。人工 E2E 证明用户实际点击工具栏后的 Popup 单动作、Side Panel permission preflight、取消和终态返回；无权限零 job/零注入仍由自动化 service-worker 测试证明。受界真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`，其中先完成真实 toolbar 路由复验：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E、Node 20 CI 和第 3.4 节固定 ID 门禁均已通过，但日常 Chrome 首次固定 ID 回归发现 active-tab 窗口查询错误。修复候选不创建 job、不注入页面，也不读取其它标签；用户确认 X 上下文 Popup 后才能进入真实 probe。受界 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
 
 ### 3.4 043B：稳定扩展身份前置门禁
 

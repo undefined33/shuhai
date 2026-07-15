@@ -1,20 +1,20 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-15
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration、人工 toolbar E2E 和固定扩展 ID 完整门禁已通过，等待受界真实 X no-Vault probe
-> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；用户先从当前 dist 手动重载并确认固定 ID，再按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界执行真实 X probe。
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；固定 ID 日常 Chrome 回归暴露的 Popup 路由问题已修复并通过本地/独立复审，等待用户重载确认
+> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE` 的路由复验子门禁；先确认精确 X 收藏页显示“X 收藏同步 / 同步新增收藏”，再按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界执行真实 X probe。
 
 ## 当前编排状态
 
-| Lane     | 状态                      | 说明                                     | 恢复条件                        |
-| -------- | ------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | toolbar E2E PASS；等待真实 X probe       | 受界 no-Vault probe             |
-| 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
-| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `043B_REAL_X_PROBE_GATE`  | 固定 ID 重载后，执行受界真实 X probe     | probe 后进入 disposable Vault   |
+| Lane     | 状态                      | 说明                                       | 恢复条件                        |
+| -------- | ------------------------- | ------------------------------------------ | ------------------------------- |
+| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收   | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                   | 四轮独立 review 最终 PASS       |
+| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础      | 独立 review PASS                |
+| Goal 043 | `IN_PROGRESS`             | Popup 路由修复 PASS；等待真实 toolbar 复验 | 受界 no-Vault probe             |
+| 044-046  | `PLANNED`                 | 微博、书签和 UI                            | 按各自前置另写可执行 spec       |
+| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台             | 两周 dogfood 证明真实需求       |
+| workflow | `043B_REAL_X_PROBE_GATE`  | 固定 ID 重载并确认 X Popup 后执行 probe    | probe 后进入 disposable Vault   |
 
 ## v4 当前队列
 

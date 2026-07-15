@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { normalizeExtensionState } from '../src/popup/App.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getActiveTabInfo, normalizeExtensionState } from '../src/popup/App.js';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('popup state normalization', () => {
   it('fills arrays and settings when an older background returns a partial state', () => {
@@ -34,5 +38,39 @@ describe('popup state normalization', () => {
       model: 'deepseek-chat',
     });
     expect(state.settings.exportDirectory).toBe('Bookmarks');
+  });
+
+  it('reads the active tab from the last focused browser window', async () => {
+    const query = vi.fn(
+      (_queryInfo: chrome.tabs.QueryInfo, callback: (tabs: chrome.tabs.Tab[]) => void): void => {
+        callback([{ title: 'Bookmarks / X', url: 'https://x.com/i/bookmarks' } as chrome.tabs.Tab]);
+      },
+    );
+    vi.stubGlobal('chrome', {
+      runtime: { lastError: undefined },
+      tabs: { query },
+    });
+
+    await expect(getActiveTabInfo()).resolves.toMatchObject({
+      title: 'Bookmarks / X',
+      url: 'https://x.com/i/bookmarks',
+    });
+    expect(query).toHaveBeenCalledWith(
+      { active: true, lastFocusedWindow: true },
+      expect.any(Function),
+    );
+  });
+
+  it('fails closed when Chrome cannot resolve the active tab', async () => {
+    const query = vi.fn(
+      (_queryInfo: chrome.tabs.QueryInfo, callback: (tabs: chrome.tabs.Tab[]) => void): void =>
+        callback([]),
+    );
+    vi.stubGlobal('chrome', {
+      runtime: { lastError: { message: 'No focused window' } },
+      tabs: { query },
+    });
+
+    await expect(getActiveTabInfo()).resolves.toBeUndefined();
   });
 });

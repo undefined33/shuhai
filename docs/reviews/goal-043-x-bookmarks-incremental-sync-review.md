@@ -375,3 +375,13 @@ route trace 同时暴露 `popup/styles.css` 仍从 Google Fonts 发起远程请�
 独立只读 reviewer Helmholtz (`019f6368-1d6b-7eb3-ae58-44cf399b67cb`) 对 `f8539c2..d619859` 给出 `PASS`，P0/P1/P2 均为 0。复审确认六个变更文件中没有 `.pem`、依赖、lockfile 或 CI 变化；manifest 唯一生产增量是公钥，permission、host permission、CSP 和 `update_url` 未变化；固定 ID 算法与测试合理；当前文档没有声称读取/迁移旧存储或完成真实 X。该 reviewer 没有读取私钥、运行测试/build、检查 ACL 或操作 Chrome，因此其 verdict 只关闭 actual-diff review，不替代用户手动重载固定 ID、受界真实 X no-Vault probe 或 disposable Vault 验收。
 
 当前 verdict 保持 `043B FIXED ID GATE PASS / GOAL NOT PASS`。下一步只能由用户从当前 `dist` 手动重载并确认 Chrome 显示上述固定 ID；确认前不得开始真实 X probe，也不得创建或授权 disposable Vault。
+
+### 16.11 日常 Chrome Popup 路由回归复审
+
+用户在固定 ID、当前 `dist` 和精确 `https://x.com/i/bookmarks` 标签上执行真实 toolbar 检查时，Popup 仍回落通用 launcher。这不是旧扩展或错误构建目录，而是 `getActiveTabInfo` 使用 `currentWindow` 后没有解析到可用 X URL。该失败发生在 UI 上下文识别阶段；没有请求 X host permission、创建同步 job、注入 content script、扫描页面或写入 Vault。
+
+候选只改三处：Popup 查询使用 Chrome 官方推荐的 `{ active: true, lastFocusedWindow: true }`，消费 `runtime.lastError` 并严格只用 `tab.url`；`app-state.test.ts` 增加成功与 fail-closed 两项回归；preloaded-extension route fixture 改为 mock 同一查询合同。没有修改 manifest、权限、service worker、同步算法、依赖或 lockfile。
+
+独立只读 reviewer Wegener (`019f63c0-2660-7941-832d-488a3d8aef8b`) verdict 为 `PASS`，P0/P1/P2 均为 0。reviewer 确认查询仍限定为最后聚焦窗口中的 active tab，没有枚举或扩大到其它标签，错误路径保持 fail closed；reviewer 按合同未操作 Chrome、网络或文件。实现者本地重新运行 lint、typecheck、441 项 test/coverage 和 extension build 全部通过；coverage 为 statements 53.65%、branches 72.92%、functions 73.14%、lines 53.65%。Vite 6.4.3 转换 1,992 modules，既有约 542 kB bundle warning 不由本次引入。
+
+本轮结论是 `ROUTE FIX CANDIDATE PASS / REAL TOOLBAR RECHECK REQUIRED`，不是 Goal 完成。必须由用户重新加载固定 ID 后，在原精确 X 收藏页确认上下文 Popup；此前不得开始 no-Vault probe。
