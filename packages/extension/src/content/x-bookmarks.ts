@@ -25,6 +25,7 @@ const textEncoder = new TextEncoder();
 
 export const X_BOOKMARKS_CONTENT_PROTOCOL = X_SYNC_PROTOCOL;
 export const X_BOOKMARKS_CONTENT_WAIT_MS = 350;
+export const X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING = 10_000;
 
 export interface XBookmarksContentLimits {
   readonly maxEntries: number;
@@ -46,6 +47,16 @@ export type XBookmarksContentResponse = XSyncContentResponse;
 interface ObservationBudget {
   count: number;
   readonly maximum: number;
+}
+
+interface LayoutTraversalBudget {
+  count: number;
+  readonly maximum: number;
+}
+
+interface BoundedQueryResult {
+  readonly matches: readonly Element[];
+  readonly truncated: boolean;
 }
 
 interface ParsedPermalink {
@@ -90,6 +101,15 @@ export function parseXBookmarksContentRequest(value: unknown): XBookmarksContent
 function observe(budget: ObservationBudget, amount = 1): boolean {
   budget.count = Math.min(Number.MAX_SAFE_INTEGER, budget.count + amount);
   return budget.count <= budget.maximum;
+}
+
+function traverseLayout(budget: LayoutTraversalBudget): boolean {
+  budget.count = Math.min(Number.MAX_SAFE_INTEGER, budget.count + 1);
+  return budget.count <= budget.maximum;
+}
+
+function failObservationBudget(budget: ObservationBudget): void {
+  budget.count = Math.max(budget.count, budget.maximum + 1);
 }
 
 function truncateUtf8(value: string, maximumBytes: number): string {
@@ -195,38 +215,59 @@ function safeQuery(root: ParentNode, selector: string): Element | null {
 function safeQueryAll(
   root: ParentNode,
   selector: string,
-  budget: ObservationBudget,
-  maximumMatches = budget.maximum + 1,
-): readonly Element[] | null {
+  observationBudget: ObservationBudget,
+  layoutBudget: LayoutTraversalBudget,
+  maximumMatches = Math.max(0, observationBudget.maximum - observationBudget.count),
+): BoundedQueryResult | null {
+  if (!Number.isSafeInteger(maximumMatches) || maximumMatches < 0) {
+    return null;
+  }
   try {
     const node = root as ParentNode & Node;
     const documentRef = node.nodeType === 9 ? (node as Document) : node.ownerDocument;
     if (documentRef?.createTreeWalker && typeof node.nodeType === 'number') {
       const walker = documentRef.createTreeWalker(node, 1);
       const matches: Element[] = [];
-      let current = walker.nextNode();
-      while (current && matches.length < maximumMatches) {
-        if (!observe(budget)) {
-          break;
+      while (true) {
+        const current = walker.nextNode();
+        if (!current) {
+          return { matches, truncated: false };
         }
-        if ((current as Element).matches(selector)) {
-          matches.push(current as Element);
+        if (!traverseLayout(layoutBudget)) {
+          failObservationBudget(observationBudget);
+          return null;
         }
-        current = walker.nextNode();
+        if (!(current as Element).matches(selector)) {
+          continue;
+        }
+        if (!observe(observationBudget)) {
+          return null;
+        }
+        if (matches.length >= maximumMatches) {
+          return { matches, truncated: true };
+        }
+        matches.push(current as Element);
       }
-      return matches;
     }
 
-    // Test fixtures use a minimal ParentNode without browser TreeWalker support.
+    // Minimal test fixtures do not expose a browser TreeWalker.
     const candidates = root.querySelectorAll(selector);
     const matches: Element[] = [];
-    for (let index = 0; index < candidates.length && index < maximumMatches; index += 1) {
-      if (!observe(budget)) {
-        break;
+    const inspectedMatches = Math.min(candidates.length, maximumMatches + 1);
+    for (let index = 0; index < inspectedMatches; index += 1) {
+      if (!observe(observationBudget)) {
+        return null;
       }
-      matches.push(candidates[index]!);
+      if (matches.length >= maximumMatches) {
+        return { matches, truncated: true };
+      }
+      const candidate = candidates[index];
+      if (!candidate) {
+        return null;
+      }
+      matches.push(candidate);
     }
-    return matches;
+    return { matches, truncated: false };
   } catch {
     return null;
   }
@@ -357,14 +398,15 @@ function parsePermalink(value: string | null, pageUrl: string): ParsedPermalink 
 function findMainPermalink(
   card: Element,
   pageUrl: string,
-  budget: ObservationBudget,
+  observationBudget: ObservationBudget,
+  layoutBudget: LayoutTraversalBudget,
 ): { permalink: ParsedPermalink; time: Element } | null {
-  const timeElements = safeQueryAll(card, 'time[datetime]', budget, 4);
-  if (!timeElements) {
+  const result = safeQueryAll(card, 'time[datetime]', observationBudget, layoutBudget, 4);
+  if (!result || result.truncated) {
     return null;
   }
   const matches = new Map<string, { permalink: ParsedPermalink; time: Element }>();
-  for (const time of timeElements) {
+  for (const time of result.matches) {
     let anchor: Element | null;
     try {
       anchor = time.closest('a[href]');
@@ -382,21 +424,31 @@ function findMainPermalink(
   return matches.size === 1 ? [...matches.values()][0]! : null;
 }
 
-function findMainTweetText(card: Element, budget: ObservationBudget): Element | null {
-  const candidates = safeQueryAll(card, '[data-testid="tweetText"]', budget, 8);
-  if (!candidates) {
-    return null;
+function findMainTweetText(
+  card: Element,
+  observationBudget: ObservationBudget,
+  layoutBudget: LayoutTraversalBudget,
+): { readonly ok: boolean; readonly element?: Element } {
+  const result = safeQueryAll(
+    card,
+    '[data-testid="tweetText"]',
+    observationBudget,
+    layoutBudget,
+    8,
+  );
+  if (!result || result.truncated) {
+    return { ok: false };
   }
-  for (const candidate of candidates) {
+  for (const candidate of result.matches) {
     try {
       if (!candidate.closest(QUOTE_SELECTOR) && candidate.closest(CARD_SELECTOR) === card) {
-        return candidate;
+        return { ok: true, element: candidate };
       }
     } catch {
-      return null;
+      return { ok: false };
     }
   }
-  return null;
+  return { ok: true };
 }
 
 function readDisplayName(card: Element, budget: ObservationBudget): string | undefined {
@@ -416,15 +468,29 @@ function readDisplayName(card: Element, budget: ObservationBudget): string | und
 function collectMedia(
   card: Element,
   maximum: number,
-  budget: ObservationBudget,
+  observationBudget: ObservationBudget,
+  layoutBudget: LayoutTraversalBudget,
 ): readonly NonNullable<XBookmarkDomEntryObservation['media']>[number][] | null {
-  const images = safeQueryAll(card, 'img[src]', budget);
-  if (!images) {
+  if (maximum === 0) {
+    return [];
+  }
+  const remainingObservationNodes = Math.max(
+    0,
+    observationBudget.maximum - observationBudget.count,
+  );
+  const result = safeQueryAll(
+    card,
+    'img[src]',
+    observationBudget,
+    layoutBudget,
+    remainingObservationNodes,
+  );
+  if (!result || result.truncated) {
     return null;
   }
   const media: Array<NonNullable<XBookmarkDomEntryObservation['media']>[number]> = [];
   const seen = new Set<string>();
-  for (const image of images) {
+  for (const image of result.matches) {
     if (media.length >= maximum) {
       break;
     }
@@ -475,18 +541,23 @@ function readEntry(
   card: Element,
   pageUrl: string,
   limits: XBookmarksContentLimits,
-  budget: ObservationBudget,
+  observationBudget: ObservationBudget,
+  layoutBudget: LayoutTraversalBudget,
 ): EntryResult {
-  const identity = findMainPermalink(card, pageUrl, budget);
+  const identity = findMainPermalink(card, pageUrl, observationBudget, layoutBudget);
   if (!identity) {
     return { ok: false };
   }
-  const textRoot = findMainTweetText(card, budget);
+  const textResult = findMainTweetText(card, observationBudget, layoutBudget);
+  if (!textResult.ok) {
+    return { ok: false };
+  }
+  const textRoot = textResult.element;
   const text = textRoot
-    ? readBoundedText(textRoot, limits.maxTextBytes, budget) || undefined
+    ? readBoundedText(textRoot, limits.maxTextBytes, observationBudget) || undefined
     : undefined;
-  const displayName = readDisplayName(card, budget);
-  const media = collectMedia(card, limits.maxMedia, budget);
+  const displayName = readDisplayName(card, observationBudget);
+  const media = collectMedia(card, limits.maxMedia, observationBudget, layoutBudget);
   if (!media) {
     return { ok: false };
   }
@@ -494,7 +565,7 @@ function readEntry(
   if (publishedAt !== undefined && publishedAt.length > 64) {
     return { ok: false };
   }
-  const articleLink = safeBoundedQuery(card, 'a[href*="/i/article/"]', budget);
+  const articleLink = safeBoundedQuery(card, 'a[href*="/i/article/"]', observationBudget);
   return {
     ok: true,
     entry: {
@@ -560,17 +631,27 @@ export function readXBookmarksDom(
     };
   }
 
-  const budget: ObservationBudget = { count: 0, maximum: limits.maxObservedNodes };
-  const cards = safeQueryAll(primaryColumn, CARD_SELECTOR, budget, limits.maxEntries + 1);
-  if (!cards) {
+  const observationBudget: ObservationBudget = { count: 0, maximum: limits.maxObservedNodes };
+  const layoutBudget: LayoutTraversalBudget = {
+    count: 0,
+    maximum: X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING,
+  };
+  const cardResult = safeQueryAll(
+    primaryColumn,
+    CARD_SELECTOR,
+    observationBudget,
+    layoutBudget,
+    limits.maxEntries,
+  );
+  if (!cardResult) {
     return {
       pageUrl,
       signal: { kind: 'structure_changed' },
-      observedNodeCount: 0,
+      observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
       entries: [],
     };
   }
-  if (budget.count > budget.maximum) {
+  if (observationBudget.count > observationBudget.maximum) {
     return {
       pageUrl,
       signal: { kind: 'structure_changed' },
@@ -578,6 +659,7 @@ export function readXBookmarksDom(
       entries: [],
     };
   }
+  const cards = cardResult.matches;
   if (cards.length === 0) {
     return {
       pageUrl,
@@ -588,25 +670,25 @@ export function readXBookmarksDom(
   }
 
   const entries: XBookmarkDomEntryObservation[] = [];
-  for (const card of cards.slice(0, limits.maxEntries)) {
-    const result = readEntry(card, pageUrl, limits, budget);
-    if (!result.ok || !result.entry || budget.count > budget.maximum) {
+  for (const card of cards) {
+    const result = readEntry(card, pageUrl, limits, observationBudget, layoutBudget);
+    if (!result.ok || !result.entry || observationBudget.count > observationBudget.maximum) {
       return {
         pageUrl,
         signal: { kind: 'structure_changed' },
-        observedNodeCount: Math.min(budget.count, limits.maxObservedNodes),
+        observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
         entries: [],
       };
     }
     entries.push(result.entry);
-    if (budget.count > budget.maximum) {
+    if (observationBudget.count > observationBudget.maximum) {
       break;
     }
   }
   return {
     pageUrl,
     signal: { kind: 'items' },
-    observedNodeCount: budget.count,
+    observedNodeCount: observationBudget.count,
     entries,
   };
 }

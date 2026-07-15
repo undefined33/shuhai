@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归先暴露 Popup 回落通用 launcher；active-tab 查询修复通过完整门禁和 Node 20 CI 后，用户重载确认 X 上下文入口正常。首次受界 no-Vault probe 随即在读取前以 `tab_changed` 暂停且保持 `0/10`；复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。content script 独立经典脚本构建、语法/global isolation 门禁、watch graph、完整本地门禁和第二轮独立 review 已通过；修复提交 `c9ab16f` 与 GitHub Node 20 CI run `29390133868` / job `87271536552` 也已通过。当前只等待用户重载固定 ID，重载前不得继续真实扫描。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归先暴露 Popup 回落通用 launcher；active-tab 查询修复通过完整门禁和 Node 20 CI 后，用户重载确认 X 上下文入口正常。首次受界 no-Vault probe 因无效经典 content script 在读取前以 `tab_changed` 暂停；构建修复提交 `c9ab16f` 与 GitHub Node 20 CI run `29390133868` / job `87271536552` 已通过。用户重载后的第二次 probe 越过构建门禁，但生产 TreeWalker 将 1,549 个 X 布局元素错误计入 200 内容节点预算，以 `structure_changed` 保持 `0/10` 并停止。只读聚合诊断没有记录帖子内容或标识。首版 5,000-per-query 候选因预算可累计放大和匹配静默截断被独立 reviewer 否决；第二版将布局遍历限制改为整次读取共享 10,000，对实际匹配/读取节点继续累计原 200 上限，并用额外 sentinel 显式拒绝超量 permalink/text/media 匹配。本地 449 项 test/coverage、完整门禁与最终独立 actual-diff review 均已通过，等待提交和新 Node 20 CI。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。用户最新授权允许直接操作当前 X 标签和 ShuHai，但任何持久化数据修改仍须在动作前确认。
 
 ## 1. 用户问题
 
@@ -123,19 +123,20 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 043A ceiling 不得由调用方放大：
 
-| 预算            | 上限       |
-| --------------- | ---------- |
-| 新接收条目      | 50         |
-| 批次/滚动步骤   | 20         |
-| 观察 DOM 节点   | 200        |
-| 单次运行时间    | 15 秒      |
-| 单条正文 UTF-8  | 8 KiB      |
-| 单条媒体链接    | 12         |
-| 总输入/接受字节 | 16 MiB     |
-| checkpoint JSON | 64 KiB     |
-| 连续结构错误    | 1 次即暂停 |
+| 预算                   | 上限       |
+| ---------------------- | ---------- |
+| 新接收条目             | 50         |
+| 批次/滚动步骤          | 20         |
+| 观察 DOM 节点          | 200        |
+| 单次 DOM read 布局遍历 | 10,000     |
+| 单次运行时间           | 15 秒      |
+| 单条正文 UTF-8         | 8 KiB      |
+| 单条媒体链接           | 12         |
+| 总输入/接受字节        | 16 MiB     |
+| checkpoint JSON        | 64 KiB     |
+| 连续结构错误           | 1 次即暂停 |
 
-调用方提供更大值时取 ceiling，更小值可以收紧。50 条和 16 MiB 是整个 job 的累计上限；20 批、200 节点和 15 秒是每次明确 scan/resume invocation 的上限。checkpoint 至少持久化累计 accepted bytes，不能通过重启清零 job 上限。预算耗尽进入可恢复 `paused/budget_exceeded`；即使恰好收满 50 条，只要没有观察到受支持的明确终点，也不能写成 complete。
+调用方提供更大值时取 ceiling，更小值可以收紧。50 条和 16 MiB 是整个 job 的累计上限；20 批、200 内容节点和 15 秒是每次明确 scan/resume invocation 的上限。10,000 布局遍历是每次 `readXBookmarksDom` 的调用方不可放大内部硬上限，由该次读取中的所有受限 selector 查询共享；它不替代 200 内容观察预算，超过时必须 fail closed。checkpoint 至少持久化累计 accepted bytes，不能通过重启清零 job 上限。预算耗尽进入可恢复 `paused/budget_exceeded`；即使恰好收满 50 条，只要没有观察到受支持的明确终点，也不能写成 complete。
 
 ### 4.3 checkpoint 与停止
 

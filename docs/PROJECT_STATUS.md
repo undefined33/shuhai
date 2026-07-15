@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-15
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 首次真实 X probe 暴露的 content script 构建缺陷已通过本地门禁、独立复审和 Node 20 CI，等待用户重载后复测
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 第二次真实 X probe 在 `0/10` 暴露 DOM 预算误计数，第二版修复候选已通过本地门禁与独立复审，等待提交和 Node 20 CI
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定 ID 和既有 Node 20 CI 均已通过。用户已在日常 Chrome 固定 ID 上确认精确 X 收藏页能够显示“X 收藏同步”；首次 10-candidate no-Vault probe 随即在读取前以 `tab_changed` 暂停并保持 `0/10`，没有读取收藏或写入 Vault。复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。修复提交 `c9ab16f` 让五个 content entry 各自生成单文件经典 IIFE，并在 build 后逐个进行语法与 global isolation 校验；本地 lint、typecheck、443 项 test/coverage、extension build、watch/产物检查、第二轮独立 actual-diff review 和 GitHub Node 20 CI run `29390133868` / job `87271536552` 已通过。当前只等待用户重载固定 ID，再在指定的原 X 标签执行 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒、429/challenge 零自动重试的 no-Vault probe。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定 ID 和既有 Node 20 CI 均已通过。首次真实 10-candidate no-Vault probe 因无效经典 content script 在读取前以 `tab_changed` 暂停；修复提交 `c9ab16f` 与 Node 20 CI 已通过。用户重载后第二次 probe 已越过构建门禁，但 `safeQueryAll` 的生产 TreeWalker 把 X 的所有布局元素错误计入 200 个内容观察节点，任务以 `structure_changed` 保持 `0/10` 并停止，没有写入 Vault。严格只读聚合诊断只记录 exact page、容器/selector 布尔值和数量：当前 viewport 有 8 张 card、`primaryColumn` 共有 1,549 个布局元素；按“只计实际匹配和读取节点”的候选口径预计 103/200。首版候选把布局限制按 selector 查询重置且会静默截断第 5 个 permalink，独立 reviewer 因此给出 `FAIL`。第二版候选保留 200 内容观察上限，改为整次读取共享 10,000 布局遍历上限，并用 sentinel 显式拒绝超量匹配；本地 lint、typecheck、449 项 test/coverage、extension build、产物语法、Prettier、audit 和 lock 检查已通过，最终独立 actual-diff review 为 `PASS`（P0/P1/P2 均为 0），现等待追加提交和新 Node 20 CI。此前不得继续真实扫描。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -75,13 +75,13 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | content 构建修复/CI PASS；等待重载复测   |
+|    3 | Goal 043 | `IN_PROGRESS`             | 共享 DOM 预算 review PASS；等待 CI       |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码、自动 route integration、独立项目 Chrome profile 的人工 toolbar E2E、固定 unpacked extension ID、content 构建修复和新 Node 20 CI 已通过，当前等待用户重载后继续受界真实 X no-Vault probe。真实 selector、平台 stop code 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
+用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码、自动 route integration、独立项目 Chrome profile 的人工 toolbar E2E、固定 unpacked extension ID 和 content 构建修复已通过；用户重载后的第二次真实 probe 又暴露 DOM 预算误计数。当前第二版候选保持 selector 与 200 内容节点上限不变，将未读取的布局遍历限制为整次读取共享 10,000，并对超过调用方匹配上限的 sentinel fail closed；等待最终独立 review/CI 后才能再次重载复测。真实 selector、平台 stop code 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -105,10 +105,10 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. 用户已确认固定 ID 在精确 X 收藏页显示正确入口；首次 probe 在 `0/10`、无读取和无 Vault 写入时因无效构建产物暂停，不能作为 selector 或平台行为证据。
-2. content script 独立经典脚本修复已通过 lint、typecheck、443 项 test/coverage、extension build、watch、五个产物 `node --check`、静态 module syntax、global isolation、第二轮独立只读 review 和 Node 20 CI run `29390133868`。
-3. 用户在 `chrome://extensions` 对固定 ID `jdjmpeogiojjhdabdjmpeclcbjcekbje` 点击一次重新加载，再回到原 `https://x.com/i/bookmarks` 标签打开 ShuHai；不要卸载、迁移存储或触碰其它标签。
-4. 用户确认重载后才可点击 `继续扫描`，沿用首次 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；单 tab/job/invocation/outstanding request，滚动完成到下一批请求至少 2 秒，遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
+1. content script 独立经典脚本修复 `c9ab16f` 与 Node 20 CI 已通过；用户重载后的第二次 probe 在 `0/10`、无 Vault 写入时以 `structure_changed` 停止。
+2. 只读聚合诊断确认真实 selector 存在，误报来自生产 TreeWalker 把 1,549 个无关布局元素计入 200 内容节点预算；没有记录标题、正文、作者、ID、URL、媒体或 DOM snapshot。
+3. 首版 5,000-per-query 候选被独立 review 否决；第二版使用整次读取共享 10,000 布局遍历上限、原 200 内容观察上限和超量匹配 sentinel。449 项 test/coverage、完整本地门禁与最终独立 review 已通过，必须追加提交、普通 push 并取得新 Node 20 CI。
+4. 上述门禁通过后才通知用户重载固定 ID `jdjmpeogiojjhdabdjmpeclcbjcekbje`。再次点击 `继续扫描` 会写入扩展本地 SyncJob/candidate 数据，必须按用户最新要求在动作前单独确认；仍沿用 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault 边界。
 5. no-Vault probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
 6. 真实 Chrome 只使用本机已安装浏览器；不得枚举、读取、切换、刷新或关闭其它标签，不读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile，也不得下载浏览器或干扰其它 Chrome 进程。
 

@@ -8,6 +8,7 @@ import {
   X_BOOKMARKS_CONTENT_CEILINGS,
   X_BOOKMARKS_CONTENT_PROTOCOL,
   X_BOOKMARKS_CONTENT_WAIT_MS,
+  X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING,
   type XBookmarksContentEnvironment,
   type XBookmarksContentRequest,
 } from '../x-bookmarks.js';
@@ -92,8 +93,11 @@ class FakeDocument {
 
 interface FixtureDom {
   readonly document: FakeDocument;
+  readonly primaryColumn: FakeElement;
   readonly card: FakeElement;
+  readonly time: FakeElement;
   readonly textRoot: FakeElement;
+  readonly image: FakeElement;
 }
 
 function cardFixture(
@@ -127,7 +131,56 @@ function cardFixture(
     .setAll('img[src]', [image]);
   primaryColumn.setAll('article[data-testid="tweet"]', [card]);
   document.setFirst('[data-testid="primaryColumn"]', primaryColumn);
-  return { document, card, textRoot };
+  return { document, primaryColumn, card, time, textRoot, image };
+}
+
+function defineMatches(element: object, selectors: readonly string[]): void {
+  Object.defineProperty(element, 'matches', {
+    value: (selector: string) => selectors.includes(selector),
+  });
+}
+
+function installFixtureTreeWalker(
+  fixture: FixtureDom,
+  primaryLayoutNoise: number,
+  cardLayoutNoise: number,
+): readonly number[] {
+  defineMatches(fixture.card, ['article[data-testid="tweet"]']);
+  defineMatches(fixture.time, ['time[datetime]']);
+  defineMatches(fixture.textRoot, ['[data-testid="tweetText"]']);
+  defineMatches(fixture.image, ['img[src]']);
+
+  const visitsPerWalker: number[] = [];
+  const unrelatedNode = { matches: () => false };
+  const ownerDocument = {
+    createTreeWalker(root: unknown) {
+      const nodes =
+        root === fixture.primaryColumn
+          ? [...Array.from({ length: primaryLayoutNoise }, () => unrelatedNode), fixture.card]
+          : root === fixture.card
+            ? [
+                ...Array.from({ length: cardLayoutNoise }, () => unrelatedNode),
+                fixture.time,
+                fixture.textRoot,
+                fixture.image,
+              ]
+            : [];
+      const walkerIndex = visitsPerWalker.push(0) - 1;
+      let index = 0;
+      return {
+        nextNode: () => {
+          const node = nodes[index++] ?? null;
+          if (node) {
+            visitsPerWalker[walkerIndex] = (visitsPerWalker[walkerIndex] ?? 0) + 1;
+          }
+          return node;
+        },
+      };
+    },
+  };
+  Object.defineProperty(fixture.primaryColumn, 'ownerDocument', { value: ownerDocument });
+  Object.defineProperty(fixture.card, 'ownerDocument', { value: ownerDocument });
+  return visitsPerWalker;
 }
 
 function request(overrides: Partial<ReadBatchRequest> = {}): ReadBatchRequest {
@@ -216,6 +269,162 @@ describe('X bookmarks content DOM reader', () => {
     expect(observation.observedNodeCount).toBeLessThanOrEqual(200);
   });
 
+  it('supports a caller disabling media extraction without treating images as an error', () => {
+    const fixture = cardFixture();
+    const observation = readXBookmarksDom(
+      fixture.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+      { maxMedia: 0 },
+    );
+
+    expect(observation.signal).toEqual({ kind: 'items' });
+    expect(observation.entries).toHaveLength(1);
+    expect(observation.entries[0]?.media).toEqual([]);
+  });
+
+  it('does not spend the content budget on unrelated X layout descendants', () => {
+    const fixture = cardFixture();
+    const primaryColumn = fixture.document.querySelector('[data-testid="primaryColumn"]');
+    if (!primaryColumn) {
+      throw new Error('Fixture must expose the X primary column');
+    }
+    Object.defineProperty(fixture.card, 'matches', {
+      value: (selector: string) => selector === 'article[data-testid="tweet"]',
+    });
+    const createTreeWalker = vi.fn(() => {
+      let remainingLayoutNodes = X_BOOKMARKS_CONTENT_CEILINGS.maxObservedNodes + 1;
+      let returnedCard = false;
+      return {
+        nextNode: () => {
+          if (remainingLayoutNodes-- > 0) {
+            return { matches: () => false };
+          }
+          if (!returnedCard) {
+            returnedCard = true;
+            return fixture.card;
+          }
+          return null;
+        },
+      };
+    });
+    Object.defineProperty(primaryColumn, 'ownerDocument', {
+      value: { createTreeWalker },
+    });
+
+    const observation = readXBookmarksDom(
+      fixture.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+    );
+
+    expect(observation.signal).toEqual({ kind: 'items' });
+    expect(observation.entries).toHaveLength(1);
+    expect(observation.observedNodeCount).toBeLessThanOrEqual(
+      X_BOOKMARKS_CONTENT_CEILINGS.maxObservedNodes,
+    );
+    expect(createTreeWalker).toHaveBeenCalledOnce();
+  });
+
+  it('allows the exact shared layout ceiling and fails closed on the next node', () => {
+    const acceptedFixture = cardFixture();
+    const acceptedVisits = installFixtureTreeWalker(
+      acceptedFixture,
+      X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING - 10,
+      0,
+    );
+    const accepted = readXBookmarksDom(
+      acceptedFixture.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+    );
+
+    const rejectedFixture = cardFixture();
+    const rejectedVisits = installFixtureTreeWalker(
+      rejectedFixture,
+      X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING - 9,
+      0,
+    );
+    const rejected = readXBookmarksDom(
+      rejectedFixture.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+    );
+
+    expect(accepted.signal).toEqual({ kind: 'items' });
+    expect(accepted.entries).toHaveLength(1);
+    expect(acceptedVisits.reduce((total, value) => total + value, 0)).toBe(
+      X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING,
+    );
+    expect(rejected).toMatchObject({
+      signal: { kind: 'structure_changed' },
+      observedNodeCount: X_BOOKMARKS_CONTENT_CEILINGS.maxObservedNodes,
+      entries: [],
+    });
+    expect(rejectedVisits.reduce((total, value) => total + value, 0)).toBe(
+      X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING + 1,
+    );
+  });
+
+  it('shares the layout traversal budget across all selector queries', () => {
+    const fixture = cardFixture();
+    const visits = installFixtureTreeWalker(fixture, 2_999, 2_497);
+
+    const observation = readXBookmarksDom(
+      fixture.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+    );
+
+    expect(observation).toMatchObject({
+      signal: { kind: 'structure_changed' },
+      observedNodeCount: X_BOOKMARKS_CONTENT_CEILINGS.maxObservedNodes,
+      entries: [],
+    });
+    expect(visits).toHaveLength(4);
+    expect(Math.max(...visits)).toBeLessThan(5_000);
+    expect(visits.reduce((total, value) => total + value, 0)).toBe(
+      X_BOOKMARKS_LAYOUT_TRAVERSAL_CEILING + 1,
+    );
+  });
+
+  it('fails closed when TreeWalker traversal or selector matching throws', () => {
+    const traversalFixture = cardFixture();
+    Object.defineProperty(traversalFixture.primaryColumn, 'ownerDocument', {
+      value: {
+        createTreeWalker: () => ({
+          nextNode: () => {
+            throw new Error('hostile TreeWalker');
+          },
+        }),
+      },
+    });
+    const matchFixture = cardFixture();
+    let returnedHostileNode = false;
+    Object.defineProperty(matchFixture.primaryColumn, 'ownerDocument', {
+      value: {
+        createTreeWalker: () => ({
+          nextNode: () => {
+            if (returnedHostileNode) {
+              return null;
+            }
+            returnedHostileNode = true;
+            return {
+              matches: () => {
+                throw new Error('hostile matches');
+              },
+            };
+          },
+        }),
+      },
+    });
+
+    expect(
+      readXBookmarksDom(
+        traversalFixture.document as unknown as Document,
+        'https://x.com/i/bookmarks',
+      ),
+    ).toMatchObject({ signal: { kind: 'structure_changed' }, entries: [] });
+    expect(
+      readXBookmarksDom(matchFixture.document as unknown as Document, 'https://x.com/i/bookmarks'),
+    ).toMatchObject({ signal: { kind: 'structure_changed' }, entries: [] });
+  });
+
   it('does not confuse hostile post text with a page-level challenge', () => {
     const fixture = cardFixture(
       'rate limit exceeded CAPTCHA account is locked - these words are research content',
@@ -260,6 +469,58 @@ describe('X bookmarks content DOM reader', () => {
       readXBookmarksDom(
         fixture.document as unknown as Document,
         'https://x.com/i/bookmarks?folder=1',
+      ),
+    ).toMatchObject({ signal: { kind: 'structure_changed' }, entries: [] });
+  });
+
+  it('fails closed when a fifth status permalink would otherwise be silently truncated', () => {
+    const fixtureWithFivePermalinks = () => {
+      const fixture = cardFixture();
+      const duplicateTimes = Array.from({ length: 3 }, (_, index) => {
+        const anchor = new FakeElement('a', '', {
+          href: '/researcher/status/1234567890123456789',
+        });
+        return new FakeElement('time', '', {
+          datetime: `2026-07-14T00:00:0${index + 1}.000Z`,
+        })
+          .setClosest('a[href]', anchor)
+          .setClosest('[data-testid="quoteTweet"]', null);
+      });
+      const conflictingAnchor = new FakeElement('a', '', { href: '/other/status/999' });
+      const conflictingTime = new FakeElement('time', '', {
+        datetime: '2026-07-14T00:00:04.000Z',
+      })
+        .setClosest('a[href]', conflictingAnchor)
+        .setClosest('[data-testid="quoteTweet"]', null);
+      const times = [fixture.time, ...duplicateTimes, conflictingTime];
+      fixture.card.setAll('time[datetime]', times);
+      return { fixture, times };
+    };
+
+    const fallbackFixture = fixtureWithFivePermalinks();
+    const treeWalkerFixture = fixtureWithFivePermalinks();
+    for (const time of treeWalkerFixture.times) {
+      defineMatches(time, ['time[datetime]']);
+    }
+    Object.defineProperty(treeWalkerFixture.fixture.card, 'ownerDocument', {
+      value: {
+        createTreeWalker: () => {
+          let index = 0;
+          return { nextNode: () => treeWalkerFixture.times[index++] ?? null };
+        },
+      },
+    });
+
+    expect(
+      readXBookmarksDom(
+        fallbackFixture.fixture.document as unknown as Document,
+        'https://x.com/i/bookmarks',
+      ),
+    ).toMatchObject({ signal: { kind: 'structure_changed' }, entries: [] });
+    expect(
+      readXBookmarksDom(
+        treeWalkerFixture.fixture.document as unknown as Document,
+        'https://x.com/i/bookmarks',
       ),
     ).toMatchObject({ signal: { kind: 'structure_changed' }, entries: [] });
   });
