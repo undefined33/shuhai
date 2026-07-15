@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `98fbd49` 已通过 438 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29335924317`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。2026-07-15 用户授权的第 3.4 节固定开发 ID 门禁已在本地通过；当前恢复等待受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `8565c98` 已通过 439 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29381583537`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。2026-07-15 用户授权的第 3.4 节固定开发 ID 门禁已通过本地和 CI 验证；当前恢复等待受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -104,7 +104,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 固定身份结果：extension ID 为 `jdjmpeogiojjhdabdjmpeclcbjcekbje`，公钥 DER SHA-256 为 `939CF4E68E99730139CF42B21924A194DCE68F6FF1D0F34BE924D9DD614FA21C`。二者均为公开身份信息；私钥正文和私钥摘要不得进入仓库、日志或报告。
 
-本地门禁结果：`PASS`。私钥为 RSA 2048，授权路径和文件均关闭 ACL 继承，只包含 ASUS、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`；source/dist 公钥一致，构建目录无 `.pem`。Prettier、lint、typecheck、439 项 test/coverage、extension build、`git diff --check` 均通过；full/production audit 均为 0，lock SHA-256 前后保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`。该结果只证明固定身份候选，不替代 Node 20 CI 或真实 Chrome 重载验证。
+门禁结果：`PASS`。私钥为 RSA 2048，授权路径和文件均关闭 ACL 继承，只包含 ASUS、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`；source/dist 公钥一致，构建目录无 `.pem`。Prettier、lint、typecheck、439 项 test/coverage、extension build、`git diff --check` 均通过；full/production audit 均为 0，lock SHA-256 前后保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，GitHub Node 20 CI run `29381583537` 通过。该结果仍不替代真实 Chrome 重载验证。
 
 ## 4. 043A 数据与行为合同
 

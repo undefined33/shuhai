@@ -1,7 +1,7 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-15
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration、人工 toolbar E2E 和固定扩展 ID 本地门禁已通过，等待受界真实 X no-Vault probe
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration、人工 toolbar E2E 和固定扩展 ID 完整门禁已通过，等待受界真实 X no-Vault probe
 > 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；用户先从当前 dist 手动重载并确认固定 ID，再按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界执行真实 X probe。
 
 ## 当前编排状态
