@@ -104,7 +104,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 固定身份结果：extension ID 为 `jdjmpeogiojjhdabdjmpeclcbjcekbje`，公钥 DER SHA-256 为 `939CF4E68E99730139CF42B21924A194DCE68F6FF1D0F34BE924D9DD614FA21C`。二者均为公开身份信息；私钥正文和私钥摘要不得进入仓库、日志或报告。
 
-门禁结果：`PASS`。私钥为 RSA 2048，授权路径和文件均关闭 ACL 继承，只包含 ASUS、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`；source/dist 公钥一致，构建目录无 `.pem`。Prettier、lint、typecheck、439 项 test/coverage、extension build、`git diff --check` 均通过；full/production audit 均为 0，lock SHA-256 前后保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，GitHub Node 20 CI run `29381583537` 通过。该结果仍不替代真实 Chrome 重载验证。
+门禁结果：`PASS`。私钥为 RSA 2048，授权路径和文件均关闭 ACL 继承，只包含 ASUS、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`；source/dist 公钥一致，构建目录无 `.pem`。Prettier、lint、typecheck、439 项 test/coverage、extension build、`git diff --check` 均通过；full/production audit 均为 0，lock SHA-256 前后保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，GitHub Node 20 CI run `29381583537` 通过。独立只读 reviewer Helmholtz (`019f6368-1d6b-7eb3-ae58-44cf399b67cb`) 对 `f8539c2..d619859` 给出 `PASS`，P0/P1/P2 均为 0；该 review 没有读取私钥或运行 Chrome/测试，因此仍不替代真实 Chrome 重载验证。
 
 ## 4. 043A 数据与行为合同
 

@@ -365,3 +365,13 @@ route trace 同时暴露 `popup/styles.css` 仍从 Google Fonts 发起远程请�
 重新 build 并重开同一专用 profile 后，用户在 `本次任务已取消` 终态看到 `返回工作区`，实际点击并确认“返回正常”。专用测试 Chrome 随后正常退出，按精确 profile marker 检查没有遗留进程。人工截图没有作为“无权限零 job”的数据库证据；该不变量继续由 service-worker/IndexedDB 自动化回归承担。
 
 最终 verdict 更新为 `043B MANUAL TOOLBAR E2E PASS / GOAL NOT PASS`。下一门禁是用户明确指定的单个日常 `https://x.com/i/bookmarks` 标签上的 10-candidate、最多 5 次滚动、单 outstanding request、批次至少 2 秒、no-Vault probe；真实 selector、平台 stop code、disposable Vault 1-3 条写入和第二次 incremental 去重仍未验证。
+
+### 16.10 固定扩展 ID 门禁与独立复审
+
+用户于 2026-07-15 精确授权在 `C:\Users\ASUS\.shuhai\keys\shuhai-extension.pem` 创建并限制访问的私钥。实现使用离线生成的 RSA 2048 密钥；私钥路径和文件均关闭 ACL 继承，只允许当前 ASUS 用户、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`。仓库和构建目录只包含 DER SPKI 公钥，不包含 `.pem` 或私钥正文。固定 unpacked extension ID 为 `jdjmpeogiojjhdabdjmpeclcbjcekbje`；该身份不承诺恢复卸载前的 extension storage。
+
+生产提交 `8565c98` 只在 manifest 增加公钥，并在 `manifest.test.ts` 验证 canonical base64、DER SPKI、RSA 2048 和 Chrome 固定 ID 算法；状态收尾提交为 `d619859`。本地 439 项 test/coverage、lint、typecheck、extension build、Prettier、`git diff --check`、full/production audit、source/dist key 比对和 dist 无 `.pem` 均通过；lock SHA-256 未漂移。GitHub Actions Node 20 run `29381583537` 对 `8565c98` 完整通过，后续文档收尾 run `29381742147` 也通过。
+
+独立只读 reviewer Helmholtz (`019f6368-1d6b-7eb3-ae58-44cf399b67cb`) 对 `f8539c2..d619859` 给出 `PASS`，P0/P1/P2 均为 0。复审确认六个变更文件中没有 `.pem`、依赖、lockfile 或 CI 变化；manifest 唯一生产增量是公钥，permission、host permission、CSP 和 `update_url` 未变化；固定 ID 算法与测试合理；当前文档没有声称读取/迁移旧存储或完成真实 X。该 reviewer 没有读取私钥、运行测试/build、检查 ACL 或操作 Chrome，因此其 verdict 只关闭 actual-diff review，不替代用户手动重载固定 ID、受界真实 X no-Vault probe 或 disposable Vault 验收。
+
+当前 verdict 保持 `043B FIXED ID GATE PASS / GOAL NOT PASS`。下一步只能由用户从当前 `dist` 手动重载并确认 Chrome 显示上述固定 ID；确认前不得开始真实 X probe，也不得创建或授权 disposable Vault。
