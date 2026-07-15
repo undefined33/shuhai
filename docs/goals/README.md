@@ -1,20 +1,20 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-15
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；首次真实 X probe 暴露 content script 构建缺陷，修复候选已通过本地门禁和第二轮独立复审，等待 Node 20 CI
-> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE` 的构建修复子门禁；修复提交和 CI 通过后，用户重载固定 ID，再在原 X 收藏页按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界继续 probe。
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；首次真实 X probe 暴露的 content script 构建缺陷已由提交 `c9ab16f` 修复，本地门禁、第二轮独立复审和 Node 20 CI 已通过，等待用户重载复测
+> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；用户重载固定 ID 后，再在原 X 收藏页按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界继续 probe。
 
 ## 当前编排状态
 
-| Lane     | 状态                      | 说明                                      | 恢复条件                        |
-| -------- | ------------------------- | ----------------------------------------- | ------------------------------- |
-| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收  | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                  | 四轮独立 review 最终 PASS       |
-| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础     | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | content 构建修复 PASS；等待 CI            | 重载后受界 no-Vault probe       |
-| 044-046  | `PLANNED`                 | 微博、书签和 UI                           | 按各自前置另写可执行 spec       |
-| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台            | 两周 dogfood 证明真实需求       |
-| workflow | `043B_REAL_X_PROBE_GATE`  | 修复提交/CI 后重载并继续原 no-Vault probe | probe 后进入 disposable Vault   |
+| Lane     | 状态                      | 说明                                     | 恢复条件                        |
+| -------- | ------------------------- | ---------------------------------------- | ------------------------------- |
+| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
+| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
+| Goal 043 | `IN_PROGRESS`             | content 构建修复/CI PASS；等待用户重载   | 重载后受界 no-Vault probe       |
+| 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
+| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
+| workflow | `043B_REAL_X_PROBE_GATE`  | 用户重载后继续原 no-Vault probe          | probe 后进入 disposable Vault   |
 
 ## v4 当前队列
 

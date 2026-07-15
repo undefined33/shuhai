@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归先暴露 Popup 回落通用 launcher；active-tab 查询修复通过完整门禁和 Node 20 CI 后，用户重载确认 X 上下文入口正常。首次受界 no-Vault probe 随即在读取前以 `tab_changed` 暂停且保持 `0/10`；复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。content script 独立经典脚本构建、语法/global isolation 门禁、watch graph、完整本地门禁和第二轮独立 review 已通过；追加提交、新 Node 20 CI 和用户重载前不得继续真实扫描。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归先暴露 Popup 回落通用 launcher；active-tab 查询修复通过完整门禁和 Node 20 CI 后，用户重载确认 X 上下文入口正常。首次受界 no-Vault probe 随即在读取前以 `tab_changed` 暂停且保持 `0/10`；复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。content script 独立经典脚本构建、语法/global isolation 门禁、watch graph、完整本地门禁和第二轮独立 review 已通过；修复提交 `c9ab16f` 与 GitHub Node 20 CI run `29390133868` / job `87271536552` 也已通过。当前只等待用户重载固定 ID，重载前不得继续真实扫描。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
