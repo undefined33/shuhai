@@ -2,7 +2,7 @@
 
 > 最后更新：2026-07-15
 > 当前状态：Goal 041/042、Goal 043A、受界 no-Vault probe 与 disposable Vault 首次写入功能证据已通过；第二次 incremental 回归已完成离线修复与全量门禁
-> 执行规则：当前为 `IN_PROGRESS_REPAIR_RETEST`；独立复审已 PASS，完成提交/CI 和用户重载后，再以 10 条上限核对已写项 existing/skip 与文件数保持 5，不删除首轮文件或使用真实 Vault。
+> 执行规则：当前为 `IN_PROGRESS_REPAIR_RETEST`；独立复审、提交与 CI 已 PASS，用户重载后以 10 条上限核对已写项 existing/skip 与文件数保持 5，不删除首轮文件或使用真实 Vault。
 
 ## 当前编排状态
 
@@ -11,7 +11,7 @@
 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
 | Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | 首轮 5 条已写；修复与独立复审通过        | 提交后重载，核对真实去重        |
+| Goal 043 | `IN_PROGRESS`             | 首轮 5 条已写；修复提交与 CI 通过        | 用户重载，核对真实去重          |
 | 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
 | Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
 | workflow | `043B_REPAIR_RETEST`      | 离线修复门禁通过；等待独立 review/重载   | 第二次去重、最终验收            |

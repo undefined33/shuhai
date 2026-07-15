@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-15
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 首次 disposable Vault 已创建 5 个文件，第二次 incremental 回归修复已通过独立复审，等待提交、重载和真实去重复测
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 第二次 incremental 回归修复已提交且 CI 通过，等待用户重载和真实去重复测
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。用户在明确指定的日常 `https://x.com/i/bookmarks` 标签完成受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；随后在用户单独授权的 worktree disposable Vault `.pnpm-store/goal-043/test-vault/real-20260715-10candidate` 首次写入 5 条，Side Panel 显示 `created=5`、`already_exists=0`、`skipped=0`，文件系统只读核对为 5 个非空文件、总计 5002 bytes、单文件 865-1200 bytes，未读取文件名或正文。第二次扫描暴露三项回归：终态返回旧总工作台、新 job 未经确认从 10/5 放大为 50/20，以及密集卡片触发 `structure_changed`。审计进一步确认密集卡片先耗尽共享内容预算，再因 coordinator 的精确键集合错误拒绝合法 `identityOnlySourceItemIds`；独立 review 还发现 identity-only catalog match 不得推进 authoritative known frontier。当前候选已固定新 job 为 10 candidates/5 scroll actions，终态返回 X 同步入口并等待新的 Popup-only intent；后续过密卡片只能在全局 200 内容节点内输出严格验证的 identity-only/`metadata_only`，可保守记为 existing，但会清零连续前沿，未知项可在后续完整读取时原位升级。第一条异常、伪造 hint、permalink 冲突与 10,000 layout traversal 越界继续 fail closed。最新全仓 lint、typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；第三轮独立 actual-diff review 为 `PASS`，P0/P1/P2 均为 0。提交/CI、用户重载和第二次去重复测仍待完成。现有 5 个测试文件不删除、不修改；授权不包含真实 Vault、其它标签、整个 profile 或其它站点。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。用户在明确指定的日常 `https://x.com/i/bookmarks` 标签完成受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；随后在用户单独授权的 worktree disposable Vault `.pnpm-store/goal-043/test-vault/real-20260715-10candidate` 首次写入 5 条，Side Panel 显示 `created=5`、`already_exists=0`、`skipped=0`，文件系统只读核对为 5 个非空文件、总计 5002 bytes、单文件 865-1200 bytes，未读取文件名或正文。第二次扫描暴露三项回归：终态返回旧总工作台、新 job 未经确认从 10/5 放大为 50/20，以及密集卡片触发 `structure_changed`。审计进一步确认密集卡片先耗尽共享内容预算，再因 coordinator 的精确键集合错误拒绝合法 `identityOnlySourceItemIds`；独立 review 还发现 identity-only catalog match 不得推进 authoritative known frontier。当前修复已固定新 job 为 10 candidates/5 scroll actions，终态返回 X 同步入口并等待新的 Popup-only intent；后续过密卡片只能在全局 200 内容节点内输出严格验证的 identity-only/`metadata_only`，可保守记为 existing，但会清零连续前沿，未知项可在后续完整读取时原位升级。第一条异常、伪造 hint、permalink 冲突与 10,000 layout traversal 越界继续 fail closed。最新全仓 lint、typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；第三轮独立 actual-diff review 为 `PASS`，P0/P1/P2 均为 0。修复提交 `058de72` 已普通 push 到 Draft PR #5，GitHub Actions run `29434729210` 已通过。用户重载和第二次去重复测仍待完成。现有 5 个测试文件不删除、不修改；授权不包含真实 Vault、其它标签、整个 profile 或其它站点。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
