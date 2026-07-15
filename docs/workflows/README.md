@@ -1,6 +1,6 @@
 # ShuHai Workflow
 
-> 最后更新：2026-07-14
+> 最后更新：2026-07-15
 > 适用范围：ShuHai 的规划、实施、审查、QA、提交与状态维护。
 
 ## 1. 为什么有这套流程
@@ -60,4 +60,4 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 |    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032               |
 |    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS`。合同内离线实现、测试、fixture route integration、独立 profile 人工 toolbar E2E、独立 review 和 Node 20 CI 已通过；当前只允许受界真实 X no-Vault probe。隔离账号不可用时，只有用户明确指定的单个日常 X 收藏页标签可以作为例外，且不得枚举其它标签或读取整个 profile；disposable Vault 写入仍后置到 probe 通过之后。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS`。合同内离线实现、测试、fixture route integration、独立 profile 人工 toolbar E2E、独立 review、Node 20 CI 和固定扩展 ID 本地门禁已通过；当前等待用户从最新 dist 手动重载固定 ID 后继续受界真实 X no-Vault probe。隔离账号不可用时，只有用户明确指定的单个日常 X 收藏页标签可以作为例外，且不得枚举其它标签或读取整个 profile。disposable Vault 写入仍后置到 probe 通过之后。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

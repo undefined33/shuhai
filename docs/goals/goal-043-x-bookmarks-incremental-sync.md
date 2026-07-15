@@ -2,15 +2,15 @@
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
 status: IN_PROGRESS
-version: 2
-updated: 2026-07-14
+version: 3
+updated: 2026-07-15
 depends_on: [goal-041, goal-042]
 branch: codex/social-sync-v4
 ---
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `98fbd49` 已通过 438 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29335924317`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。当前唯一实施门禁是受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 最新候选提交 `98fbd49` 已通过 438 项测试、完整本地门禁、最终 actual-diff review、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI run `29335924317`。route integration 只证明当前 `dist`、离线路由、无权限零 job/零注入和 Popup 上下文展示；人工证据补充证明真实工具栏手势、Popup 单动作、Side Panel exact X permission preflight 和终态返回，但不冒充真实 X selector 或人工 IndexedDB 检查。2026-07-15 用户授权的第 3.4 节固定开发 ID 门禁已在本地通过；当前恢复等待受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -87,7 +87,24 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。人工 E2E 证明用户实际点击工具栏后的 Popup 单动作、Side Panel permission preflight、取消和终态返回；无权限零 job/零注入仍由自动化 service-worker 测试证明。用户已授权日常 Chrome 只操作 X 并要求限制并发，下一道真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E、Node 20 CI 和第 3.4 节固定 ID 门禁均已通过。人工 E2E 证明用户实际点击工具栏后的 Popup 单动作、Side Panel permission preflight、取消和终态返回；无权限零 job/零注入仍由自动化 service-worker 测试证明。受界真实 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
+
+### 3.4 043B：稳定扩展身份前置门禁
+
+用户于 2026-07-15 明确授权在 `C:\Users\ASUS\.shuhai\keys\shuhai-extension.pem` 创建并限制访问的本地私钥。该授权只用于为当前 unpacked extension 建立固定 ID，不授权读取或迁移旧扩展存储，也不授权 Chrome、书签、X 页面、Vault、注册表、系统配置或其它用户目录操作。
+
+门禁要求：
+
+1. 使用本机运行时离线生成 RSA 2048 密钥；私钥只写入上述精确路径，创建时 fail closed，已有文件时不得覆盖。
+2. 新建 `keys` 目录和私钥文件不得继承 `CodexSandboxUsers` 或普通用户组读取权限；只允许当前用户、SYSTEM 和 Administrators，验证时只读取 ACL、长度和公钥指纹，禁止输出私钥正文。
+3. 仓库只在 `packages/extension/manifest.json` 保存 DER SPKI 公钥的 base64 `key`；不得提交 `.pem`、私钥摘要、恢复口令或其它 secret。
+4. 从公钥计算并固定预期 32 位 Chrome extension ID；`packages/extension/tests/manifest.test.ts` 必须验证 key 格式、RSA 2048 公钥和固定 ID，extension build 后再以精确只读比较验证 `dist/manifest.json` 透传同一 key。
+5. 该 ID 迁移不声称保留卸载数据；Chrome 移除扩展会清除 extension local storage。迁移后只允许用户手动重载一次新的固定 ID，再重新进入原受界真实 X probe。
+6. 不增加权限、依赖、网络、更新地址、签名包或 Web Store 发布；不运行 Chrome，不读取实际 extension storage/IndexedDB。
+
+固定身份结果：extension ID 为 `jdjmpeogiojjhdabdjmpeclcbjcekbje`，公钥 DER SHA-256 为 `939CF4E68E99730139CF42B21924A194DCE68F6FF1D0F34BE924D9DD614FA21C`。二者均为公开身份信息；私钥正文和私钥摘要不得进入仓库、日志或报告。
+
+本地门禁结果：`PASS`。私钥为 RSA 2048，授权路径和文件均关闭 ACL 继承，只包含 ASUS、SYSTEM 和 Administrators，且无 `CodexSandboxUsers`；source/dist 公钥一致，构建目录无 `.pem`。Prettier、lint、typecheck、439 项 test/coverage、extension build、`git diff --check` 均通过；full/production audit 均为 0，lock SHA-256 前后保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`。该结果只证明固定身份候选，不替代 Node 20 CI 或真实 Chrome 重载验证。
 
 ## 4. 043A 数据与行为合同
 
@@ -544,7 +561,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 
 #### 允许修改生产文件
 
-- `packages/extension/manifest.json`（仅第 13.1 节的 X/Twitter 常驻权限迁移）
+- `packages/extension/manifest.json`（第 13.1 节的 X/Twitter 常驻权限迁移，以及第 3.4 节用户授权的固定开发公钥）
 - `packages/extension/src/social/sync-schema.ts`
 - `packages/extension/src/social/sync-store.ts`
 - `packages/extension/src/social/x-sync-coordinator.ts`
@@ -574,7 +591,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/tests/x-sync-runtime.test.ts`（new）
 - `packages/extension/tests/x-sync-service-worker.test.ts`（new）
 - `packages/extension/tests/x-sync-ui-model.test.ts`（new）
-- `packages/extension/tests/manifest.test.ts`（仅权限、静态注入与扩展 UI 无远程资源回归）
+- `packages/extension/tests/manifest.test.ts`（权限、静态注入、扩展 UI 无远程资源，以及第 3.4 节固定公钥/ID/构建透传回归）
 - `packages/extension/tests/vault-writer.test.ts`
 - `packages/extension/src/content/__tests__/x-bookmarks.test.ts`（new）
 - `packages/extension/e2e/x-bookmarks-fixture.spec.ts`
@@ -591,7 +608,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/src/shared/bookmark-types.ts`、`packages/extension/src/content/twitter.ts`、旧普通网页/微博页面、Options、shared package 和 `packages/desktop/**` 均只读或禁止修改。
 - 不修改 package manifest、lockfile、CI 或依赖；043B 无新依赖。
 - 不修改 Goal 032 候选、其它 Goal、旧路线图和历史 spec。
-- allowlist 外文件需求、超出第 13.1 节的 manifest/permission 变化或第二套 DB/writer 需求立即 STOP 并回到合同 review。
+- allowlist 外文件需求、超出第 13.1 节权限迁移和第 3.4 节固定公钥的 manifest 变化，或第二套 DB/writer 需求立即 STOP 并回到合同 review。
 
 ### 13.10 允许命令、Chrome 与真实数据门禁
 
@@ -677,7 +694,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 
 ### 13.13 043B STOP 条件
 
-- 需要超出第 13.1 节的 manifest/permission/CSP 改动、MAIN world、fetch/private GraphQL、Cookie/token、CAPTCHA/429 绕过或后台自动监控。
+- 需要超出第 13.1 节权限迁移和第 3.4 节固定公钥的 manifest/permission/CSP 改动、MAIN world、fetch/private GraphQL、Cookie/token、CAPTCHA/429 绕过或后台自动监控。
 - sender/documentId 在本机 Chrome 无法可靠获得或 bind；不得降级只看 message.type/URL 字符串。
 - exact-existing 仍占 candidate cap、backfill 在已入库前 50 条后无法继续，或 pause batch 仍无诚实进入 review 的状态。
 - DB3 需要重算 hash、改 Vault path、清 catalog、删除旧 job 或猜测 active write。

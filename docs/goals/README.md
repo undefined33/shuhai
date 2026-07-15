@@ -1,8 +1,8 @@
 # ShuHai Goal 状态索引
 
-> 最后更新：2026-07-14
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration 和人工 toolbar E2E 已通过，等待受界真实 X no-Vault probe
-> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；代码候选、actual-diff review、自动 route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 已通过。真实 X probe 只允许用户指定的单个 X 收藏页标签，并保持 10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界。
+> 最后更新：2026-07-15
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；Goal 043B route integration、人工 toolbar E2E 和固定扩展 ID 本地门禁已通过，等待受界真实 X no-Vault probe
+> 执行规则：当前为 `IN_PROGRESS_REAL_X_PROBE_GATE`；用户先从当前 dist 手动重载并确认固定 ID，再按单标签、10 candidates、最多 5 次滚动、单 outstanding request、批次至少 2 秒及 no-Vault 边界执行真实 X probe。
 
 ## 当前编排状态
 
@@ -14,7 +14,7 @@
 | Goal 043 | `IN_PROGRESS`             | toolbar E2E PASS；等待真实 X probe       | 受界 no-Vault probe             |
 | 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
 | Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `043B_REAL_X_PROBE_GATE`  | 单标签、限额、no-Vault 真实 X probe      | probe 后进入 disposable Vault   |
+| workflow | `043B_REAL_X_PROBE_GATE`  | 固定 ID 重载后，执行受界真实 X probe     | probe 后进入 disposable Vault   |
 
 ## v4 当前队列
 
