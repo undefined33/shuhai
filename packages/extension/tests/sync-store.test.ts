@@ -1289,6 +1289,58 @@ describe('SyncStore checkpoint and item recovery', () => {
     });
     store.close();
   });
+
+  it('rebuilds an unverifiable legacy DB3 known frontier instead of incrementing it twice', async () => {
+    const factory = new IDBFactory();
+    const dbName = 'sync-db3-known-frontier-compatibility';
+    let store = await openSyncStore({ indexedDB: factory, dbName });
+    await createScanningJob(store);
+    const existing = socialItem(30);
+    await store.putRecord({
+      schemaVersion: 1,
+      key: makeSyncRecordKey(existing.source, existing.sourceItemId),
+      source: existing.source,
+      sourceItemId: existing.sourceItemId,
+      canonicalUrl: existing.canonicalUrl,
+      contentHash: existing.contentHash,
+      relativePath: 'Social/x/existing.md',
+      completeness: existing.completeness,
+      extractorVersion: existing.extractorVersion,
+      importedAt: timestamp(1),
+      lastSeenAt: timestamp(1),
+    });
+    await store.classifyAndPersistScanBatch('job-1', 1, [existing], 1, timestamp(2));
+    await store.pauseJobWithStopRecord('job-1', 1, 'user_paused', 'scanning', timestamp(3));
+    store.close();
+
+    const native = await openNativeDatabase(factory, dbName, 3);
+    const transaction = native.transaction('jobs', 'readwrite');
+    const jobs = transaction.objectStore('jobs');
+    const rawJob = (await requestResult(jobs.get('job-1'))) as Record<string, unknown>;
+    const legacyCheckpoint = { ...(rawJob.checkpoint as Record<string, unknown>) };
+    delete legacyCheckpoint.knownFrontierSourceItemIds;
+    await requestResult(jobs.put({ ...rawJob, checkpoint: legacyCheckpoint }));
+    await transactionDone(transaction);
+    native.close();
+
+    store = await openSyncStore({ indexedDB: factory, dbName });
+    await store.claimScanRevision('job-1', 1, timestamp(4));
+    const replayed = await store.classifyAndPersistScanBatch(
+      'job-1',
+      2,
+      [existing],
+      1,
+      timestamp(5),
+    );
+
+    expect(replayed.job.checkpoint).toMatchObject({
+      scannedCount: 2,
+      catalogExistingObservationCount: 2,
+      consecutiveKnownIds: 1,
+      knownFrontierSourceItemIds: [existing.sourceItemId],
+    });
+    store.close();
+  });
 });
 
 describe('SyncStore persisted review selection', () => {

@@ -415,6 +415,22 @@ describe('X bookmarks typed signals and immutable budgets', () => {
     expect(alreadyFull.items).toEqual([]);
   });
 
+  it('keeps stable replays while only unseen IDs consume remaining candidate slots', async () => {
+    const knownSourceItemIds = [fixtureSourceItemId(1), fixtureSourceItemId(2)];
+    const result = await adapt(createXBookmarksFixtureObservation(3, { kind: 'items' }), {
+      ...FIXTURE_CAPTURE_OPTIONS,
+      remainingCandidateSlots: 1,
+      knownSourceItemIds,
+    });
+
+    expect(result.items.map((item) => item.sourceItemId)).toEqual([
+      ...knownSourceItemIds,
+      fixtureSourceItemId(3),
+    ]);
+    expect(result.signal).toMatchObject({ kind: 'budget_exceeded', budget: 'candidate_items' });
+    expect(result.metrics.acceptedItems).toBe(3);
+  });
+
   it('allows a later batch to reuse candidate slots after catalog-existing observations', async () => {
     const first = await adapt(createXBookmarksFixtureObservation(3, { kind: 'items' }), {
       ...FIXTURE_CAPTURE_OPTIONS,

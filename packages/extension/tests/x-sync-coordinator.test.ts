@@ -382,6 +382,30 @@ describe('XSyncCoordinator', () => {
     expect(await store.listJobItems('adapter-abort-signal')).toHaveLength(0);
   });
 
+  it('applies the invocation deadline while loading persisted replay identities', async () => {
+    const store = await createStore();
+    const listSpy = vi
+      .spyOn(store, 'listJobItems')
+      .mockImplementationOnce(() => new Promise<never>(() => undefined));
+    const adapter = new QueueAdapter([]);
+    try {
+      const result = await coordinator(store, adapter).createAndStart({
+        jobId: 'replay-identity-deadline',
+        limits: { maxElapsedMs: 20 },
+      });
+
+      expect(result).toMatchObject({
+        outcome: 'paused',
+        stopReason: 'budget_exceeded',
+        metrics: { steps: 0 },
+        job: { status: 'paused', summary: { uniqueItemCount: 0 } },
+      });
+      expect(adapter.requests).toHaveLength(0);
+    } finally {
+      listSpy.mockRestore();
+    }
+  });
+
   it('revalidates the bound document after persistence before committing a terminal scan', async () => {
     const store = await createStore();
     const candidate = await item(46);
@@ -719,12 +743,59 @@ describe('XSyncCoordinator', () => {
       candidateCount: 0,
       catalogExistingObservationCount: 20,
       consecutiveKnownIds: 20,
+      knownFrontierSourceItemIds: existing.map((entry) => entry.sourceItemId),
     });
     expect(await store.listJobItems('known-frontier')).toEqual([]);
     expect(adapter.requests).toHaveLength(1);
     expect(adapter.requests[0]).toMatchObject({
       jobCandidateItems: 0,
       remainingCandidateSlots: 50,
+    });
+  });
+
+  it('does not count repeated exact-existing IDs again after a paused scan resumes', async () => {
+    const store = await createStore();
+    const existing = await Promise.all([item(370), item(371)]);
+    await store.putRecords(existing.map((entry) => record(entry)));
+    const adapter = new QueueAdapter([
+      batch({ kind: 'items' }, existing),
+      batch({ kind: 'items' }, existing),
+    ]);
+    const sync = coordinator(store, adapter);
+
+    const paused = await sync.createAndStart({
+      jobId: 'known-frontier-resume-replay',
+      limits: { maxBatches: 1 },
+    });
+    expect(paused).toMatchObject({
+      outcome: 'paused',
+      job: {
+        checkpoint: {
+          consecutiveKnownIds: 2,
+          knownFrontierSourceItemIds: existing.map((entry) => entry.sourceItemId),
+        },
+      },
+    });
+
+    const resumed = await sync.resume({
+      jobId: 'known-frontier-resume-replay',
+      expectedScanRevision: paused.job.scanRevision,
+      limits: { maxBatches: 1 },
+    });
+
+    expect(adapter.requests[1]).toMatchObject({
+      candidateSourceItemIds: [],
+      knownFrontierSourceItemIds: existing.map((entry) => entry.sourceItemId),
+    });
+    expect(resumed).toMatchObject({
+      outcome: 'paused',
+      job: {
+        checkpoint: {
+          catalogExistingObservationCount: 4,
+          consecutiveKnownIds: 2,
+          knownFrontierSourceItemIds: existing.map((entry) => entry.sourceItemId),
+        },
+      },
     });
   });
 
@@ -860,6 +931,37 @@ describe('XSyncCoordinator', () => {
       scanRevision: 2,
       jobCandidateItems: 1,
       remainingCandidateSlots: 49,
+      candidateSourceItemIds: [first.sourceItemId],
+      knownFrontierSourceItemIds: [],
+    });
+  });
+
+  it('carries stable IDs forward so a near-cap DOM reader can reach later cards', async () => {
+    const store = await createStore();
+    const firstEight = await Promise.all(
+      Array.from({ length: 8 }, (_, index) => item(500 + index)),
+    );
+    const finalTwo = await Promise.all([item(508), item(509)]);
+    const adapter = new QueueAdapter([
+      batch({ kind: 'items' }, firstEight),
+      (request: AdapterBatchRequest) => {
+        expect(request.remainingCandidateSlots).toBe(2);
+        expect(request.candidateSourceItemIds).toEqual(
+          firstEight.map((entry) => entry.sourceItemId),
+        );
+        expect(request.knownFrontierSourceItemIds).toEqual([]);
+        return batch({ kind: 'terminal' }, finalTwo);
+      },
+    ]);
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'near-cap-known-prefix',
+      limits: { maxItems: 10 },
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'ready_for_review',
+      job: { checkpoint: { candidateCount: 10 } },
     });
   });
 

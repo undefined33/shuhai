@@ -295,6 +295,8 @@ describe('X sync runtime messages', () => {
       step: 2,
       nonce,
       mode: 'incremental',
+      candidateSourceItemIds: [],
+      knownFrontierSourceItemIds: [],
       limits: {
         remainingCandidateSlots: 10,
         maxObservedNodes: 50,
@@ -338,6 +340,22 @@ describe('X sync runtime messages', () => {
     expect(() => parseXSyncContentRequest({ ...request, unknown: true })).toThrow(
       XSyncMessageValidationError,
     );
+    expect(() =>
+      parseXSyncContentRequest({ ...request, candidateSourceItemIds: ['not-an-x-id'] }),
+    ).toThrow(XSyncMessageValidationError);
+    expect(() =>
+      parseXSyncContentRequest({
+        ...request,
+        candidateSourceItemIds: Array.from({ length: 51 }, (_, index) => String(index + 1)),
+      }),
+    ).toThrow(XSyncMessageValidationError);
+    expect(() =>
+      parseXSyncContentRequest({
+        ...request,
+        candidateSourceItemIds: ['1'],
+        knownFrontierSourceItemIds: ['1'],
+      }),
+    ).toThrow(XSyncMessageValidationError);
     expect(() =>
       parseXSyncContentResponse({
         ...contentResponse(),

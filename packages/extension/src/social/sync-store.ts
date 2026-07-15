@@ -6,6 +6,7 @@ import {
   HttpsUrlSchema,
   IsoTimestampSchema,
   RelativeMarkdownPathSchema,
+  SYNC_KNOWN_FRONTIER_LIMIT,
   SYNC_LIMITS,
   SYNC_JOB_CONTRACT_VERSION,
   SYNC_SCHEMA_VERSION,
@@ -64,7 +65,6 @@ export type SyncStoreName = (typeof SYNC_STORE_NAMES)[number];
 const MAX_LIST_RESULTS = 10_000;
 const MAX_TRANSACTION_INPUT_BYTES = 32 * 1_024 * 1_024;
 const MAX_OBSERVED_NODES_PER_INVOCATION = 200;
-const KNOWN_FRONTIER_LIMIT = 20;
 const encoder = new TextEncoder();
 
 interface SyncDatabase extends DBSchema {
@@ -3446,7 +3446,13 @@ export class SyncStore {
         let catalogExistingObservations = 0;
         let pendingReviewCount = job.summary.pendingReviewCount;
         let unreviewedCount = job.summary.unreviewedCount;
-        let consecutiveKnownIds = previousCheckpoint?.consecutiveKnownIds ?? 0;
+        let knownFrontierSourceItemIds = [
+          ...(previousCheckpoint?.knownFrontierSourceItemIds ?? []),
+        ];
+        let consecutiveKnownIds =
+          previousCheckpoint?.knownFrontierSourceItemIds === undefined
+            ? 0
+            : (previousCheckpoint.consecutiveKnownIds ?? 0);
         const classifications: ClassifyAndPersistScanBatchResult['classifications'] = [];
         const rowsToWrite: SyncJobItemRow[] = [];
 
@@ -3484,6 +3490,7 @@ export class SyncStore {
             }
             replayedCandidates += 1;
             consecutiveKnownIds = 0;
+            knownFrontierSourceItemIds = [];
             classifications.push({ sourceItemId: item.sourceItemId, classification });
             continue;
           }
@@ -3492,7 +3499,12 @@ export class SyncStore {
           classifications.push({ sourceItemId: item.sourceItemId, classification });
           if (classification === 'existing') {
             catalogExistingObservations += 1;
-            consecutiveKnownIds = Math.min(KNOWN_FRONTIER_LIMIT, consecutiveKnownIds + 1);
+            if (!knownFrontierSourceItemIds.includes(item.sourceItemId)) {
+              if (knownFrontierSourceItemIds.length < SYNC_KNOWN_FRONTIER_LIMIT) {
+                knownFrontierSourceItemIds.push(item.sourceItemId);
+              }
+              consecutiveKnownIds = knownFrontierSourceItemIds.length;
+            }
             continue;
           }
           candidateCount += 1;
@@ -3500,6 +3512,7 @@ export class SyncStore {
           insertedCandidates += 1;
           unreviewedCount += 1;
           consecutiveKnownIds = 0;
+          knownFrontierSourceItemIds = [];
           const row = SyncJobItemRowSchema.parse({
             key: makeSyncJobItemKey(id, item.sourceItemId),
             schemaVersion: SYNC_SCHEMA_VERSION,
@@ -3548,6 +3561,7 @@ export class SyncStore {
           classificationErrorCount,
           catalogExistingObservationCount,
           consecutiveKnownIds,
+          knownFrontierSourceItemIds,
           ...(previousCheckpoint?.cursor === undefined
             ? {}
             : { cursor: previousCheckpoint.cursor }),
@@ -3697,6 +3711,7 @@ export class SyncStore {
         classificationErrorCount: job.summary.classificationErrorCount,
         catalogExistingObservationCount: job.checkpoint?.catalogExistingObservationCount ?? 0,
         consecutiveKnownIds: 0,
+        knownFrontierSourceItemIds: [],
       });
       const nextJob = SyncJobRowSchema.parse({
         ...job,
@@ -3832,6 +3847,7 @@ export class SyncStore {
         catalogExistingObservationCount:
           job.checkpoint.catalogExistingObservationCount + (classification === 'existing' ? 1 : 0),
         consecutiveKnownIds: 0,
+        knownFrontierSourceItemIds: [],
         updatedAt,
       });
       const nextJob = SyncJobRowSchema.parse({

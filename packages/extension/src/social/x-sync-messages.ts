@@ -19,6 +19,7 @@ export const X_SYNC_MESSAGE_LIMITS = Object.freeze({
   intentNodes: 64,
   bindingNodes: 64,
   selectedItems: 50,
+  knownFrontierItems: 20,
 } as const);
 
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -432,15 +433,35 @@ const contentRequestBase = {
   nonce: nonceSchema,
 };
 
-const contentRequestSchema = z.discriminatedUnion('type', [
-  z.strictObject({ ...contentRequestBase, type: z.literal('ping') }),
-  z.strictObject({
-    ...contentRequestBase,
-    type: z.literal('read-batch'),
-    mode: scanModeSchema,
-    limits: contentLimitsSchema,
-  }),
-]);
+const contentRequestSchema = z
+  .discriminatedUnion('type', [
+    z.strictObject({ ...contentRequestBase, type: z.literal('ping') }),
+    z.strictObject({
+      ...contentRequestBase,
+      type: z.literal('read-batch'),
+      mode: scanModeSchema,
+      candidateSourceItemIds: z.array(XSourceItemIdSchema).max(X_SYNC_MESSAGE_LIMITS.selectedItems),
+      knownFrontierSourceItemIds: z
+        .array(XSourceItemIdSchema)
+        .max(X_SYNC_MESSAGE_LIMITS.knownFrontierItems),
+      limits: contentLimitsSchema,
+    }),
+  ])
+  .superRefine((request, context) => {
+    if (request.type !== 'read-batch') {
+      return;
+    }
+    const sourceItemIds = [
+      ...request.candidateSourceItemIds,
+      ...request.knownFrontierSourceItemIds,
+    ];
+    if (new Set(sourceItemIds).size !== sourceItemIds.length) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Known X source item IDs must be unique across request groups',
+      });
+    }
+  });
 
 export type XSyncContentRequest = z.infer<typeof contentRequestSchema>;
 

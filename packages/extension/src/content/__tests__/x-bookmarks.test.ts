@@ -193,6 +193,8 @@ function request(overrides: Partial<ReadBatchRequest> = {}): ReadBatchRequest {
     step: 0,
     nonce: 'abcdefghijklmnopqrstuvwxyzABCDEF',
     mode: 'incremental',
+    candidateSourceItemIds: [],
+    knownFrontierSourceItemIds: [],
     limits: {
       remainingCandidateSlots: 50,
       maxObservedNodes: X_BOOKMARKS_CONTENT_CEILINGS.maxObservedNodes,
@@ -596,6 +598,84 @@ describe('X bookmarks content message boundary', () => {
       jobId: 'fixture-job',
       locationHref: 'https://x.com/i/bookmarks',
       result: { signal: { kind: 'items' } },
+    });
+  });
+
+  it('keeps the latest candidate replay barrier while reading a later new card', async () => {
+    const first = cardFixture('Known one', '/researcher/status/1000000000000000001');
+    const second = cardFixture('Known two', '/researcher/status/1000000000000000002');
+    const third = cardFixture('New item', '/researcher/status/1000000000000000003');
+    first.primaryColumn.setAll('article[data-testid="tweet"]', [
+      first.card,
+      second.card,
+      third.card,
+    ]);
+    const target = environment(first);
+
+    const response = await handleXBookmarksContentRequest(
+      target.value,
+      request({
+        candidateSourceItemIds: ['1000000000000000001', '1000000000000000002'],
+        limits: { ...request().limits, remainingCandidateSlots: 1 },
+      }),
+    );
+
+    expect(response).toMatchObject({
+      type: 'batch-result',
+      result: {
+        items: [{ sourceItemId: '1000000000000000002' }, { sourceItemId: '1000000000000000003' }],
+      },
+    });
+  });
+
+  it('returns bounded replay evidence when every rendered card is already known', async () => {
+    const fixture = cardFixture('Known item', '/researcher/status/1000000000000000001');
+    const target = environment(fixture);
+
+    const response = await handleXBookmarksContentRequest(
+      target.value,
+      request({
+        candidateSourceItemIds: ['1000000000000000001'],
+        limits: { ...request().limits, remainingCandidateSlots: 1 },
+      }),
+    );
+
+    expect(response).toMatchObject({
+      type: 'batch-result',
+      result: {
+        items: [{ sourceItemId: '1000000000000000001' }],
+      },
+    });
+  });
+
+  it('finds the 51st card without returning all 50 known candidate replays', async () => {
+    const sourceItemIds = Array.from(
+      { length: 51 },
+      (_, index) => `1000000000000000${String(index + 1).padStart(3, '0')}`,
+    );
+    const fixtures = sourceItemIds.map((sourceItemId, index) =>
+      cardFixture(`Item ${index + 1}`, `/researcher/status/${sourceItemId}`),
+    );
+    const first = fixtures[0]!;
+    first.primaryColumn.setAll(
+      'article[data-testid="tweet"]',
+      fixtures.map((fixture) => fixture.card),
+    );
+    const candidateSourceItemIds = sourceItemIds.slice(0, 50);
+
+    const response = await handleXBookmarksContentRequest(
+      environment(first).value,
+      request({
+        candidateSourceItemIds,
+        limits: { ...request().limits, remainingCandidateSlots: 1 },
+      }),
+    );
+
+    expect(response).toMatchObject({
+      type: 'batch-result',
+      result: {
+        items: [{ sourceItemId: candidateSourceItemIds[49] }, { sourceItemId: sourceItemIds[50] }],
+      },
     });
   });
 

@@ -537,6 +537,8 @@ class XSyncChromeAdapter implements AdapterBatchPort {
           step: request.step,
           nonce: lease.binding.nonce,
           mode: request.mode,
+          candidateSourceItemIds: [...request.candidateSourceItemIds],
+          knownFrontierSourceItemIds: [...request.knownFrontierSourceItemIds],
           limits: {
             remainingCandidateSlots: request.remainingCandidateSlots,
             maxObservedNodes: request.limits.maxObservedNodes,

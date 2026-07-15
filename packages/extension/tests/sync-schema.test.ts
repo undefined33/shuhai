@@ -570,6 +570,35 @@ describe('persisted sync schemas', () => {
     expect(WriteOutcomeSchema.safeParse(hostileOutcome).success).toBe(false);
   });
 
+  it('binds persisted known-frontier IDs to the consecutive-known count', () => {
+    const checkpoint = {
+      schemaVersion: 1,
+      contractVersion: 2,
+      adapterVersion: 1,
+      scanRevision: 1,
+      scannedCount: 2,
+      acceptedCount: 2,
+      acceptedBytes: 100,
+      candidateCount: 0,
+      classificationErrorCount: 0,
+      catalogExistingObservationCount: 2,
+      consecutiveKnownIds: 2,
+      knownFrontierSourceItemIds: ['1000000000000000001', '1000000000000000002'],
+      updatedAt: '2026-07-13T00:00:01Z',
+    };
+
+    expect(SyncCheckpointSchema.safeParse(checkpoint).success).toBe(true);
+    expect(
+      SyncCheckpointSchema.safeParse({
+        ...checkpoint,
+        knownFrontierSourceItemIds: ['1000000000000000001', '1000000000000000001'],
+      }).success,
+    ).toBe(false);
+    expect(
+      SyncCheckpointSchema.safeParse({ ...checkpoint, knownFrontierSourceItemIds: [] }).success,
+    ).toBe(false);
+  });
+
   it.each([
     '../escape.md',
     '/absolute.md',

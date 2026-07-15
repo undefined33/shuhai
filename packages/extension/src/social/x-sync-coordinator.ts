@@ -4,6 +4,7 @@ import {
   SyncJobSchema,
   SyncJobIdSchema,
   SYNC_LIMITS,
+  XSourceItemIdSchema,
   type SocialItem,
   type SyncJob,
   type SyncScanCompletion,
@@ -44,6 +45,8 @@ export interface AdapterBatchRequest {
   readonly invocationElapsedMs: number;
   readonly scrollActionsUsed: number;
   readonly maxScrollActionsRemaining: number;
+  readonly candidateSourceItemIds: readonly string[];
+  readonly knownFrontierSourceItemIds: readonly string[];
   readonly limits: Readonly<XBookmarksLimits>;
 }
 
@@ -55,6 +58,15 @@ export interface AdapterBatchPort {
 
 export interface XSyncCoordinatorStorePort {
   getJob(jobId: string): Promise<SyncJob | undefined>;
+  listJobItems(
+    jobId: string,
+    options?: { readonly limit?: number },
+  ): Promise<
+    Array<{
+      readonly sourceItemId: string;
+      readonly classification: 'pending' | 'new' | 'existing' | 'changed' | 'incomplete' | 'error';
+    }>
+  >;
   claimScanRevision(
     jobId: string,
     expectedScanRevision: number,
@@ -741,7 +753,23 @@ export class XSyncCoordinator {
       return this.pauseResult(currentJob, 'budget_exceeded', progress, startedAt);
     }
 
-    const seenStableIds = new Set<string>();
+    const persistedItemsResult = await runWithRemainingBudget(() =>
+      this.store.listJobItems(currentJob.id, { limit: X_BOOKMARKS_CEILINGS.maxItems }),
+    );
+    if (persistedItemsResult === INVOCATION_DEADLINE_EXCEEDED) {
+      return this.pauseResult(currentJob, 'budget_exceeded', progress, startedAt);
+    }
+    const candidateSourceItemIds = new Set<string>();
+    for (const persistedItem of persistedItemsResult) {
+      const sourceItemId = XSourceItemIdSchema.safeParse(persistedItem.sourceItemId);
+      if (!sourceItemId.success) {
+        return this.pauseResult(currentJob, 'structure_changed', progress, startedAt);
+      }
+      if (persistedItem.classification !== 'existing') {
+        candidateSourceItemIds.add(sourceItemId.data);
+      }
+    }
+    const invocationSeenStableIds = new Set<string>();
     let consecutiveNoProgressBatches = 0;
     const maximumSteps = Math.min(limits.maxBatches, limits.maxScrollActions);
     for (let step = 0; step < maximumSteps; step += 1) {
@@ -754,6 +782,12 @@ export class XSyncCoordinator {
       }
 
       const checkpoint = currentJob.checkpoint;
+      const knownFrontierSourceItemIds = checkpoint?.knownFrontierSourceItemIds ?? [];
+      if (
+        knownFrontierSourceItemIds.some((sourceItemId) => candidateSourceItemIds.has(sourceItemId))
+      ) {
+        return this.pauseResult(currentJob, 'structure_changed', progress, startedAt);
+      }
       const jobCandidateItems = checkpoint?.candidateCount ?? 0;
       const remainingCandidateSlots = limits.maxItems - jobCandidateItems;
       if (remainingCandidateSlots <= 0) {
@@ -777,6 +811,10 @@ export class XSyncCoordinator {
         invocationElapsedMs: elapsedBefore,
         scrollActionsUsed: step,
         maxScrollActionsRemaining: limits.maxScrollActions - step,
+        candidateSourceItemIds: Object.freeze(
+          [...candidateSourceItemIds].slice(0, X_BOOKMARKS_CEILINGS.maxItems),
+        ),
+        knownFrontierSourceItemIds: Object.freeze([...knownFrontierSourceItemIds]),
         limits: requestLimits,
       });
 
@@ -874,9 +912,12 @@ export class XSyncCoordinator {
         persisted.replayedCandidates + persisted.catalogExistingObservations;
       this.reportProgress(currentJob, progress, startedAt);
       let newStableIds = 0;
-      for (const item of result.items) {
-        if (!seenStableIds.has(item.sourceItemId)) {
-          seenStableIds.add(item.sourceItemId);
+      for (const classification of persisted.classifications) {
+        if (classification.classification !== 'existing') {
+          candidateSourceItemIds.add(classification.sourceItemId);
+        }
+        if (!invocationSeenStableIds.has(classification.sourceItemId)) {
+          invocationSeenStableIds.add(classification.sourceItemId);
           newStableIds += 1;
         }
       }

@@ -609,6 +609,8 @@ export type SyncBudgets = z.infer<typeof SyncBudgetsSchema>;
 export const SyncScanModeSchema = z.enum(['incremental', 'backfill']);
 export type SyncScanMode = z.infer<typeof SyncScanModeSchema>;
 
+export const SYNC_KNOWN_FRONTIER_LIMIT = 20;
+
 export const SyncScanCompletionSchema = z.enum([
   'trusted_terminal',
   'known_frontier',
@@ -630,6 +632,10 @@ const syncCheckpointObjectSchema = z
     classificationErrorCount: countSchema,
     catalogExistingObservationCount: countSchema,
     consecutiveKnownIds: countSchema,
+    knownFrontierSourceItemIds: z
+      .array(XSourceItemIdSchema)
+      .max(SYNC_KNOWN_FRONTIER_LIMIT)
+      .optional(),
     cursor: boundedString(SYNC_LIMITS.cursorBytes, 1).refine(isSafeIdentifier).optional(),
     updatedAt: IsoTimestampSchema,
   })
@@ -675,6 +681,25 @@ const syncCheckpointObjectSchema = z
         path: ['consecutiveKnownIds'],
         message: 'consecutiveKnownIds must be backed by catalog-existing observations',
       });
+    }
+    if (checkpoint.knownFrontierSourceItemIds !== undefined) {
+      if (
+        new Set(checkpoint.knownFrontierSourceItemIds).size !==
+        checkpoint.knownFrontierSourceItemIds.length
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['knownFrontierSourceItemIds'],
+          message: 'knownFrontierSourceItemIds must be unique',
+        });
+      }
+      if (checkpoint.knownFrontierSourceItemIds.length !== checkpoint.consecutiveKnownIds) {
+        context.addIssue({
+          code: 'custom',
+          path: ['knownFrontierSourceItemIds'],
+          message: 'knownFrontierSourceItemIds must match consecutiveKnownIds',
+        });
+      }
     }
   });
 export const SyncCheckpointSchema = budgetedSchema(syncCheckpointObjectSchema, {

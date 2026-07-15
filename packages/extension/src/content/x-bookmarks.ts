@@ -18,6 +18,7 @@ import {
 } from '../social/x-sync-messages.js';
 
 const X_STATUS_PATH_PATTERN = /^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,19})$/u;
+const X_SOURCE_ITEM_ID_PATTERN = /^\d{1,19}$/u;
 const CONTENT_MARKER = '__shuhaiXBookmarksContentReaderV1Installed';
 const CARD_SELECTOR = 'article[data-testid="tweet"]';
 const QUOTE_SELECTOR = '[data-testid="quoteTweet"]';
@@ -61,7 +62,19 @@ interface BoundedQueryResult {
 
 interface ParsedPermalink {
   readonly account: string;
+  readonly sourceItemId: string;
   readonly canonicalUrl: string;
+}
+
+interface MainPermalinkIdentity {
+  readonly permalink: ParsedPermalink;
+  readonly time: Element;
+}
+
+export interface XBookmarksDomCursor {
+  readonly candidateSourceItemIds?: readonly string[];
+  readonly knownFrontierSourceItemIds?: readonly string[];
+  readonly maxUnknownEntries?: number;
 }
 
 interface EntryResult {
@@ -391,7 +404,11 @@ function parsePermalink(value: string | null, pageUrl: string): ParsedPermalink 
   const account = match?.[1];
   const sourceItemId = match?.[2];
   return account && sourceItemId
-    ? { account, canonicalUrl: `https://x.com/${account}/status/${sourceItemId}` }
+    ? {
+        account,
+        sourceItemId,
+        canonicalUrl: `https://x.com/${account}/status/${sourceItemId}`,
+      }
     : null;
 }
 
@@ -400,12 +417,12 @@ function findMainPermalink(
   pageUrl: string,
   observationBudget: ObservationBudget,
   layoutBudget: LayoutTraversalBudget,
-): { permalink: ParsedPermalink; time: Element } | null {
+): MainPermalinkIdentity | null {
   const result = safeQueryAll(card, 'time[datetime]', observationBudget, layoutBudget, 4);
   if (!result || result.truncated) {
     return null;
   }
-  const matches = new Map<string, { permalink: ParsedPermalink; time: Element }>();
+  const matches = new Map<string, MainPermalinkIdentity>();
   for (const time of result.matches) {
     let anchor: Element | null;
     try {
@@ -543,8 +560,10 @@ function readEntry(
   limits: XBookmarksContentLimits,
   observationBudget: ObservationBudget,
   layoutBudget: LayoutTraversalBudget,
+  knownIdentity?: MainPermalinkIdentity,
 ): EntryResult {
-  const identity = findMainPermalink(card, pageUrl, observationBudget, layoutBudget);
+  const identity =
+    knownIdentity ?? findMainPermalink(card, pageUrl, observationBudget, layoutBudget);
   if (!identity) {
     return { ok: false };
   }
@@ -586,6 +605,7 @@ export function readXBookmarksDom(
   documentRef: Document,
   pageUrl: string,
   requestedLimits: Partial<XBookmarksContentLimits> = X_BOOKMARKS_CONTENT_CEILINGS,
+  cursor: XBookmarksDomCursor = {},
 ): XBookmarksDomObservation {
   const limits: XBookmarksContentLimits = {
     maxEntries: Math.min(
@@ -617,6 +637,27 @@ export function readXBookmarksDom(
     };
   }
 
+  const candidateSourceItemIds = cursor.candidateSourceItemIds ?? [];
+  const knownFrontierSourceItemIds = cursor.knownFrontierSourceItemIds ?? [];
+  const knownSourceItemIds = [...candidateSourceItemIds, ...knownFrontierSourceItemIds];
+  const maxUnknownEntries = Math.min(
+    limits.maxEntries,
+    Math.max(1, cursor.maxUnknownEntries ?? limits.maxEntries),
+  );
+  if (
+    knownSourceItemIds.some((sourceItemId) => !X_SOURCE_ITEM_ID_PATTERN.test(sourceItemId)) ||
+    new Set(knownSourceItemIds).size !== knownSourceItemIds.length
+  ) {
+    return {
+      pageUrl,
+      signal: { kind: 'structure_changed' },
+      observedNodeCount: 0,
+      entries: [],
+    };
+  }
+  const candidateSourceItemIdSet = new Set(candidateSourceItemIds);
+  const knownFrontierSourceItemIdSet = new Set(knownFrontierSourceItemIds);
+
   const challenge = readPageChallenge(documentRef);
   if (challenge) {
     return { pageUrl, signal: challenge, observedNodeCount: 0, entries: [] };
@@ -641,7 +682,7 @@ export function readXBookmarksDom(
     CARD_SELECTOR,
     observationBudget,
     layoutBudget,
-    limits.maxEntries,
+    Math.min(limits.maxObservedNodes, limits.maxEntries + knownSourceItemIds.length + 1),
   );
   if (!cardResult) {
     return {
@@ -669,9 +710,58 @@ export function readXBookmarksDom(
     };
   }
 
-  const entries: XBookmarkDomEntryObservation[] = [];
+  const selectedCards: Array<{ readonly card: Element; readonly identity: MainPermalinkIdentity }> =
+    [];
+  let pendingCandidateReplay:
+    | { readonly card: Element; readonly identity: MainPermalinkIdentity }
+    | undefined;
+  let fallbackKnownCard:
+    | { readonly card: Element; readonly identity: MainPermalinkIdentity }
+    | undefined;
+  let unknownEntries = 0;
   for (const card of cards) {
-    const result = readEntry(card, pageUrl, limits, observationBudget, layoutBudget);
+    const identity = findMainPermalink(card, pageUrl, observationBudget, layoutBudget);
+    if (!identity || observationBudget.count > observationBudget.maximum) {
+      return {
+        pageUrl,
+        signal: { kind: 'structure_changed' },
+        observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
+        entries: [],
+      };
+    }
+    const sourceItemId = identity.permalink.sourceItemId;
+    if (candidateSourceItemIdSet.has(sourceItemId)) {
+      pendingCandidateReplay = { card, identity };
+      fallbackKnownCard = { card, identity };
+      continue;
+    }
+    if (knownFrontierSourceItemIdSet.has(sourceItemId)) {
+      fallbackKnownCard = { card, identity };
+      continue;
+    }
+    const requiredOutputSlots = pendingCandidateReplay ? 2 : 1;
+    if (
+      unknownEntries >= maxUnknownEntries ||
+      selectedCards.length + requiredOutputSlots > limits.maxEntries
+    ) {
+      break;
+    }
+    if (pendingCandidateReplay) {
+      selectedCards.push(pendingCandidateReplay);
+      pendingCandidateReplay = undefined;
+    }
+    selectedCards.push({ card, identity });
+    unknownEntries += 1;
+  }
+  if (selectedCards.length === 0 && (pendingCandidateReplay ?? fallbackKnownCard)) {
+    selectedCards.push((pendingCandidateReplay ?? fallbackKnownCard)!);
+  } else if (pendingCandidateReplay && selectedCards.length < limits.maxEntries) {
+    selectedCards.push(pendingCandidateReplay);
+  }
+
+  const entries: XBookmarkDomEntryObservation[] = [];
+  for (const { card, identity } of selectedCards) {
+    const result = readEntry(card, pageUrl, limits, observationBudget, layoutBudget, identity);
     if (!result.ok || !result.entry || observationBudget.count > observationBudget.maximum) {
       return {
         pageUrl,
@@ -756,12 +846,21 @@ export async function handleXBookmarksContentRequest(
   if (environment.location.href !== X_SYNC_BOOKMARKS_URL) {
     throw new Error('X bookmarks document binding changed');
   }
-  const observation = readXBookmarksDom(environment.document, environment.location.href, {
-    maxEntries: Math.max(1, request.limits.remainingCandidateSlots),
-    maxObservedNodes: request.limits.maxObservedNodes,
-    maxTextBytes: request.limits.maxTextBytes,
-    maxMedia: request.limits.maxMedia,
-  });
+  const observation = readXBookmarksDom(
+    environment.document,
+    environment.location.href,
+    {
+      maxEntries: X_BOOKMARKS_CONTENT_CEILINGS.maxEntries,
+      maxObservedNodes: request.limits.maxObservedNodes,
+      maxTextBytes: request.limits.maxTextBytes,
+      maxMedia: request.limits.maxMedia,
+    },
+    {
+      candidateSourceItemIds: request.candidateSourceItemIds,
+      knownFrontierSourceItemIds: request.knownFrontierSourceItemIds,
+      maxUnknownEntries: request.limits.remainingCandidateSlots,
+    },
+  );
   const limits: Partial<XBookmarksLimits> = {
     maxItems: X_BOOKMARKS_CEILINGS.maxItems,
     maxBatches: 1,
@@ -776,6 +875,7 @@ export async function handleXBookmarksContentRequest(
   };
   const result = await adaptXBookmarksObservation(observation, {
     remainingCandidateSlots: request.limits.remainingCandidateSlots,
+    knownSourceItemIds: [...request.candidateSourceItemIds, ...request.knownFrontierSourceItemIds],
     acceptedBytesBefore: X_BOOKMARKS_CEILINGS.maxTotalBytes - request.limits.maxTotalBytes,
     limits,
   });

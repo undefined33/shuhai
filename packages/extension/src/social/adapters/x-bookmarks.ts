@@ -1,8 +1,10 @@
 import {
   IsoTimestampSchema,
   SocialItemSchema,
+  SYNC_KNOWN_FRONTIER_LIMIT,
   SYNC_LIMITS,
   SYNC_SCHEMA_VERSION,
+  XSourceItemIdSchema,
   type RemoteMedia,
   type SocialItem,
 } from '../sync-schema.js';
@@ -99,6 +101,7 @@ export interface XBookmarksDomObservation {
 export interface XBookmarksAdapterOptions {
   readonly capturedAt?: string;
   readonly remainingCandidateSlots?: number;
+  readonly knownSourceItemIds?: readonly string[];
   readonly acceptedBytesBefore?: number;
   readonly limits?: Partial<XBookmarksLimits>;
   readonly now?: () => number;
@@ -751,6 +754,21 @@ export async function adaptXBookmarksDom(
 
   const limits = resolveXBookmarksLimits(options.limits);
   const remainingCandidateSlots = options.remainingCandidateSlots ?? limits?.maxItems ?? 0;
+  const knownSourceItemIds = new Set<string>();
+  if (
+    options.knownSourceItemIds !== undefined &&
+    (!Array.isArray(options.knownSourceItemIds) ||
+      options.knownSourceItemIds.length > X_BOOKMARKS_CEILINGS.maxItems + SYNC_KNOWN_FRONTIER_LIMIT)
+  ) {
+    return structureChanged(capability);
+  }
+  for (const value of options.knownSourceItemIds ?? []) {
+    const sourceItemId = XSourceItemIdSchema.safeParse(value);
+    if (!sourceItemId.success) {
+      return structureChanged(capability);
+    }
+    knownSourceItemIds.add(sourceItemId.data);
+  }
   const acceptedBytesBefore = options.acceptedBytesBefore ?? 0;
   if (
     !limits ||
@@ -862,6 +880,7 @@ export async function adaptXBookmarksDom(
 
   const items: SocialItem[] = [];
   const itemsById = new Map<string, SocialItem>();
+  let candidateItems = 0;
   let acceptedBytes = 0;
   for (let index = 0; index < (entryCount as number); index += 1) {
     if (!pageRemainsSupported(port)) {
@@ -910,7 +929,8 @@ export async function adaptXBookmarksDom(
       );
     }
 
-    const previous = itemsById.get(parsedEntry.item.sourceItemId);
+    const sourceItemId = parsedEntry.item.sourceItemId;
+    const previous = itemsById.get(sourceItemId);
     if (previous) {
       if (
         previous.contentHash !== parsedEntry.item.contentHash ||
@@ -923,7 +943,8 @@ export async function adaptXBookmarksDom(
     // Only the coordinator can distinguish a replayed identity from a newly accepted item.
     // Keep this adapter bound to one batch; the persisted job ceiling is enforced after dedupe.
     const batchItemLimit = Math.min(limits.maxItems, remainingCandidateSlots);
-    if (items.length >= batchItemLimit) {
+    const consumesCandidateSlot = !knownSourceItemIds.has(sourceItemId);
+    if (consumesCandidateSlot && candidateItems >= batchItemLimit) {
       return budgetExceeded(
         capability,
         'candidate_items',
@@ -949,8 +970,11 @@ export async function adaptXBookmarksDom(
         }),
       );
     }
-    itemsById.set(parsedEntry.item.sourceItemId, parsedEntry.item);
+    itemsById.set(sourceItemId, parsedEntry.item);
     items.push(parsedEntry.item);
+    if (consumesCandidateSlot) {
+      candidateItems += 1;
+    }
     acceptedBytes += parsedEntry.acceptedBytes;
   }
 
@@ -971,7 +995,7 @@ export async function adaptXBookmarksDom(
     return budgetExceeded(capability, 'elapsed_time', items, metrics);
   }
   if (
-    items.length >= Math.min(limits.maxItems, remainingCandidateSlots) &&
+    candidateItems >= Math.min(limits.maxItems, remainingCandidateSlots) &&
     signal.kind !== 'terminal'
   ) {
     return budgetExceeded(capability, 'candidate_items', items, metrics);
