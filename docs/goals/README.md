@@ -1,8 +1,8 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-15
-> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；content script 构建修复已通过 CI，第二次真实 X probe 在 `0/10` 暴露 DOM 预算误计数，共享预算第二候选 review `PASS`，等待提交/CI
-> 执行规则：当前仍为 `IN_PROGRESS_REAL_X_PROBE_GATE`；修复候选通过 review/CI 后，必须先告知用户再次扫描会写扩展本地 SyncJob/candidate 数据，得到确认后才能在原 X 收藏页继续受界 no-Vault probe。
+> 当前状态：Goal 041/042、Goal 043A 与 043B 离线候选已通过；content script 构建与 DOM 预算修复均已通过 review/CI，等待用户重载并确认继续受界 no-Vault probe
+> 执行规则：当前仍为 `IN_PROGRESS_REAL_X_PROBE_GATE`；必须先告知用户再次扫描会写扩展本地 SyncJob/candidate 数据，得到确认后才能在原 X 收藏页继续受界 no-Vault probe。
 
 ## 当前编排状态
 
@@ -11,10 +11,10 @@
 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
 | Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | 共享 DOM 预算 review PASS；等待 CI       | 确认后受界 no-Vault probe       |
+| Goal 043 | `IN_PROGRESS`             | DOM 预算修复 CI PASS；等待确认 probe     | 确认后受界 no-Vault probe       |
 | 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
 | Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `043B_REAL_X_PROBE_GATE`  | selector 预算修复、review/CI、用户确认   | probe 后进入 disposable Vault   |
+| workflow | `043B_REAL_X_PROBE_GATE`  | 用户重载并确认受界 no-Vault probe        | probe 后进入 disposable Vault   |
 
 ## v4 当前队列
 
