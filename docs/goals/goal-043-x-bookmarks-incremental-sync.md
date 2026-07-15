@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选和 043B 实施合同、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定开发 ID 与既有 Node 20 CI 均已通过。前三次受界 no-Vault probe 依次暴露 active content script 构建、DOM 预算误计数和虚拟列表重复前沿问题，均在没有写入 Vault 时 fail closed。第三次 probe 已到达 `8/10`，随后因连续三批只见已知 card 而以 `no_progress` 暂停；该实现不是物理鼠标模拟，而是每批至多一次受界 `window.scrollBy` 后读取当前已渲染 DOM。最终修复提交 `76a3a60` 把同 job candidate、catalog exact-existing known frontier 和当前 invocation seen 状态分开，checkpoint 只持久化最多 20 个唯一 frontier ID，DOM reader 在既有 50 candidate、200 内容节点与整次共享 10,000 布局遍历预算内越过已知 card；旧 DB3 checkpoint 缺少 frontier ID 时保守重建。全仓 41 files / 458 tests coverage、完整本地门禁、独立 actual-diff review 和 PR `#5` 的 Node 20 CI run `29413005934` / job `87344295492` 均已通过。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。用户最新授权允许直接操作当前 X 标签和 ShuHai，但任何持久化数据修改仍须在动作前确认；当前等待用户重载并确认创建或更新扩展本地 SyncJob/candidate 数据。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选和 043B 实施合同、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定开发 ID、完整门禁与 Node 20 CI 均已通过。前三轮真实 probe 暴露的 content 构建、DOM 预算和虚拟列表前沿问题已由提交 `c9ab16f`、`9f176e7`、`76a3a60` 依次关闭。用户重载后在明确指定的日常 `https://x.com/i/bookmarks` 标签执行受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe，已进入 10-candidate review：5 个 `new/list-summary` 默认可选，5 个 `incomplete/metadata-only` 未默认选择，`changed=0`、`error=0`、catalog existing observations 为 0；没有写 Vault，也没有声称到达 feed 末尾。该证据证明真实 selector、受界滚动、10-item batch 和此前 `8/10 no_progress` 修复可用，但不证明完整正文捕获或全收藏同步。隔离测试账号无法登录后，日常 Chrome 授权仍只覆盖当前 X 标签与 ShuHai，不包含其它标签、整个 profile、其它站点或真实 Vault。当前进入 disposable Vault 门禁：用户必须另行确认 worktree 内的新目录并手动授权 picker，首次只写 1-3 条。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REAL_X_PROBE_GATE`，其中先完成真实 toolbar 路由复验：离线实现、独立 review、完整门禁、preloaded-extension route integration、独立 profile 人工 toolbar E2E、Node 20 CI 和第 3.4 节固定 ID 门禁均已通过，但日常 Chrome 首次固定 ID 回归发现 active-tab 窗口查询错误。修复候选不创建 job、不注入页面，也不读取其它标签；用户确认 X 上下文 Popup 后才能进入真实 probe。受界 probe 固定为首次 `incremental + maxCandidates=10 + maxScrollActions=5`、单 tab/job/invocation/outstanding request、滚动间隔至少 2 秒、不写 Vault 及合同 STOP 条件。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_DISPOSABLE_VAULT_GATE`：真实 toolbar、固定 ID、content 构建、DOM 预算、虚拟列表前沿与受界 no-Vault 10-candidate probe 均已通过相应门禁；probe 仍只证明 `LIMITED_GO/batch-only`，不代表完整正文或全收藏同步。下一步必须由用户确认 worktree 内的新 disposable Vault 并在 picker 中手动授权，首次只选择 1-3 个 `new` 项；写入后核对逐项 outcome，再运行第二次 incremental，验证此前实际写入的 1-3 条返回 existing/skip 且文件数不增加，未写入项仍可继续显示为 new。真实 Vault、其它标签、整个 profile、自动重试、提高并发或放宽 STOP 条件均未授权。
 
 ### 3.4 043B：稳定扩展身份前置门禁
 

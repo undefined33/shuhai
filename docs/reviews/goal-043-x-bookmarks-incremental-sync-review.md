@@ -6,7 +6,7 @@
 >
 > 独立 reviewer：Huygens (`019f5af2-d64e-76b0-91c8-bd9982d801e6`)
 >
-> 初始合同结论：`PASS`；G0 verdict：`PASS`；043A fixture-only verdict：`PASS`；整个 Goal 043 仍为 `BLOCKED_BY_REAL_X_EVIDENCE`
+> 2026-07-13 历史快照：初始合同结论 `PASS`、G0 verdict `PASS`、043A fixture-only verdict `PASS`；当时整个 Goal 043 为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前状态见第 16.15 节。
 
 ## 1. 审查结论
 
@@ -434,3 +434,13 @@ Locke 的一次中间复审在最终 test/docs patch 前仍给出 `FAIL`（P2 �
 新增回归覆盖 8 个 known 后的后续 card、恰好 50 个 candidate 后第 51 个新 card、candidate/frontier overlap 与超量、暂停恢复不重复增加 frontier、重复 exact-existing 去重、barrier 顺序，以及旧 DB3 checkpoint 缺少 frontier ID 时 close/reopen/resume 的保守重建。最终本地证据为：lint、typecheck、extension 432 tests、全仓 41 files / 458 tests coverage 和 extension build 全部 `PASS`；coverage 为 statements 54.11%、branches 73.27%、functions 73.20%、lines 54.11%。构建产物 `content/x-bookmarks.js` 为 125,421 bytes，SHA-256 `55CF1A9C0624308AA1CA86EF11AD80A623F5F3E90099D344F589C52371910822`，通过 `node --check` 且无顶层静态 `import/export`。pnpm 10 audit endpoint 仍返回官方 410 retirement 错误；本机 pnpm `11.3.0` 只读 fallback 为 full low 1 / moderate 1 / high 0 / critical 0，均为开发工具链路径，production 为 0。lock SHA-256 保持 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`。
 
 Erdos 对最终 actual diff 的 verdict 为 `PASS`，P0/P1/P2 均为 0，并确认首轮两项 P1 已关闭；reviewer 建议补充的旧 DB3 reopen/resume 测试已加入并通过。reviewer 没有运行测试、Chrome 或网络，也没有修改文件。修复提交 `76a3a60` 已普通 push 到 draft PR `#5`；GitHub Actions run `29413005934` / job `87344295492` 在 Node 20、pnpm `10.34.5` 下 `PASS`。当前 verdict 为 `VIRTUAL LIST FRONTIER REPAIR PASS / GOAL NOT PASS`；用户重载并确认允许创建或更新扩展本地 SyncJob/candidate 数据前，不得再次扫描真实 X。
+
+### 16.15 受界真实 X no-Vault 10-candidate probe
+
+用户重载固定 ID 的修复版本后，在先前明确指定的单个日常 `https://x.com/i/bookmarks` 标签自行启动受界 `incremental + maxCandidates=10 + maxScrollActions=5` probe。Side Panel 聚合 review 证据显示任务已越过此前 `8/10 no_progress` 卡点并形成 10 个候选：`new=5`、`incomplete=5`、`changed=0`、`error=0`、catalog existing observations 为 0。5 个 new 标记为列表摘要并默认选中；5 个 incomplete 明确标记为 `metadata_only` 且未默认选择。界面显示当前正在使用本批结果、仍可能有更早收藏等待后续批次，没有声称到达 feed 末尾。`保存 5 条到 Vault` 仍是待点击动作，因此该 probe 没有写文件、请求新目录或使用真实 Vault。
+
+该证据只支持 `LIMITED_GO/batch-only`：真实 selector、受界程序化滚动、10-candidate 上限、候选分类与默认选择已工作；列表摘要和 `metadata_only` 仍不是完整正文，不能据此声称“已完整导出 10 条”或“已同步全部收藏”。下一道人工作业门禁仍是 worktree 内新 disposable Vault，首次只保存 1-3 个默认可保存项；随后第二次 incremental 只要求此前实际写入的 1-3 条返回 existing/skip 且文件数不增加，未写入项仍可继续显示为 new。
+
+QA 过程发生一项必须留痕的证据最小化偏差：Codex Chrome 只能认领精确 X 顶层标签，无法通过 Browser URL policy 打开 `chrome-extension://.../sidepanel/index.html`；在确认这一限制前，一次真实 X `domSnapshot` 把当前渲染帖子的文字带入 Codex 工具输出边界，其后端留存或删除状态未验证。发现后立即停止所有正文 DOM 读取，没有绕过 URL policy，没有把正文、作者、ID、URL、媒体或 snapshot 复制到仓库、PR、截图或本 review。后续真实 X QA 禁止使用整页 DOM snapshot；Side Panel 证据只能由用户提供 Side-Panel-only 截图或人工汇总，agent 不再尝试直接读取扩展页面。浏览器控制被 finalise 后保留原 X 标签，不关闭、刷新或操作其它标签。该偏差不推翻用户在偏差发生前完成的功能 probe，但必须由最终独立 reviewer 评估验收影响。
+
+当前 verdict：`REAL X NO-VAULT FUNCTIONAL PASS / QA EVIDENCE DEVIATION RECORDED / GOAL NOT PASS`。Goal 043 保持 `IN_PROGRESS`，不得在真实 Vault 上继续，也不得把 5 个 `metadata_only` 项强制加入选择。
