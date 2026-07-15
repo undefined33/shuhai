@@ -385,3 +385,19 @@ route trace 同时暴露 `popup/styles.css` 仍从 Google Fonts 发起远程请�
 独立只读 reviewer Wegener (`019f63c0-2660-7941-832d-488a3d8aef8b`) verdict 为 `PASS`，P0/P1/P2 均为 0。reviewer 确认查询仍限定为最后聚焦窗口中的 active tab，没有枚举或扩大到其它标签，错误路径保持 fail closed；reviewer 按合同未操作 Chrome、网络或文件。实现者本地重新运行 lint、typecheck、441 项 test/coverage 和 extension build 全部通过；coverage 为 statements 53.65%、branches 72.92%、functions 73.14%、lines 53.65%。Vite 6.4.3 转换 1,992 modules，既有约 542 kB bundle warning 不由本次引入。
 
 本轮结论是 `ROUTE FIX CANDIDATE PASS / REAL TOOLBAR RECHECK REQUIRED`，不是 Goal 完成。必须由用户重新加载固定 ID 后，在原精确 X 收藏页确认上下文 Popup；此前不得开始 no-Vault probe。
+
+### 16.12 首次真实 probe 的 content script 构建缺陷与修复候选
+
+用户重载固定 ID 后已在原 `https://x.com/i/bookmarks` 标签确认“X 收藏同步”入口正常。首次受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe 随即在 DOM 读取前以 `tab_changed` 暂停，进度保持 `0/10`、existing observations 为 0；没有读取收藏、发起 Vault permission 或写入文件。该证据只证明生产入口已到达扫描阶段，不证明真实 selector 或平台滚动可用。
+
+实现复核没有先改 selector、权限、限速或 service worker。实际 `dist/content/x-bookmarks.js` 以 `(() => { import ... })()` 开头，`node --check` 稳定返回 `SyntaxError: Unexpected token '{'`。Vite 原多入口构建把 X content script 的共享依赖拆成静态 module chunk，随后 `wrapContentScripts` 又机械包进 IIFE；Chrome 动态注入的是经典脚本，因此监听器从未注册，后续 targeted `tabs.sendMessage` 无接收端并被 fail-closed 映射为 `tab_changed`。这不是页面真的切换，也不是 X 返回 429 或 selector 为空。
+
+修复候选只改 build boundary：普通 Popup、Side Panel 与 background 继续由原多入口构建；article、toast、twitter、weibo 和 x-bookmarks 五个 content entry 分别通过单入口 Vite build 生成 `format=iife`、`inlineDynamicImports=true` 的自包含文件。每个输出先使用 Node `vm.Script` 按经典脚本解析，再以最终 outer IIFE 隔离 minifier helper 并重新解析；空文件、任何静态 module syntax 或包装后语法错误都让 extension build 失败。`manifest.test.ts` 增加回归，证明普通 IIFE 可接受、IIFE 内静态 `import` 必须抛 `SyntaxError`，且构建 helper 不泄漏到重复注入共享的 isolated-world global；没有改 manifest、权限、同步算法、DOM selector、依赖、lockfile 或 Vault 逻辑。
+
+当前候选证据：lint、typecheck、443/443 test、41 files / 443 tests coverage 和 extension build 均 `PASS`；五个 `dist/content/*.js` 逐个通过 `node --check`、静态 `import/export` 检查并从 final outer IIFE 开始。`x-bookmarks.js` 现为 122,422 bytes 的自包含经典脚本。pnpm 10 audit endpoint 返回可解析的官方 410 retirement 错误，按合同只读回退到本机 pnpm `11.3.0`：full 为 low 1 / moderate 1 / high 0 / critical 0，production 为 0；lock SHA-256 前后均为 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`。第二轮独立 actual-diff review 已 `PASS`；追加提交和新 Node 20 CI 尚待完成。完成前不得在真实 X 点击 `继续扫描`。当前 verdict 为 `CONTENT BUILD REPAIR CANDIDATE / GOAL NOT PASS`。
+
+独立只读 reviewer Harvey (`019f63f2-ecbd-7fd1-8e9a-d6844900f320`) 首轮给出 `FAIL`，P0 为 0：一个有效 P1 是 content 子构建只挂在 `closeBundle` 且未注册 watch graph，无法证明现有 `vite build --watch` 会可靠更新 content scripts；一个证据 P1 要求 outer-IIFE 后重新跑门禁并更新旧数字；P2 指出 `docs/workflows/README.md` 仍把旧 CI/reload 门禁写成当前状态。候选据此把子构建移到每轮可等待的 `writeBundle`，把 extension/shared source 目录加入 Rollup watch graph，使同一 watcher 串行完成主输出与五个 content 输出；最终门禁已重跑为 443 项且产物数字已更新，workflow 状态也已同步。
+
+watch 实测使用项目现有 `vite build --watch`，没有启动 Chrome 或端口。初始 `x-bookmarks.js` 写入时间为 UTC `04:31:44`；通过 `apply_patch` 仅临时增加一行会被 minifier 移除的 source comment 后，watch 自动重建并把写入时间更新到 `04:32:56`，length/hash 仍保持 122,422 bytes / `25D06D94FECCD75336A90B0977AB7579C0C19973C8213BF07BAC9A7AE472D5C7`，证明 content-only 变化已进入 watch graph。恢复 comment 时 watcher 达到测试命令预设超时，在下一轮清空 dist 后被该命令终止；源文件无 diff，随后正常 extension build `PASS` 并恢复完整 dist。该人为中断不作为 watch 完成证据，已成功完成的前一轮 rebuild 才是响应证据。
+
+Harvey 第二轮对最新 working tree 给出 `PASS`，P0/P1/P2 均为 0。复审确认 `writeBundle` + extension/shared watch graph 关闭首轮生命周期问题，443 项/122,422 bytes 证据已更新，workflow 当前门禁不再误报旧 CI；reviewer 未亲自运行 test、build、watch、audit 或 Chrome，因此该 verdict 只关闭 actual-diff review，不替代新 Node 20 CI、用户重载和真实 no-Vault probe。

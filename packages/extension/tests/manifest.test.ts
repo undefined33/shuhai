@@ -1,6 +1,9 @@
 import { createHash, createPublicKey } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
+
+import { assertClassicContentScript, finalizeClassicContentScript } from '../vite.config.js';
 
 const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')) as {
   content_scripts?: Array<{ js?: string[]; matches?: string[] }>;
@@ -68,5 +71,27 @@ describe('extension manifest', () => {
 
   it('does not load remote resources from extension UI styles', () => {
     expect(popupStyles).not.toMatch(/https?:\/\//iu);
+  });
+});
+
+describe('content script build contract', () => {
+  it('rejects module syntax that Chrome cannot inject as a classic script', () => {
+    expect(() =>
+      assertClassicContentScript('(() => { const value = 1; })();', 'valid.js'),
+    ).not.toThrow();
+    expect(() =>
+      assertClassicContentScript('(() => { import "./shared.js"; })();', 'invalid.js'),
+    ).toThrow(SyntaxError);
+  });
+
+  it('isolates minifier helpers from repeated content-script injections', () => {
+    const sandbox: Record<string, unknown> = {};
+    const script = new Script(
+      finalizeClassicContentScript('var minifierHelper = true;', 'isolated.js'),
+    );
+
+    script.runInNewContext(sandbox);
+
+    expect(sandbox).not.toHaveProperty('minifierHelper');
   });
 });

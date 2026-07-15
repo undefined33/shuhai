@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归暴露 Popup 仍回落通用 launcher；修复候选已按 Chrome 官方 active-tab 查询方式修正并通过 441 项测试、完整本地门禁和独立只读 review。当前先等待用户重载并确认 X 上下文 Popup，再进入受界真实 X no-Vault probe。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选已通过完整门禁、离线 Chrome fixture E2E 和最终独立 actual-diff review。043B v2 实施合同也已完成两位独立 reviewer 的多轮复审并最终 `PASS`。043B 固定开发 ID、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E 和 Node 20 CI 均已通过。2026-07-15 用户在固定 ID 的日常 Chrome 中打开精确 X 收藏页时，真实 toolbar 回归先暴露 Popup 回落通用 launcher；active-tab 查询修复通过完整门禁和 Node 20 CI 后，用户重载确认 X 上下文入口正常。首次受界 no-Vault probe 随即在读取前以 `tab_changed` 暂停且保持 `0/10`；复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。content script 独立经典脚本构建、语法/global isolation 门禁、watch graph、完整本地门禁和第二轮独立 review 已通过；追加提交、新 Node 20 CI 和用户重载前不得继续真实扫描。隔离测试账号确实无法登录后，只允许用户明确指定的单个日常 X 收藏页标签作为真实 QA 例外；该授权不包含其它标签、整个 profile、其它站点或真实 Vault。
 
 ## 1. 用户问题
 
@@ -577,7 +577,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/src/popup/styles.css`（仅删除远程字体 import，保留现有本地系统字体 fallback；不得引入字体文件或其它视觉重构）
 - `packages/extension/src/popup/pages/XSyncPage.tsx`（new）
 - `packages/extension/src/popup/pages/x-sync-ui-model.ts`（new）
-- `packages/extension/vite.config.ts`（仅增加 content build entry）
+- `packages/extension/vite.config.ts`（content entry 必须各自生成无静态 import/export 的单文件经典 IIFE，并在每轮 build/watch write 后逐个通过经典脚本语法与 global isolation 校验；content/shared source 必须纳入 watch graph 且子构建串行等待，不得改变 Popup、Side Panel、background、权限、依赖或其它产品行为）
 
 #### 允许修改测试与证据文件
 
@@ -591,7 +591,7 @@ Risk: R1 implementation; R2 isolated Chrome or one designated daily X tab/test V
 - `packages/extension/tests/x-sync-runtime.test.ts`（new）
 - `packages/extension/tests/x-sync-service-worker.test.ts`（new）
 - `packages/extension/tests/x-sync-ui-model.test.ts`（new）
-- `packages/extension/tests/manifest.test.ts`（权限、静态注入、扩展 UI 无远程资源，以及第 3.4 节固定公钥/ID/构建透传回归）
+- `packages/extension/tests/manifest.test.ts`（权限、静态注入、扩展 UI 无远程资源、第 3.4 节固定公钥/ID/构建透传，以及经典 content script 构建语法门禁回归）
 - `packages/extension/tests/vault-writer.test.ts`
 - `packages/extension/src/content/__tests__/x-bookmarks.test.ts`（new）
 - `packages/extension/e2e/x-bookmarks-fixture.spec.ts`

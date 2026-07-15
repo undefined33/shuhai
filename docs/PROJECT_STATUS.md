@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-15
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 固定 ID 的真实 toolbar 路由回归已修复并通过本地门禁/独立复审，等待用户重载确认后再进入受界 X no-Vault probe
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 首次真实 X probe 暴露 content script 构建缺陷，修复候选已通过本地门禁和独立复审，等待 Node 20 CI 与用户重载后再复测
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定 ID 和既有 Node 20 CI 均已通过。用户在日常 Chrome 固定 ID 上的首次精确 X toolbar 回归暴露 Popup 错误回落通用 launcher；候选已把 active-tab 查询改为 Chrome 官方推荐的 `lastFocusedWindow` 语义，严格只依据当前已加载 URL，并通过 441 项测试、coverage、build、完整本地门禁和独立只读 review。当前仍处于 `IN_PROGRESS_REAL_X_PROBE_GATE` 的路由复验子门禁，必须先由用户重新加载并确认“X 收藏同步 / 同步新增收藏”Popup，之后才允许执行 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒和 429/challenge 零自动重试的 no-Vault probe。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定 ID 和既有 Node 20 CI 均已通过。用户已在日常 Chrome 固定 ID 上确认精确 X 收藏页能够显示“X 收藏同步”；首次 10-candidate no-Vault probe 随即在读取前以 `tab_changed` 暂停并保持 `0/10`，没有读取收藏或写入 Vault。复核构建产物确认 `dist/content/x-bookmarks.js` 被错误包装为 IIFE 内含静态 `import` 的无效经典脚本，监听器从未注册。当前修复让五个 content entry 各自生成单文件经典 IIFE，并在 build 后逐个进行语法与 global isolation 校验；本地 lint、typecheck、443 项 test/coverage、extension build、watch/产物检查和第二轮独立 actual-diff review 已通过。追加提交与新 Node 20 CI 通过前不得继续真实扫描；随后仍只允许在用户指定的原 X 标签执行 10 candidates、最多 5 次滚动、单 tab/job/invocation/outstanding request、批次至少 2 秒、429/challenge 零自动重试的 no-Vault probe。该授权不包含其它标签、整个 profile、其它站点或真实 Vault。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -55,7 +55,7 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 尚未完成或验证：
 
-- X 收藏页生产接线和真实 toolbar/`activeTab`/Side Panel preflight 用户旅程已通过；真实页面 selector、滚动和 stop code 证据尚未通过。
+- X 收藏页生产接线和真实 toolbar/`activeTab`/Side Panel preflight 用户旅程已通过；首次真实扫描在 DOM 读取前暴露并修复 content script 构建缺陷，真实 selector、滚动和 stop code 证据仍未通过。
 - 微博收藏页仍只有 `NO_GO` 研究结论，没有生产枚举。
 - disposable Vault 的 1-3 条人工写入结果，以及真正独立的 Popup、Side Panel、Options 构建和按需状态加载。
 
@@ -75,13 +75,13 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | toolbar E2E PASS；等待真实 X probe       |
+|    3 | Goal 043 | `IN_PROGRESS`             | content 构建修复 PASS；等待 CI/复测      |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码、自动 route integration、独立项目 Chrome profile 的人工 toolbar E2E、CI 与固定 unpacked extension ID 门禁已通过，当前等待受界真实 X no-Vault probe。真实 selector、平台 stop code 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
+用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码、自动 route integration、独立项目 Chrome profile 的人工 toolbar E2E、既有 CI 与固定 unpacked extension ID 门禁已通过；首次受界真实 X no-Vault probe 在读取前暴露 content script 构建缺陷，修复候选已通过本地门禁与第二轮独立复审，正等待新 CI。真实 selector、平台 stop code 和 Vault 仍是不可代理的后续门禁。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -105,10 +105,10 @@ Goal 042 与 043A 已独立通过但尚未接入生产路由的基础模块：
 
 ## 9. 当前下一步
 
-1. X toolbar 路由修复候选已通过 lint、typecheck、441 项 test/coverage、extension build 和独立只读 review；正式状态仍为 `IN_PROGRESS`，尚未执行真实扫描。
-2. 用户在 `chrome://extensions` 对固定 ID `jdjmpeogiojjhdabdjmpeclcbjcekbje` 点击一次重新加载，再回到原 `https://x.com/i/bookmarks` 标签点击 ShuHai；预期 Popup 显示“X 收藏同步 / 同步新增收藏”。
-3. 路由确认前不要授权 X 或开始同步；若仍显示通用 launcher，保留页面并报告截图，不重复卸载、不迁移存储，也不触碰其它标签。
-4. 路由确认后才进入首次 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；单 tab/job/invocation/outstanding request，滚动完成到下一批请求至少 2 秒，遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
+1. 用户已确认固定 ID 在精确 X 收藏页显示正确入口；首次 probe 在 `0/10`、无读取和无 Vault 写入时因无效构建产物暂停，不能作为 selector 或平台行为证据。
+2. content script 独立经典脚本修复已通过 lint、typecheck、443 项 test/coverage、extension build、watch、五个产物 `node --check`、静态 module syntax、global isolation 和第二轮独立只读 review；接下来精确 stage、追加提交、普通 push 并等待 Node 20 CI。
+3. CI 通过后由用户在 `chrome://extensions` 对固定 ID `jdjmpeogiojjhdabdjmpeclcbjcekbje` 点击一次重新加载，再回到原 `https://x.com/i/bookmarks` 标签打开 ShuHai；不要卸载、迁移存储或触碰其它标签。
+4. 用户确认重载后才可点击 `继续扫描`，沿用首次 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；单 tab/job/invocation/outstanding request，滚动完成到下一批请求至少 2 秒，遇 CAPTCHA、429、账号限制或 selector 不确定立即停止且不自动重试。
 5. no-Vault probe 通过后再由用户手动授权 worktree 内的新 disposable Vault，首次只写 1-3 条；不得使用真实 Obsidian Vault。
 6. 真实 Chrome 只使用本机已安装浏览器；不得枚举、读取、切换、刷新或关闭其它标签，不读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile，也不得下载浏览器或干扰其它 Chrome 进程。
 
