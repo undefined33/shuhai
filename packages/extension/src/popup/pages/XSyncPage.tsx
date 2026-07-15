@@ -5,7 +5,7 @@ import { Button } from '../../components/ui/button.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
 import { Progress } from '../../components/ui/progress.js';
 import { createVaultSyncEngine } from '../../social/sync-engine.js';
-import type { SyncJob, SyncJobItem, SyncScanMode } from '../../social/sync-schema.js';
+import type { SyncJobItem, SyncScanMode } from '../../social/sync-schema.js';
 import { openSyncStore, type SyncStore } from '../../social/sync-store.js';
 import {
   X_SYNC_LAUNCH_INTENT_KEY,
@@ -28,10 +28,13 @@ import {
   requestVaultAccess,
 } from '../../utils/vault-writer.js';
 import {
+  acceptFreshXSyncLaunchIntent,
   classifyXHostPermissionOrigins,
   deriveXSyncUiModel,
+  prepareNextXSyncBatch,
   type XHostPermissionState,
   type XSyncLaunchState,
+  type XSyncTaskSnapshot,
   type XVaultPermissionState,
 } from './x-sync-ui-model.js';
 
@@ -40,20 +43,13 @@ const LEGACY_BROAD_ORIGINS = ['http://*/*', 'https://*/*'] as const;
 const VAULT_PREFIX = 'ShuHai';
 const COMMAND_TIMEOUT_MS = 30_000;
 
-interface XSyncSnapshot {
-  job?: SyncJob;
-  lastJob?: SyncJob;
-  items: SyncJobItem[];
-  pendingIntentCount: number;
-}
-
 interface PendingCommand {
   resolve(response: XSyncUiResponse): void;
   reject(error: Error): void;
   timeoutId: number;
 }
 
-const EMPTY_SNAPSHOT: XSyncSnapshot = { items: [], pendingIntentCount: 0 };
+const EMPTY_SNAPSHOT: XSyncTaskSnapshot = { items: [], pendingIntentCount: 0 };
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -192,12 +188,8 @@ function classificationLabel(classification: SyncJobItem['classification']): str
   return '待判断';
 }
 
-interface XSyncPageProps {
-  onReturnToWorkspace(): void;
-}
-
-export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
-  const [snapshot, setSnapshot] = useState<XSyncSnapshot>(EMPTY_SNAPSHOT);
+export default function XSyncPage() {
+  const [snapshot, setSnapshot] = useState<XSyncTaskSnapshot>(EMPTY_SNAPSHOT);
   const [mode, setMode] = useState<SyncScanMode>('incremental');
   const [xPermission, setXPermission] = useState<XHostPermissionState>('unavailable');
   const [vaultPermission, setVaultPermission] = useState<XVaultPermissionState>('unavailable');
@@ -375,15 +367,16 @@ export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
       if (areaName !== 'session' || raw === undefined) return;
       try {
         const intent = parseXSyncLaunchIntent(raw);
-        if (Date.now() >= intent.expiresAtMs) return;
+        const now = Date.now();
+        if (now >= intent.expiresAtMs) return;
         launchIntentRef.current = intent;
         jobIdRef.current = undefined;
+        defaultReviewRef.current = '';
         setLaunchState('ready');
-        setSnapshot((current) => ({
-          lastJob: current.job ?? current.lastJob,
-          items: [],
-          pendingIntentCount: 0,
-        }));
+        setSnapshot((current) => {
+          const transition = acceptFreshXSyncLaunchIntent(current, intent, now);
+          return transition?.snapshot ?? current;
+        });
       } catch {
         setLaunchState('unavailable');
       }
@@ -504,6 +497,18 @@ export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
       jobIdRef.current = response.result.jobId;
       await refresh(response.result.jobId);
     });
+
+  const handlePrepareNextBatch = () => {
+    const job = snapshot.job;
+    if (!job || !model.canPrepareNextBatch || busy) return;
+    const transition = prepareNextXSyncBatch(job);
+    jobIdRef.current = transition.jobId;
+    launchIntentRef.current = transition.launchIntent;
+    defaultReviewRef.current = transition.defaultReviewKey;
+    setErrorMessage('');
+    setLaunchState(transition.launchState);
+    setSnapshot(transition.snapshot);
+  };
 
   const sendJobCommand = (type: 'pause' | 'resume' | 'finalize' | 'cancel') =>
     runAction(async () => {
@@ -659,15 +664,15 @@ export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
 
   return (
     <div className="h-full overflow-y-auto pb-4">
-      {model.canReturnToWorkspace ? (
+      {model.canPrepareNextBatch ? (
         <Button
           className="mb-3"
           disabled={busy}
-          onClick={onReturnToWorkspace}
+          onClick={handlePrepareNextBatch}
           size="sm"
           variant="ghost"
         >
-          <ArrowLeft className="h-4 w-4" /> 返回工作区
+          <ArrowLeft className="h-4 w-4" /> 返回同步入口
         </Button>
       ) : null}
 
@@ -746,6 +751,13 @@ export default function XSyncPage({ onReturnToWorkspace }: XSyncPageProps) {
           <p className="text-xs leading-5 text-muted-foreground">
             只读取当前打开的 X 收藏页，不读取 Cookie、token、其它标签页，也不会在复核前写入 Vault。
           </p>
+
+          {!snapshot.job && launchState === 'waiting' ? (
+            <p className="rounded-md border border-border bg-muted/40 p-3 text-[13px] leading-5 text-muted-foreground">
+              点击浏览器工具栏中的
+              ShuHai，再选择“同步新增收藏”。本侧边栏会自动进入下一批，不需要关闭或重载扩展。
+            </p>
+          ) : null}
 
           {model.canRequestXPermission ? (
             <Button className="w-full" loading={busy} onClick={handleRequestPermission}>

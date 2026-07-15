@@ -5,6 +5,7 @@ import type {
   SyncStopReason,
   WriteOutcome,
 } from '../../social/sync-schema.js';
+import type { XSyncLaunchIntent } from '../../social/x-sync-messages.js';
 
 export type XSyncUiPhase = 'preflight' | 'scanning' | 'review' | 'writing' | 'result';
 export type XSyncUiTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
@@ -21,6 +22,52 @@ export interface XSyncUiSnapshot {
   vaultPermission: XVaultPermissionState;
   launchState: XSyncLaunchState;
   pendingIntentCount: number;
+}
+
+export interface XSyncTaskSnapshot {
+  job?: SyncJob;
+  lastJob?: SyncJob;
+  items: readonly SyncJobItem[];
+  pendingIntentCount: number;
+}
+
+export interface XSyncSessionTransition {
+  readonly snapshot: XSyncTaskSnapshot;
+  readonly launchState: XSyncLaunchState;
+  readonly jobId: string | undefined;
+  readonly launchIntent: XSyncLaunchIntent | undefined;
+  readonly defaultReviewKey: '';
+}
+
+export function prepareNextXSyncBatch(job: SyncJob): XSyncSessionTransition {
+  return {
+    snapshot: { lastJob: job, items: [], pendingIntentCount: 0 },
+    launchState: 'waiting',
+    jobId: undefined,
+    launchIntent: undefined,
+    defaultReviewKey: '',
+  };
+}
+
+export function acceptFreshXSyncLaunchIntent(
+  current: XSyncTaskSnapshot,
+  intent: XSyncLaunchIntent,
+  now: number,
+): XSyncSessionTransition | undefined {
+  if (!Number.isFinite(now) || now >= intent.expiresAtMs) {
+    return undefined;
+  }
+  return {
+    snapshot: {
+      lastJob: current.job ?? current.lastJob,
+      items: [],
+      pendingIntentCount: 0,
+    },
+    launchState: 'ready',
+    jobId: undefined,
+    launchIntent: intent,
+    defaultReviewKey: '',
+  };
 }
 
 export interface XSyncClassificationCounts {
@@ -62,10 +109,11 @@ export interface XSyncUiModel {
   canContinueWriting: boolean;
   canRetryWrites: boolean;
   canAbandonWriting: boolean;
-  canReturnToWorkspace: boolean;
+  canPrepareNextBatch: boolean;
 }
 
 const X_HOST_ORIGIN = 'https://x.com/*';
+const X_DEFAULT_CANDIDATE_LIMIT = 10;
 const LEGACY_BROAD_HOST_ORIGINS = new Set(['http://*/*', 'https://*/*']);
 
 export function classifyXHostPermissionOrigins(
@@ -286,6 +334,17 @@ function copyForSnapshot(
         tone: 'warning',
       };
     }
+    if (
+      snapshot.launchState === 'waiting' &&
+      snapshot.lastJob &&
+      !ACTIVE_STATUSES.has(snapshot.lastJob.status)
+    ) {
+      return {
+        headline: '已返回 X 同步入口',
+        description: '点击浏览器工具栏中的 ShuHai 启动下一批；侧边栏会自动继续，无需重载扩展。',
+        tone: 'neutral',
+      };
+    }
     if (snapshot.xPermission !== 'granted') {
       return {
         headline: '允许读取当前 X 收藏页',
@@ -418,9 +477,7 @@ export function deriveXSyncUiModel(snapshot: XSyncUiSnapshot): XSyncUiModel {
   const selectedSourceItemIds = selected.map((item) => item.sourceItemId).sort();
   const selectableSourceItemIds = eligible.map((item) => item.sourceItemId).sort();
   const candidateCount = job?.checkpoint?.candidateCount ?? job?.summary.uniqueItemCount ?? 0;
-  const completedProbe =
-    snapshot.lastJob?.status === 'complete' || snapshot.lastJob?.status === 'complete_with_issues';
-  const candidateLimit = job?.budgets.maxItems ?? (completedProbe ? 50 : 10);
+  const candidateLimit = job?.budgets.maxItems ?? X_DEFAULT_CANDIDATE_LIMIT;
   const progressPercent =
     candidateLimit > 0 ? Math.min(100, Math.round((candidateCount / candidateLimit) * 100)) : 0;
   const isActive = Boolean(job && ACTIVE_STATUSES.has(job.status));
@@ -471,6 +528,6 @@ export function deriveXSyncUiModel(snapshot: XSyncUiSnapshot): XSyncUiModel {
         (job.status === 'writing' || job.status === 'partial' || pausedWriting) &&
         !hasPendingWrites,
     ),
-    canReturnToWorkspace: Boolean(job && !ACTIVE_STATUSES.has(job.status)),
+    canPrepareNextBatch: Boolean(job && !ACTIVE_STATUSES.has(job.status)),
   };
 }

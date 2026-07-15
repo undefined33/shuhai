@@ -22,6 +22,7 @@ const X_SOURCE_ITEM_ID_PATTERN = /^\d{1,19}$/u;
 const CONTENT_MARKER = '__shuhaiXBookmarksContentReaderV1Installed';
 const CARD_SELECTOR = 'article[data-testid="tweet"]';
 const QUOTE_SELECTOR = '[data-testid="quoteTweet"]';
+const ENTRY_OBSERVATION_CEILING = 64;
 const textEncoder = new TextEncoder();
 
 export const X_BOOKMARKS_CONTENT_PROTOCOL = X_SYNC_PROTOCOL;
@@ -601,6 +602,15 @@ function readEntry(
   };
 }
 
+function identityOnlyEntry(identity: MainPermalinkIdentity): XBookmarkDomEntryObservation {
+  return {
+    permalink: identity.permalink.canonicalUrl,
+    observationMode: 'identity_only',
+    author: { handle: identity.permalink.account },
+    media: [],
+  };
+}
+
 export function readXBookmarksDom(
   documentRef: Document,
   pageUrl: string,
@@ -759,10 +769,78 @@ export function readXBookmarksDom(
     selectedCards.push(pendingCandidateReplay);
   }
 
+  const canonicalUrlBySourceItemId = new Map<string, string>();
+  for (const { identity } of selectedCards) {
+    const sourceItemId = identity.permalink.sourceItemId;
+    const previousCanonicalUrl = canonicalUrlBySourceItemId.get(sourceItemId);
+    if (previousCanonicalUrl && previousCanonicalUrl !== identity.permalink.canonicalUrl) {
+      return {
+        pageUrl,
+        signal: { kind: 'structure_changed' },
+        observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
+        entries: [],
+      };
+    }
+    canonicalUrlBySourceItemId.set(sourceItemId, identity.permalink.canonicalUrl);
+  }
+
   const entries: XBookmarkDomEntryObservation[] = [];
+  const includedSourceItemIds = new Set<string>();
   for (const { card, identity } of selectedCards) {
-    const result = readEntry(card, pageUrl, limits, observationBudget, layoutBudget, identity);
-    if (!result.ok || !result.entry || observationBudget.count > observationBudget.maximum) {
+    const sourceItemId = identity.permalink.sourceItemId;
+    const remainingObservations = observationBudget.maximum - observationBudget.count;
+    if (remainingObservations <= 1) {
+      if (entries.length === 0) {
+        return {
+          pageUrl,
+          signal: { kind: 'structure_changed' },
+          observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
+          entries: [],
+        };
+      }
+      if (!includedSourceItemIds.has(sourceItemId)) {
+        entries.push(identityOnlyEntry(identity));
+        includedSourceItemIds.add(sourceItemId);
+      }
+      continue;
+    }
+
+    // Reserve one global observation for detecting a per-card overrun. A later
+    // dense card can then degrade to identity-only without crossing the shared
+    // ceiling; the first card still has to prove that the page is readable.
+    const entryBudget: ObservationBudget = {
+      count: 0,
+      maximum:
+        entries.length === 0
+          ? remainingObservations - 1
+          : Math.min(ENTRY_OBSERVATION_CEILING, remainingObservations - 1),
+    };
+    const result = readEntry(card, pageUrl, limits, entryBudget, layoutBudget, identity);
+    observe(observationBudget, Math.min(entryBudget.count, remainingObservations));
+    if (layoutBudget.count > layoutBudget.maximum) {
+      return {
+        pageUrl,
+        signal: { kind: 'structure_changed' },
+        observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
+        entries: [],
+      };
+    }
+    if (entryBudget.count > entryBudget.maximum) {
+      if (entries.length === 0) {
+        return {
+          pageUrl,
+          signal: { kind: 'structure_changed' },
+          observedNodeCount: Math.min(observationBudget.count, limits.maxObservedNodes),
+          entries: [],
+        };
+      }
+      if (!includedSourceItemIds.has(sourceItemId)) {
+        entries.push(identityOnlyEntry(identity));
+        includedSourceItemIds.add(sourceItemId);
+      }
+      continue;
+    }
+    if (!result.ok || !result.entry) {
       return {
         pageUrl,
         signal: { kind: 'structure_changed' },
@@ -771,9 +849,7 @@ export function readXBookmarksDom(
       };
     }
     entries.push(result.entry);
-    if (observationBudget.count > observationBudget.maximum) {
-      break;
-    }
+    includedSourceItemIds.add(sourceItemId);
   }
   return {
     pageUrl,

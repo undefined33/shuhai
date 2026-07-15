@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-15
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 受界真实 X no-Vault probe 已进入 10-candidate review，等待用户确认 disposable Vault 1-3 条写入门禁
+> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 首次 disposable Vault 已创建 5 个文件，第二次 incremental 回归修复已通过独立复审，等待提交、重载和真实去重复测
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。用户重载修复版本后，在明确指定的日常 `https://x.com/i/bookmarks` 标签完成受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe。聚合 review UI 证据为 10 个候选：`new=5`、`incomplete=5`、`changed=0`、`error=0`、catalog existing observations 为 0；5 个 new 标记为列表摘要，5 个 incomplete 标记为 `metadata_only`，只有 new 默认选中。界面诚实说明当前只使用本批结果、仍可能有更早收藏，没有声称到达 feed 末尾；Save 按钮仍待用户动作，因此未写 Vault。该证据关闭了此前 `8/10 no_progress` 回归，但不证明完整正文捕获或全收藏同步。全仓 lint/typecheck、41 files / 458 tests coverage、extension build、经典脚本语法、Prettier、audit fallback 和 lock 检查均已通过；独立 actual-diff review 为 `PASS`（P0/P1/P2 均为 0）。修复提交 `76a3a60` 与证据提交 `478dd43` 已普通 push，PR `#5` 当前 head CI 为 `PASS`。下一步必须由用户单独确认 worktree 内的新 disposable Vault，只选择 1-3 个默认可保存项；该授权不包含真实 Vault、其它标签、整个 profile 或其它站点。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。用户在明确指定的日常 `https://x.com/i/bookmarks` 标签完成受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；随后在用户单独授权的 worktree disposable Vault `.pnpm-store/goal-043/test-vault/real-20260715-10candidate` 首次写入 5 条，Side Panel 显示 `created=5`、`already_exists=0`、`skipped=0`，文件系统只读核对为 5 个非空文件、总计 5002 bytes、单文件 865-1200 bytes，未读取文件名或正文。第二次扫描暴露三项回归：终态返回旧总工作台、新 job 未经确认从 10/5 放大为 50/20，以及密集卡片触发 `structure_changed`。审计进一步确认密集卡片先耗尽共享内容预算，再因 coordinator 的精确键集合错误拒绝合法 `identityOnlySourceItemIds`；独立 review 还发现 identity-only catalog match 不得推进 authoritative known frontier。当前候选已固定新 job 为 10 candidates/5 scroll actions，终态返回 X 同步入口并等待新的 Popup-only intent；后续过密卡片只能在全局 200 内容节点内输出严格验证的 identity-only/`metadata_only`，可保守记为 existing，但会清零连续前沿，未知项可在后续完整读取时原位升级。第一条异常、伪造 hint、permalink 冲突与 10,000 layout traversal 越界继续 fail closed。最新全仓 lint、typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；第三轮独立 actual-diff review 为 `PASS`，P0/P1/P2 均为 0。提交/CI、用户重载和第二次去重复测仍待完成。现有 5 个测试文件不删除、不修改；授权不包含真实 Vault、其它标签、整个 profile 或其它站点。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -57,7 +57,7 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 尚未完成或验证：
 
 - 微博收藏页仍只有 `NO_GO` 研究结论，没有生产枚举。
-- disposable Vault 的 1-3 条人工写入结果、仅对实际写入项的第二次 incremental 去重，以及最终独立验收。
+- 当前预算/返回修复候选的独立验收、用户重载，以及仅对 5 个实际写入项的第二次 incremental 去重。
 - 真正独立的 Popup、Side Panel、Options 构建和按需状态加载仍属于 Goal 046。
 
 ## 5. 冻结中的 Goal 032
@@ -76,7 +76,7 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | no-Vault probe PASS；等待测试 Vault      |
+|    3 | Goal 043 | `IN_PROGRESS`             | 首轮 5 条已写；修复后复测第二次去重      |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
@@ -108,8 +108,8 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 
 1. 用户已在固定 ID 与精确 X 收藏页完成受界 no-Vault probe；10 个候选进入 review，`new=5`、`incomplete=5`、`changed=0`、`error=0`，无 Vault 写入。
 2. UI 只默认选择 5 个 new/list-summary，5 个 `metadata_only` 保持不可默认写入；当前批次没有被误报为全部收藏完成。
-3. 下一步先由用户确认一个新路径 `.pnpm-store/goal-043/test-vault/<run-id>`，再由用户在目录选择器中手动授权；首次只选 1-3 条，不使用真实 Obsidian Vault。
-4. 首次写入后核对逐项 outcome 与文件数量/大小，不读取或记录正文/文件名；第二次 incremental 只要求此前实际写入的 1-3 条返回 existing/skip 且文件数不增加，未写入项仍可继续显示为 new。
+3. 第一轮 disposable Vault 因用户误保留全部选择而实际创建 5 个文件；Side Panel 与文件数量/大小一致，作为首次写入功能证据通过，同时记录 1-3 条 QA 范围偏差，不删除、不修改。
+4. 先提交并重载预算/路由修复；第二次 incremental 仍固定 `maxCandidates=10 + maxScrollActions=5`，必须把这 5 个已写项识别为 existing/skip，且测试 Vault 文件数保持 5；若出现新增写入、changed/incomplete 覆盖或错误则失败。
 5. 真实 Chrome 只使用本机已安装浏览器；不得读取、切换、刷新或关闭其它标签，不读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile，也不得下载浏览器或干扰其它 Chrome 进程。
 
 ## 10. 当前文档

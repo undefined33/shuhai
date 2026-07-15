@@ -49,5 +49,7 @@ export interface AdapterBatchResult {
   readonly capability: AdapterCapability;
   readonly signal: AdapterSignal;
   readonly items: readonly SocialItem[];
+  /** Stable identities observed after the per-card content budget was exhausted. */
+  readonly identityOnlySourceItemIds?: readonly string[];
   readonly metrics: AdapterBatchMetrics;
 }

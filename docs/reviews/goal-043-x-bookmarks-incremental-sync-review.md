@@ -6,7 +6,7 @@
 >
 > 独立 reviewer：Huygens (`019f5af2-d64e-76b0-91c8-bd9982d801e6`)
 >
-> 2026-07-13 历史快照：初始合同结论 `PASS`、G0 verdict `PASS`、043A fixture-only verdict `PASS`；当时整个 Goal 043 为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前状态见第 16.15 节。
+> 2026-07-13 历史快照：初始合同结论 `PASS`、G0 verdict `PASS`、043A fixture-only verdict `PASS`；当时整个 Goal 043 为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前状态见第 16.18 节。
 
 ## 1. 审查结论
 
@@ -444,3 +444,31 @@ Erdos 对最终 actual diff 的 verdict 为 `PASS`，P0/P1/P2 均为 0，并确�
 QA 过程发生一项必须留痕的证据最小化偏差：Codex Chrome 只能认领精确 X 顶层标签，无法通过 Browser URL policy 打开 `chrome-extension://.../sidepanel/index.html`；在确认这一限制前，一次真实 X `domSnapshot` 把当前渲染帖子的文字带入 Codex 工具输出边界，其后端留存或删除状态未验证。发现后立即停止所有正文 DOM 读取，没有绕过 URL policy，没有把正文、作者、ID、URL、媒体或 snapshot 复制到仓库、PR、截图或本 review。后续真实 X QA 禁止使用整页 DOM snapshot；Side Panel 证据只能由用户提供 Side-Panel-only 截图或人工汇总，agent 不再尝试直接读取扩展页面。浏览器控制被 finalise 后保留原 X 标签，不关闭、刷新或操作其它标签。该偏差不推翻用户在偏差发生前完成的功能 probe，但必须由最终独立 reviewer 评估验收影响。
 
 当前 verdict：`REAL X NO-VAULT FUNCTIONAL PASS / QA EVIDENCE DEVIATION RECORDED / GOAL NOT PASS`。Goal 043 保持 `IN_PROGRESS`，不得在真实 Vault 上继续，也不得把 5 个 `metadata_only` 项强制加入选择。
+
+### 16.16 Disposable Vault 授权与 no-write 监测
+
+用户明确批准一次性测试 Vault 后，Integrator 先把目标规范化并确认仍位于当前 worktree，再创建空目录 `.pnpm-store/goal-043/test-vault/real-20260715-10candidate`。创建后的初始条目数为 0；没有使用真实 Obsidian Vault，也没有修改 X、其它标签或其它本地路径。
+
+File System Access API 的目录授权仍要求真实用户手势。Integrator 没有绕过 picker，也没有改用 Computer Use 或其它浏览器控制面代替用户确认；随后只读轮询该精确目录 10 分钟，只汇总递归文件数量和总字节，不输出文件名或正文。监测结果为 0 个文件，证明当前仍未发生 Vault 写入。下一步保持不变：用户在 Side Panel 只保留 1-3 个默认可保存项，点击保存并在 picker 中手动选择该目录，然后停留在结果页供逐项 outcome 与文件数量/大小核对。
+
+当前 verdict：`DISPOSABLE VAULT DIRECTORY READY / USER PICKER ACTION PENDING / GOAL NOT PASS`。
+
+### 16.17 首轮写入功能证据与范围偏差
+
+用户报告已完成写入后，Integrator 只读核对同一 disposable Vault：递归文件数为 5，总计 5002 bytes，最小 865 bytes、最大 1200 bytes。核对没有输出或读取文件名与正文，也没有访问真实 Vault。用户提供的 Side-Panel-only 截图显示 `created=5`、`already_exists=0`、`skipped=0`，5 条均有逐项 created 结果；截图不复制到仓库，也不转录其中的相对路径或 source ID。
+
+用户随后确认原计划只选 1-3 条，但实际操作时误保留了全部 5 条，并询问是否可将本轮计入验收。鉴于所有写入都位于新建 worktree disposable Vault、逐项 UI 结果与 5 个非空文件一致、没有真实 Vault 或其它数据影响，本轮可作为首次写入功能证据；原定 1-3 条仍作为 QA 风险控制范围，实际 5 条必须记录为偏差，不能据此扩大后续真实 QA 授权。现有文件保留，不删除、不修改，也无需重新执行首次写入。
+
+下一步只验证第二次 incremental：这 5 个实际写入项必须返回 existing/skip，文件数保持 5；不得保存任何新候选。当前 verdict：`FIRST DISPOSABLE VAULT WRITE FUNCTIONAL PASS / 5-ITEM QA SCOPE DEVIATION RECORDED / DEDUP PENDING / GOAL NOT PASS`。
+
+### 16.18 第二次 incremental 回归与离线修复候选
+
+第二次 incremental 尚未形成去重证据。用户从终态点击“返回工作区”后落入旧版总工作台；重新启动扫描时任务未经显式选择从首轮 10 条上限放大为 50 条。真实 Side Panel 聚合状态显示候选停在 5/50，existing observations 在每次人工继续后约增加 3-4，随后反复以 `structure_changed` 暂停。发现后立即停止继续点击，没有执行第二次 Vault 写入，也没有删除或修改首轮 5 个测试文件。
+
+代码审计确认三个初始根因：`App.tsx` 的返回 handler 直接关闭 X route；service worker 仅凭前一 job 为 complete 就切换到 50/20 标准预算；content reader 让多张卡片共用 200 内容节点，并把后续卡片子树耗尽与真实 selector 漂移合并为 `structure_changed`。候选修复将终态返回变成 X 同步入口的本地视图重置，仍要求 Popup-only one-shot launch intent 才能创建下一 job；所有新 job 保持 10 candidates/5 scroll actions；content reader 为卡片分配受全局 200 上限约束的子预算，后续过密卡片只输出已验证 stable permalink 的 identity-only observation。第一张过密、permalink 冲突、selector 异常和 10,000 layout traversal 越界继续返回 `structure_changed`。
+
+第一轮独立 review 指出，直接用 identity-only hash 会把此前完整写入的 summary 误判 changed；修复因此引入只在当前 adapter batch 中存在的 `identityOnlySourceItemIds`，并在 message、coordinator 与 store 三层验证其必须是同批唯一 ID、严格 `metadata_only`、无 title/text/displayName/publishedAt/media 且 canonical handle 一致。已有 catalog 同 canonical 项只计 existing observation；未知 identity-only 项保守记 incomplete，并允许同 job 后续读取到 summary 时原位升级，不增加第二个 candidate。
+
+第二轮独立 review 又指出 identity-only catalog match 不能推进 authoritative known frontier，且原跨层测试绕过了 coordinator。修正时新增真实 coordinator 回归，立即发现 `parseAdapterBatchResult` 的精确键集合只接受基础四键，实际上会拒绝合法可选 `identityOnlySourceItemIds`；这是用户看到“约四条后 structure_changed”的直接跨层原因。最终候选允许基础四键或带该可选字段的精确五键，伪造 hint 仍在持久化前 fail closed；identity-only existing 会清空连续 frontier，只保留保守去重计数。测试同时锁定 observed-node/accepted-byte 计费、20 个 identity-only existing 不触发 `known_frontier`、继续读取下一批 trusted terminal，以及 incomplete 到 summary 的同 job 升级。
+
+最新离线证据：聚焦 68/68 tests、全仓 lint/typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；coverage 为 statements 54.49%、branches 73.83%、functions 73.34%、lines 54.49%。锁文件未改，SHA-256 仍为 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，因此没有重复运行已记录的 audit fallback。第三轮独立 actual-diff review 已 `PASS`，P0/P1/P2 均为 0；reviewer 确认 23 个修改文件都在 043B allowlist 内，并且未运行 Chrome、网络、Vault 或修改文件。当前仍等待提交/CI、用户重载和第二次 10-candidate 去重复测。verdict：`REPAIR REVIEW PASS / OFFLINE GATES PASS / REAL DEDUP RETEST PENDING / GOAL NOT PASS`。

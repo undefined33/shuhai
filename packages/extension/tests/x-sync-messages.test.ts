@@ -310,6 +310,30 @@ describe('X sync runtime messages', () => {
     };
     expect(parseXSyncContentRequest(request)).toEqual(request);
     expect(parseXSyncContentResponse(contentResponse()).type).toBe('batch-result');
+    const metadataOnlyItemBase = socialItem();
+    const metadataOnlyItem = {
+      schemaVersion: metadataOnlyItemBase.schemaVersion,
+      source: metadataOnlyItemBase.source,
+      sourceItemId: metadataOnlyItemBase.sourceItemId,
+      canonicalUrl: metadataOnlyItemBase.canonicalUrl,
+      author: metadataOnlyItemBase.author,
+      capturedAt: metadataOnlyItemBase.capturedAt,
+      completeness: 'metadata_only' as const,
+      media: [],
+      contentHash: metadataOnlyItemBase.contentHash,
+      extractorVersion: metadataOnlyItemBase.extractorVersion,
+    };
+    expect(
+      parseXSyncContentResponse(
+        contentResponse({
+          result: {
+            ...(contentResponse().result as Record<string, unknown>),
+            items: [metadataOnlyItem],
+            identityOnlySourceItemIds: [metadataOnlyItem.sourceItemId],
+          },
+        }),
+      ).type,
+    ).toBe('batch-result');
     expect(
       parseXSyncPortMessage({
         protocol: X_SYNC_PROTOCOL,
@@ -364,6 +388,16 @@ describe('X sync runtime messages', () => {
           metrics: { observedNodes: 1, acceptedItems: 0, acceptedBytes: 512, elapsedMs: 20 },
         },
       }),
+    ).toThrow(XSyncMessageValidationError);
+    expect(() =>
+      parseXSyncContentResponse(
+        contentResponse({
+          result: {
+            ...(contentResponse().result as Record<string, unknown>),
+            identityOnlySourceItemIds: [socialItem().sourceItemId],
+          },
+        }),
+      ),
     ).toThrow(XSyncMessageValidationError);
     expect(() =>
       parseXSyncLaunchIntent({

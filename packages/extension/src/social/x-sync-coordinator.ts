@@ -99,6 +99,7 @@ export interface XSyncCoordinatorStorePort {
       readonly signal?: AbortSignal;
       readonly beforeCommit?: () => boolean;
     },
+    identityOnlySourceItemIds?: readonly string[],
   ): Promise<{
     insertedCandidates: number;
     replayedCandidates: number;
@@ -434,6 +435,18 @@ function hasCanonicalAdapterFields(item: SocialItem): boolean {
   return true;
 }
 
+function isIdentityOnlyAdapterItem(item: SocialItem | undefined): boolean {
+  return Boolean(
+    item &&
+      item.completeness === 'metadata_only' &&
+      item.title === undefined &&
+      item.text === undefined &&
+      item.author?.displayName === undefined &&
+      item.publishedAt === undefined &&
+      item.media.length === 0,
+  );
+}
+
 function serializeContentHashInput(item: SocialItem): string {
   return JSON.stringify({
     schemaVersion: item.schemaVersion,
@@ -485,16 +498,45 @@ function serializedBytes(value: unknown): number | null {
 }
 
 async function parseAdapterBatchResult(value: unknown): Promise<ParsedBatch | null> {
-  const record = inspectStrictRecord(value, new Set(['capability', 'signal', 'items', 'metrics']));
-  if (!record || !hasExactKeys(record, ['capability', 'items', 'metrics', 'signal'])) {
+  const record = inspectStrictRecord(
+    value,
+    new Set(['capability', 'signal', 'items', 'identityOnlySourceItemIds', 'metrics']),
+  );
+  if (
+    !record ||
+    (!hasExactKeys(record, ['capability', 'items', 'metrics', 'signal']) &&
+      !hasExactKeys(record, [
+        'capability',
+        'identityOnlySourceItemIds',
+        'items',
+        'metrics',
+        'signal',
+      ]))
+  ) {
     return null;
   }
   const capability = parseCapability(record.capability);
   const signal = parseSignal(record.signal);
   const metrics = parseMetrics(record.metrics);
   const rawItems = inspectPlainArray(record.items, X_BOOKMARKS_CEILINGS.maxItems);
-  if (!capability || !signal || !metrics || !rawItems) {
+  const rawIdentityOnlySourceItemIds =
+    record.identityOnlySourceItemIds === undefined
+      ? []
+      : inspectPlainArray(record.identityOnlySourceItemIds, X_BOOKMARKS_CEILINGS.maxItems);
+  if (!capability || !signal || !metrics || !rawItems || !rawIdentityOnlySourceItemIds) {
     return null;
+  }
+
+  const identityOnlySourceItemIds: string[] = [];
+  for (const rawSourceItemId of rawIdentityOnlySourceItemIds) {
+    const parsedSourceItemId = XSourceItemIdSchema.safeParse(rawSourceItemId);
+    if (
+      !parsedSourceItemId.success ||
+      identityOnlySourceItemIds.includes(parsedSourceItemId.data)
+    ) {
+      return null;
+    }
+    identityOnlySourceItemIds.push(parsedSourceItemId.data);
   }
 
   const items: SocialItem[] = [];
@@ -523,10 +565,14 @@ async function parseAdapterBatchResult(value: unknown): Promise<ParsedBatch | nu
     itemBytes.push(bytes);
   }
   const acceptedBytes = itemBytes.reduce((total, bytes) => total + bytes, 0);
+  const itemBySourceItemId = new Map(items.map((item) => [item.sourceItemId, item]));
   if (
     metrics.acceptedItems !== items.length ||
     metrics.acceptedBytes !== acceptedBytes ||
-    metrics.observedNodes < items.length
+    metrics.observedNodes < items.length ||
+    identityOnlySourceItemIds.some(
+      (sourceItemId) => !isIdentityOnlyAdapterItem(itemBySourceItemId.get(sourceItemId)),
+    )
   ) {
     return null;
   }
@@ -542,7 +588,13 @@ async function parseAdapterBatchResult(value: unknown): Promise<ParsedBatch | nu
     return null;
   }
   return {
-    result: { capability, signal, items, metrics },
+    result: {
+      capability,
+      signal,
+      items,
+      ...(identityOnlySourceItemIds.length === 0 ? {} : { identityOnlySourceItemIds }),
+      metrics,
+    },
     itemBytes,
   };
 }
@@ -900,6 +952,7 @@ export class XSyncCoordinator {
             beforeCommit: () =>
               this.elapsed(startedAt, progress.reportedElapsedMs) < limits.maxElapsedMs,
           },
+          result.identityOnlySourceItemIds ?? [],
         ),
       );
       if (persistedResult === INVOCATION_DEADLINE_EXCEEDED) {

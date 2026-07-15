@@ -338,6 +338,47 @@ describe('X bookmarks fixture adapter', () => {
 
     expect(result.items.map((item) => item.completeness)).toEqual(['metadata_only', 'unsupported']);
   });
+
+  it('marks only an exact identity-only observation for catalog-safe classification', async () => {
+    const sourceItemId = fixtureSourceItemId(1);
+    const result = await adapt({
+      pageUrl: 'https://x.com/i/bookmarks',
+      signal: { kind: 'items' },
+      observedNodeCount: 2,
+      entries: [
+        {
+          permalink: `https://x.com/example/status/${sourceItemId}`,
+          observationMode: 'identity_only',
+          author: { handle: 'example' },
+          media: [],
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      identityOnlySourceItemIds: [sourceItemId],
+      items: [{ sourceItemId, completeness: 'metadata_only' }],
+    });
+
+    const overstated = await adapt({
+      pageUrl: 'https://x.com/i/bookmarks',
+      signal: { kind: 'items' },
+      observedNodeCount: 2,
+      entries: [
+        {
+          permalink: `https://x.com/example/status/${sourceItemId}`,
+          observationMode: 'identity_only',
+          text: 'must not be hidden behind an identity-only hint',
+          author: { handle: 'example' },
+          media: [],
+        },
+      ],
+    });
+    expect(overstated.signal).toEqual({
+      kind: 'structure_changed',
+      stopReason: 'structure_changed',
+    });
+  });
 });
 
 describe('X bookmarks typed signals and immutable budgets', () => {

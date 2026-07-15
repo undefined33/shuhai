@@ -681,17 +681,13 @@ class XSyncChromeAdapter implements AdapterBatchPort {
   }
 }
 
-function limitsForNewXJob(previousJob: SyncJob | undefined): Readonly<XBookmarksLimits> {
-  const completedProbe =
-    previousJob?.status === 'complete' || previousJob?.status === 'complete_with_issues';
-  return completedProbe
-    ? X_BOOKMARKS_CEILINGS
-    : Object.freeze({
-        ...X_BOOKMARKS_CEILINGS,
-        maxItems: X_SYNC_INITIAL_CANDIDATE_LIMIT,
-        maxBatches: X_SYNC_INITIAL_SCROLL_LIMIT,
-        maxScrollActions: X_SYNC_INITIAL_SCROLL_LIMIT,
-      });
+function limitsForNewXJob(): Readonly<XBookmarksLimits> {
+  return Object.freeze({
+    ...X_BOOKMARKS_CEILINGS,
+    maxItems: X_SYNC_INITIAL_CANDIDATE_LIMIT,
+    maxBatches: X_SYNC_INITIAL_SCROLL_LIMIT,
+    maxScrollActions: X_SYNC_INITIAL_SCROLL_LIMIT,
+  });
 }
 
 function limitsForPersistedJob(job: SyncJob): Readonly<XBookmarksLimits> {
@@ -820,8 +816,7 @@ async function prepareXSyncStart(mode: SyncScanMode, launchNonce: string): Promi
     if (await store.getActiveJob('x')) {
       throw new ActiveSyncJobExistsError('x');
     }
-    const previousJob = (await store.listJobs({ source: 'x', limit: 1 }))[0];
-    const limits = limitsForNewXJob(previousJob);
+    const limits = limitsForNewXJob();
     const tab = await queryActiveXTab(intent.windowId);
     const document = await injectXBookmarksReader(tab);
     const job = await store.createJob({

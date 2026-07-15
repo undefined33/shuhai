@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { describe, expect, it, vi } from 'vitest';
+import { adaptXBookmarksObservation } from '../src/social/adapters/x-bookmarks.js';
 import {
   ActiveSyncJobExistsError,
   CorruptSyncRowError,
@@ -1339,6 +1340,182 @@ describe('SyncStore checkpoint and item recovery', () => {
       consecutiveKnownIds: 1,
       knownFrontierSourceItemIds: [existing.sourceItemId],
     });
+    store.close();
+  });
+
+  it('keeps a budget-limited identity observation catalog-existing across adapter and store', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-identity-only-existing',
+    });
+    await createScanningJob(store);
+    const permalink = 'https://x.com/example/status/1800000000000000999';
+    const capturedAt = timestamp(2);
+    const fullBatch = await adaptXBookmarksObservation(
+      {
+        pageUrl: 'https://x.com/i/bookmarks',
+        signal: { kind: 'items' },
+        observedNodeCount: 4,
+        entries: [
+          {
+            permalink,
+            text: 'Previously written bounded summary',
+            author: { handle: 'example' },
+            media: [],
+          },
+        ],
+      },
+      { capturedAt },
+    );
+    const existing = fullBatch.items[0]!;
+    await store.putRecord({
+      schemaVersion: 1,
+      key: makeSyncRecordKey(existing.source, existing.sourceItemId),
+      source: existing.source,
+      sourceItemId: existing.sourceItemId,
+      canonicalUrl: existing.canonicalUrl,
+      contentHash: existing.contentHash,
+      relativePath: 'ShuHai/x/existing.md',
+      completeness: existing.completeness,
+      extractorVersion: existing.extractorVersion,
+      importedAt: timestamp(1),
+      lastSeenAt: timestamp(1),
+    });
+
+    const identityBatch = await adaptXBookmarksObservation(
+      {
+        pageUrl: 'https://x.com/i/bookmarks',
+        signal: { kind: 'items' },
+        observedNodeCount: 2,
+        entries: [
+          {
+            permalink,
+            observationMode: 'identity_only',
+            author: { handle: 'example' },
+            media: [],
+          },
+        ],
+      },
+      { capturedAt },
+    );
+    expect(identityBatch).toMatchObject({
+      identityOnlySourceItemIds: [existing.sourceItemId],
+      items: [{ completeness: 'metadata_only' }],
+    });
+
+    await expect(
+      store.classifyAndPersistScanBatch(
+        'job-1',
+        1,
+        fullBatch.items,
+        fullBatch.metrics.observedNodes,
+        timestamp(3),
+        {},
+        [existing.sourceItemId],
+      ),
+    ).rejects.toBeInstanceOf(SyncStoreConflictError);
+
+    const classified = await store.classifyAndPersistScanBatch(
+      'job-1',
+      1,
+      identityBatch.items,
+      identityBatch.metrics.observedNodes,
+      timestamp(3),
+      {},
+      identityBatch.identityOnlySourceItemIds,
+    );
+
+    expect(classified).toMatchObject({
+      insertedCandidates: 0,
+      catalogExistingObservations: 1,
+      classifications: [{ sourceItemId: existing.sourceItemId, classification: 'existing' }],
+      job: {
+        checkpoint: {
+          candidateCount: 0,
+          catalogExistingObservationCount: 1,
+          consecutiveKnownIds: 0,
+          knownFrontierSourceItemIds: [],
+        },
+      },
+    });
+    await expect(store.listJobItems('job-1')).resolves.toEqual([]);
+    store.close();
+  });
+
+  it('upgrades a new identity-only candidate when a later batch reads its bounded summary', async () => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: 'sync-identity-only-upgrade',
+    });
+    await createScanningJob(store);
+    const permalink = 'https://x.com/example/status/1800000000000001000';
+    const identityBatch = await adaptXBookmarksObservation(
+      {
+        pageUrl: 'https://x.com/i/bookmarks',
+        signal: { kind: 'items' },
+        observedNodeCount: 2,
+        entries: [
+          {
+            permalink,
+            observationMode: 'identity_only',
+            author: { handle: 'example' },
+            media: [],
+          },
+        ],
+      },
+      { capturedAt: timestamp(2) },
+    );
+    const first = await store.classifyAndPersistScanBatch(
+      'job-1',
+      1,
+      identityBatch.items,
+      identityBatch.metrics.observedNodes,
+      timestamp(2),
+      {},
+      identityBatch.identityOnlySourceItemIds,
+    );
+    expect(first).toMatchObject({
+      insertedCandidates: 1,
+      classifications: [{ classification: 'incomplete' }],
+      job: { checkpoint: { candidateCount: 1 } },
+    });
+
+    const summaryBatch = await adaptXBookmarksObservation(
+      {
+        pageUrl: 'https://x.com/i/bookmarks',
+        signal: { kind: 'items' },
+        observedNodeCount: 4,
+        entries: [
+          {
+            permalink,
+            text: 'The later bounded summary is now readable',
+            author: { handle: 'example' },
+            media: [],
+          },
+        ],
+      },
+      { capturedAt: timestamp(2) },
+    );
+    const upgraded = await store.classifyAndPersistScanBatch(
+      'job-1',
+      1,
+      summaryBatch.items,
+      summaryBatch.metrics.observedNodes,
+      timestamp(3),
+    );
+
+    expect(upgraded).toMatchObject({
+      insertedCandidates: 0,
+      replayedCandidates: 1,
+      classifications: [{ classification: 'new' }],
+      job: { checkpoint: { candidateCount: 1 } },
+    });
+    await expect(store.listJobItems('job-1')).resolves.toMatchObject([
+      {
+        classification: 'new',
+        item: { completeness: 'summary_only', text: 'The later bounded summary is now readable' },
+      },
+    ]);
     store.close();
   });
 });

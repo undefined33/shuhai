@@ -2256,6 +2256,18 @@ function sameStableSocialItem(left: SocialItem, right: SocialItem): boolean {
   );
 }
 
+function isIdentityOnlySocialItem(item: SocialItem): boolean {
+  return (
+    item.source === 'x' &&
+    item.completeness === 'metadata_only' &&
+    item.title === undefined &&
+    item.text === undefined &&
+    item.author?.displayName === undefined &&
+    item.publishedAt === undefined &&
+    item.media.length === 0
+  );
+}
+
 function itemMatchesCatalogIdentity(item: SocialItem, record: SyncRecord): boolean {
   return (
     item.source === record.source &&
@@ -3305,6 +3317,7 @@ export class SyncStore {
     observedNodeDeltaInput: number,
     updatedAtInput?: string,
     guard: ScanTransactionGuard = {},
+    identityOnlySourceItemIdsInput: readonly string[] = [],
   ): Promise<ClassifyAndPersistScanBatchResult> {
     this.assertOpen();
     const id = SyncJobIdSchema.parse(jobId);
@@ -3324,6 +3337,15 @@ export class SyncStore {
       }
       return { item, bytes };
     });
+    const identityOnlySourceItemIds = readBoundedPlainArray(
+      identityOnlySourceItemIdsInput,
+      MAX_OBSERVED_NODES_PER_INVOCATION,
+      'identityOnlySourceItemIds',
+    ).map((sourceItemId) => SourceItemIdSchema.parse(sourceItemId));
+    const identityOnlySourceItemIdSet = new Set(identityOnlySourceItemIds);
+    if (identityOnlySourceItemIdSet.size !== identityOnlySourceItemIds.length) {
+      throw new SyncStoreConflictError('Identity-only observations contain duplicate IDs');
+    }
     if (
       !Number.isSafeInteger(observedNodeDeltaInput) ||
       observedNodeDeltaInput < observations.length ||
@@ -3334,6 +3356,19 @@ export class SyncStore {
     const observedIds = observations.map(({ item }) => item.sourceItemId);
     if (new Set(observedIds).size !== observedIds.length) {
       throw new SyncStoreConflictError('Scan observations contain duplicate source item IDs');
+    }
+    const observationBySourceItemId = new Map(
+      observations.map(({ item }) => [item.sourceItemId, item]),
+    );
+    if (
+      identityOnlySourceItemIds.some((sourceItemId) => {
+        const item = observationBySourceItemId.get(sourceItemId);
+        return !item || !isIdentityOnlySocialItem(item);
+      })
+    ) {
+      throw new SyncStoreConflictError(
+        'Identity-only observations must name metadata-only items in the same batch',
+      );
     }
     const updatedAt = IsoTimestampSchema.parse(updatedAtInput ?? this.now());
 
@@ -3404,11 +3439,15 @@ export class SyncStore {
 
         const classify = async (
           item: SocialItem,
+          identityOnly: boolean,
         ): Promise<Exclude<SyncItemClassification, 'pending'>> => {
           const recordKey = makeSyncRecordKey(item.source, item.sourceItemId);
           const keyValue = await records.get(recordKey);
           if (keyValue !== undefined) {
             const record = parsePersistedRow(SyncRecordSchema, keyValue, 'records', recordKey);
+            if (identityOnly) {
+              return record.canonicalUrl === item.canonicalUrl ? 'existing' : 'changed';
+            }
             return itemMatchesCatalogIdentity(item, record) ? 'existing' : 'changed';
           }
           const [canonicalValues, hashValues] = await Promise.all([
@@ -3463,16 +3502,43 @@ export class SyncStore {
           if (item.media.length > job.budgets.maxMediaPerItem || bytes > job.budgets.maxItemBytes) {
             throw new SyncStoreConflictError('SocialItem exceeds the persisted job budget');
           }
+          const identityOnly = identityOnlySourceItemIdSet.has(item.sourceItemId);
           const replay = rowsBySourceItemId.get(item.sourceItemId);
           if (replay) {
-            if (!sameStableSocialItem(replay.item, item)) {
+            const upgradesIdentityOnlyReplay =
+              !identityOnly &&
+              replay.classification === 'incomplete' &&
+              isIdentityOnlySocialItem(replay.item) &&
+              replay.item.canonicalUrl === item.canonicalUrl &&
+              (item.completeness === 'complete' || item.completeness === 'summary_only');
+            if (
+              identityOnly
+                ? replay.item.canonicalUrl !== item.canonicalUrl
+                : !sameStableSocialItem(replay.item, item) && !upgradesIdentityOnlyReplay
+            ) {
               throw new SyncStoreConflictError(
                 'A replayed source item conflicts with the persisted job item',
               );
             }
             let classification = replay.classification;
-            if (classification === 'pending') {
-              classification = await classify(item);
+            if (upgradesIdentityOnlyReplay) {
+              classification = await classify(item, false);
+              if (classification === 'existing') {
+                throw new SyncStoreConflictError(
+                  'An identity-only replay cannot become catalog-existing during the same scan',
+                );
+              }
+              classificationErrorCount += classification === 'error' ? 1 : 0;
+              const upgradedReplay = SyncJobItemRowSchema.parse({
+                ...replay,
+                item,
+                classification,
+                updatedAt,
+              });
+              rowsToWrite.push(upgradedReplay);
+              rowsBySourceItemId.set(item.sourceItemId, upgradedReplay);
+            } else if (classification === 'pending') {
+              classification = await classify(identityOnly ? replay.item : item, identityOnly);
               pendingReviewCount -= 1;
               if (classification === 'existing') {
                 catalogExistingObservations += 1;
@@ -3495,10 +3561,15 @@ export class SyncStore {
             continue;
           }
 
-          const classification = await classify(item);
+          const classification = await classify(item, identityOnly);
           classifications.push({ sourceItemId: item.sourceItemId, classification });
           if (classification === 'existing') {
             catalogExistingObservations += 1;
+            if (identityOnly) {
+              consecutiveKnownIds = 0;
+              knownFrontierSourceItemIds = [];
+              continue;
+            }
             if (!knownFrontierSourceItemIds.includes(item.sourceItemId)) {
               if (knownFrontierSourceItemIds.length < SYNC_KNOWN_FRONTIER_LIMIT) {
                 knownFrontierSourceItemIds.push(item.sourceItemId);

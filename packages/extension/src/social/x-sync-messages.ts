@@ -506,6 +506,7 @@ const adapterResultSchema = z
     capability: adapterCapabilitySchema,
     signal: adapterSignalSchema,
     items: z.array(xSocialItemSchema).max(50),
+    identityOnlySourceItemIds: z.array(XSourceItemIdSchema).max(50).optional(),
     metrics: z.strictObject({
       observedNodes: z.number().int().min(0).max(200),
       acceptedItems: z.number().int().min(0).max(50),
@@ -518,6 +519,28 @@ const adapterResultSchema = z
     }),
   })
   .superRefine((result, context) => {
+    const identityOnlySourceItemIds = result.identityOnlySourceItemIds ?? [];
+    const itemBySourceItemId = new Map(result.items.map((item) => [item.sourceItemId, item]));
+    if (
+      new Set(identityOnlySourceItemIds).size !== identityOnlySourceItemIds.length ||
+      identityOnlySourceItemIds.some((sourceItemId) => {
+        const item = itemBySourceItemId.get(sourceItemId);
+        return (
+          !item ||
+          item.completeness !== 'metadata_only' ||
+          item.title !== undefined ||
+          item.text !== undefined ||
+          item.author?.displayName !== undefined ||
+          item.publishedAt !== undefined ||
+          item.media.length !== 0
+        );
+      })
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Identity-only IDs must name unique metadata-only batch items',
+      });
+    }
     if (
       result.metrics.acceptedItems !== result.items.length ||
       result.metrics.observedNodes < result.items.length

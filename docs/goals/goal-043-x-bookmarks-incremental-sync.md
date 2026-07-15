@@ -10,7 +10,7 @@ branch: codex/social-sync-v4
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选和 043B 实施合同、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定开发 ID、完整门禁与 Node 20 CI 均已通过。前三轮真实 probe 暴露的 content 构建、DOM 预算和虚拟列表前沿问题已由提交 `c9ab16f`、`9f176e7`、`76a3a60` 依次关闭。用户重载后在明确指定的日常 `https://x.com/i/bookmarks` 标签执行受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe，已进入 10-candidate review：5 个 `new/list-summary` 默认可选，5 个 `incomplete/metadata-only` 未默认选择，`changed=0`、`error=0`、catalog existing observations 为 0；没有写 Vault，也没有声称到达 feed 末尾。该证据证明真实 selector、受界滚动、10-item batch 和此前 `8/10 no_progress` 修复可用，但不证明完整正文捕获或全收藏同步。隔离测试账号无法登录后，日常 Chrome 授权仍只覆盖当前 X 标签与 ShuHai，不包含其它标签、整个 profile、其它站点或真实 Vault。当前进入 disposable Vault 门禁：用户必须另行确认 worktree 内的新目录并手动授权 picker，首次只写 1-3 条。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选和 043B 实施合同、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定开发 ID、完整门禁与 Node 20 CI 均已通过。受界真实 no-Vault probe 进入 10-candidate review：5 个 `new/list-summary`、5 个 `incomplete/metadata-only`，`changed=0`、`error=0`；首轮 disposable Vault 因误保留全部选择而创建 5 个非空文件，记录了原定 1-3 条的 QA 范围偏差。第二次 incremental 暴露三个回归：终态返回落入旧总工作台、新 job 静默从 10 放大到 50、共享内容预算在约 3-5 条后被误报为 `structure_changed`。修复候选保持所有新 job 为 10 条/5 次滚动，终态只返回 X 同步入口并继续遵守 Popup-only 一次性 intent；后续过密卡片在 200 节点总预算内只保留稳定身份并降级为 `metadata_only`，第一张异常、selector 冲突和布局遍历越界仍 fail closed。当前等待独立 review、提交、用户重载与第二次 incremental 去重；测试 Vault 文件数必须保持 5。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_DISPOSABLE_VAULT_GATE`：真实 toolbar、固定 ID、content 构建、DOM 预算、虚拟列表前沿与受界 no-Vault 10-candidate probe 均已通过相应门禁；probe 仍只证明 `LIMITED_GO/batch-only`，不代表完整正文或全收藏同步。下一步必须由用户确认 worktree 内的新 disposable Vault 并在 picker 中手动授权，首次只选择 1-3 个 `new` 项；写入后核对逐项 outcome，再运行第二次 incremental，验证此前实际写入的 1-3 条返回 existing/skip 且文件数不增加，未写入项仍可继续显示为 new。真实 Vault、其它标签、整个 profile、自动重试、提高并发或放宽 STOP 条件均未授权。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_REPAIR_RETEST`：首次 disposable Vault 写入功能通过；第二次 incremental 在 5/50 候选附近反复以 `structure_changed` 暂停，existing observations 每次人工继续只增加约 3-4，同时终态返回卸载 X 路由并落入旧工作台。离线审计确认共享内容预算耗尽、合法 identity-only hint 被 coordinator 的精确键校验拒绝、identity-only existing 误推进 known frontier 三个关联问题。候选修复没有放宽 host、凭据或遍历安全边界：每批仍单请求、至少 2 秒间隔，全局 200 内容节点不变；只有已验证 stable permalink 的后续过密卡片降级为严格 `metadata_only`，可保守去重但不得推进 authoritative frontier，未知项以后可原位升级。所有新 job 保持受界 10 条/5 次滚动，标准 50 条只能由未来显式用户选择重新引入，不能由上次完成状态自动升级。真实 Vault、其它标签、整个 profile、自动重试、提高并发或放宽 STOP 条件均未授权。
 
 ### 3.4 043B：稳定扩展身份前置门禁
 

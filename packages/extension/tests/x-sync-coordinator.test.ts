@@ -114,6 +114,7 @@ function batch(
   signal: AdapterSignal,
   items: readonly SocialItem[] = [],
   metrics: Partial<AdapterBatchResult['metrics']> = {},
+  identityOnlySourceItemIds: readonly string[] = [],
 ): AdapterBatchResult {
   return {
     capability: {
@@ -123,6 +124,7 @@ function batch(
     },
     signal,
     items,
+    ...(identityOnlySourceItemIds.length === 0 ? {} : { identityOnlySourceItemIds }),
     metrics: {
       observedNodes: items.length,
       acceptedItems: items.length,
@@ -751,6 +753,87 @@ describe('XSyncCoordinator', () => {
       jobCandidateItems: 0,
       remainingCandidateSlots: 50,
     });
+  });
+
+  it('keeps identity-only catalog matches out of the authoritative known frontier', async () => {
+    const store = await createStore();
+    const existing = await Promise.all(Array.from({ length: 20 }, (_, index) => item(500 + index)));
+    await store.putRecords(existing.map((entry) => record(entry)));
+    const identityOnly = await Promise.all(
+      existing.map((entry, index) =>
+        item(600 + index, {
+          sourceItemId: entry.sourceItemId,
+          canonicalUrl: entry.canonicalUrl,
+          title: undefined,
+          text: undefined,
+          author: { handle: 'researcher' },
+          publishedAt: undefined,
+          completeness: 'metadata_only',
+          media: [],
+        }),
+      ),
+    );
+    const identityOnlyIds = identityOnly.map((entry) => entry.sourceItemId);
+    const changed = await item(699, {
+      sourceItemId: existing[0]!.sourceItemId,
+      canonicalUrl: existing[0]!.canonicalUrl,
+    });
+    const adapter = new QueueAdapter([
+      batch({ kind: 'items' }, identityOnly, { observedNodes: 80 }, identityOnlyIds),
+      batch({ kind: 'terminal' }, [changed]),
+    ]);
+    const persistSpy = vi.spyOn(store, 'classifyAndPersistScanBatch');
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'identity-only-does-not-advance-frontier',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'ready_for_review',
+      metrics: { steps: 2, observedNodes: 81, insertedItems: 1, replayedItems: 20 },
+      job: {
+        scanCompletion: 'trusted_terminal',
+        checkpoint: {
+          scannedCount: 21,
+          acceptedCount: 21,
+          acceptedBytes:
+            identityOnly.reduce((total, entry) => total + encodedBytes(entry), 0) +
+            encodedBytes(changed),
+          candidateCount: 1,
+          catalogExistingObservationCount: 20,
+          consecutiveKnownIds: 0,
+          knownFrontierSourceItemIds: [],
+        },
+      },
+    });
+    expect(persistSpy.mock.calls[0]?.[3]).toBe(80);
+    expect(persistSpy.mock.calls[0]?.[6]).toEqual(identityOnlyIds);
+    expect(adapter.requests).toHaveLength(2);
+    await expect(
+      store.listJobItems('identity-only-does-not-advance-frontier'),
+    ).resolves.toMatchObject([{ sourceItemId: changed.sourceItemId, classification: 'changed' }]);
+  });
+
+  it('rejects a forged identity-only hint before coordinator persistence', async () => {
+    const store = await createStore();
+    const fullItem = await item(700);
+    const persistSpy = vi.spyOn(store, 'classifyAndPersistScanBatch');
+    const adapter = new QueueAdapter([
+      batch({ kind: 'terminal' }, [fullItem], {}, [fullItem.sourceItemId]),
+    ]);
+
+    const result = await coordinator(store, adapter).createAndStart({
+      jobId: 'forged-identity-only-hint',
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'paused',
+      stopReason: 'structure_changed',
+      metrics: { steps: 0 },
+      job: { status: 'paused', summary: { uniqueItemCount: 0 } },
+    });
+    expect(persistSpy).not.toHaveBeenCalled();
+    await expect(store.listJobItems('forged-identity-only-hint')).resolves.toEqual([]);
   });
 
   it('does not count repeated exact-existing IDs again after a paused scan resumes', async () => {

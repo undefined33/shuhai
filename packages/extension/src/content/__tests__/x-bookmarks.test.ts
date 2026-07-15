@@ -284,6 +284,54 @@ describe('X bookmarks content DOM reader', () => {
     expect(observation.entries[0]?.media).toEqual([]);
   });
 
+  it('degrades later dense cards to identity-only observations within the shared budget', () => {
+    const fixtures = [
+      cardFixture('First item', '/researcher/status/1000000000000000001'),
+      cardFixture('Second item', '/researcher/status/1000000000000000002'),
+      cardFixture('Third item', '/researcher/status/1000000000000000003'),
+    ];
+    for (const fixture of fixtures) {
+      fixture.textRoot.childNodes.splice(
+        0,
+        fixture.textRoot.childNodes.length,
+        ...Array.from({ length: 60 }, () => new FakeTextNode('x')),
+      );
+    }
+    fixtures[0]!.primaryColumn.setAll(
+      'article[data-testid="tweet"]',
+      fixtures.map((fixture) => fixture.card),
+    );
+
+    const observation = readXBookmarksDom(
+      fixtures[0]!.document as unknown as Document,
+      'https://x.com/i/bookmarks',
+      { maxObservedNodes: 80 },
+    );
+
+    expect(observation).toMatchObject({
+      signal: { kind: 'items' },
+      observedNodeCount: 80,
+      entries: [
+        {
+          permalink: 'https://x.com/researcher/status/1000000000000000001',
+          text: 'x'.repeat(60),
+        },
+        {
+          permalink: 'https://x.com/researcher/status/1000000000000000002',
+          observationMode: 'identity_only',
+          author: { handle: 'researcher' },
+          media: [],
+        },
+        {
+          permalink: 'https://x.com/researcher/status/1000000000000000003',
+          observationMode: 'identity_only',
+          author: { handle: 'researcher' },
+          media: [],
+        },
+      ],
+    });
+  });
+
   it('does not spend the content budget on unrelated X layout descendants', () => {
     const fixture = cardFixture();
     const primaryColumn = fixture.document.querySelector('[data-testid="primaryColumn"]');

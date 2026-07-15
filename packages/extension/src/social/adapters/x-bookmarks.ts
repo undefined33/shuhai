@@ -71,6 +71,7 @@ export interface XBookmarkDomAuthorObservation {
 
 export interface XBookmarkDomEntryObservation {
   readonly permalink: string;
+  readonly observationMode?: 'identity_only';
   readonly title?: string;
   readonly text?: string;
   readonly author?: XBookmarkDomAuthorObservation;
@@ -123,6 +124,7 @@ interface ParsedPermalink {
 interface ParsedEntry {
   readonly item: SocialItem;
   readonly acceptedBytes: number;
+  readonly identityOnly: boolean;
 }
 
 interface Clock {
@@ -505,7 +507,16 @@ async function parseEntry(
 ): Promise<ParsedEntry | null> {
   const record = inspectPlainRecord(
     value,
-    new Set(['permalink', 'title', 'text', 'author', 'publishedAt', 'contentKind', 'media']),
+    new Set([
+      'permalink',
+      'observationMode',
+      'title',
+      'text',
+      'author',
+      'publishedAt',
+      'contentKind',
+      'media',
+    ]),
   );
   if (!record) {
     return null;
@@ -515,9 +526,10 @@ async function parseEntry(
     return null;
   }
   if (
-    own(record, 'contentKind') &&
-    record.contentKind !== 'post' &&
-    record.contentKind !== 'unsupported'
+    (own(record, 'observationMode') && record.observationMode !== 'identity_only') ||
+    (own(record, 'contentKind') &&
+      record.contentKind !== 'post' &&
+      record.contentKind !== 'unsupported')
   ) {
     return null;
   }
@@ -528,6 +540,19 @@ async function parseEntry(
   const publishedAt = parsePublishedAt(record.publishedAt);
   const media = parseMedia(record.media, limits.maxMedia);
   if (!title || !text || !author || publishedAt === null || !media) {
+    return null;
+  }
+
+  const identityOnly = record.observationMode === 'identity_only';
+  if (
+    identityOnly &&
+    (title.value !== undefined ||
+      text.value !== undefined ||
+      author.displayName !== undefined ||
+      publishedAt !== undefined ||
+      record.contentKind !== undefined ||
+      media.length !== 0)
+  ) {
     return null;
   }
 
@@ -569,7 +594,7 @@ async function parseEntry(
   } catch {
     return null;
   }
-  return { item: parsed.data, acceptedBytes };
+  return { item: parsed.data, acceptedBytes, identityOnly };
 }
 
 function parseSignal(value: unknown): XBookmarksDomSignal | null {
@@ -656,8 +681,15 @@ function result(
   signal: AdapterSignal,
   items: readonly SocialItem[] = [],
   metrics: AdapterBatchMetrics = baseMetrics(),
+  identityOnlySourceItemIds: readonly string[] = [],
 ): AdapterBatchResult {
-  return { capability, signal, items, metrics };
+  return {
+    capability,
+    signal,
+    items,
+    ...(identityOnlySourceItemIds.length === 0 ? {} : { identityOnlySourceItemIds }),
+    metrics,
+  };
 }
 
 function structureChanged(capability: AdapterCapability, elapsedMs = 0): AdapterBatchResult {
@@ -688,12 +720,14 @@ function budgetExceeded(
   budget: AdapterBudget,
   items: readonly SocialItem[],
   metrics: AdapterBatchMetrics,
+  identityOnlySourceItemIds: readonly string[] = [],
 ): AdapterBatchResult {
   return result(
     capability,
     { kind: 'budget_exceeded', budget, stopReason: 'budget_exceeded' },
     items,
     metrics,
+    identityOnlySourceItemIds,
   );
 }
 
@@ -880,6 +914,7 @@ export async function adaptXBookmarksDom(
 
   const items: SocialItem[] = [];
   const itemsById = new Map<string, SocialItem>();
+  const identityOnlySourceItemIds: string[] = [];
   let candidateItems = 0;
   let acceptedBytes = 0;
   for (let index = 0; index < (entryCount as number); index += 1) {
@@ -901,6 +936,7 @@ export async function adaptXBookmarksDom(
           acceptedBytes,
           elapsedMs: elapsedBeforeEntry,
         }),
+        identityOnlySourceItemIds,
       );
     }
 
@@ -926,6 +962,7 @@ export async function adaptXBookmarksDom(
           acceptedBytes,
           elapsedMs: elapsedAfterEntry,
         }),
+        identityOnlySourceItemIds,
       );
     }
 
@@ -955,6 +992,7 @@ export async function adaptXBookmarksDom(
           acceptedBytes,
           elapsedMs: elapsedAfterEntry,
         }),
+        identityOnlySourceItemIds,
       );
     }
     if (acceptedBytesBefore + acceptedBytes + parsedEntry.acceptedBytes > limits.maxTotalBytes) {
@@ -968,10 +1006,14 @@ export async function adaptXBookmarksDom(
           acceptedBytes,
           elapsedMs: elapsedAfterEntry,
         }),
+        identityOnlySourceItemIds,
       );
     }
     itemsById.set(sourceItemId, parsedEntry.item);
     items.push(parsedEntry.item);
+    if (parsedEntry.identityOnly) {
+      identityOnlySourceItemIds.push(sourceItemId);
+    }
     if (consumesCandidateSlot) {
       candidateItems += 1;
     }
@@ -992,15 +1034,15 @@ export async function adaptXBookmarksDom(
     elapsedMs: finalElapsedMs,
   });
   if (finalElapsedMs >= limits.maxElapsedMs) {
-    return budgetExceeded(capability, 'elapsed_time', items, metrics);
+    return budgetExceeded(capability, 'elapsed_time', items, metrics, identityOnlySourceItemIds);
   }
   if (
     candidateItems >= Math.min(limits.maxItems, remainingCandidateSlots) &&
     signal.kind !== 'terminal'
   ) {
-    return budgetExceeded(capability, 'candidate_items', items, metrics);
+    return budgetExceeded(capability, 'candidate_items', items, metrics, identityOnlySourceItemIds);
   }
-  return result(capability, { kind: signal.kind }, items, metrics);
+  return result(capability, { kind: signal.kind }, items, metrics, identityOnlySourceItemIds);
 }
 
 export function createXBookmarksDomReadPort(

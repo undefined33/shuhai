@@ -7,9 +7,11 @@ import type {
   SyncStopReason,
 } from '../src/social/sync-schema.js';
 import {
+  acceptFreshXSyncLaunchIntent,
   classifyXHostPermissionOrigins,
   deriveXSyncUiModel,
   formatXSyncShortStatus,
+  prepareNextXSyncBatch,
   type XSyncUiSnapshot,
 } from '../src/popup/pages/x-sync-ui-model.js';
 
@@ -429,14 +431,80 @@ describe('X sync UI model', () => {
     ['ready_for_review', false],
     ['writing', false],
     ['partial', false],
-  ] as const)('sets return-to-workspace for %s to %s', (status, expected) => {
+  ] as const)('sets prepare-next-batch for %s to %s', (status, expected) => {
     const model = deriveXSyncUiModel(snapshot({ job: job(status) }));
 
-    expect(model.canReturnToWorkspace).toBe(expected);
+    expect(model.canPrepareNextBatch).toBe(expected);
   });
 
-  it('does not offer a workspace return without a job', () => {
-    expect(deriveXSyncUiModel(snapshot()).canReturnToWorkspace).toBe(false);
+  it('does not offer the next-batch transition without a job', () => {
+    expect(deriveXSyncUiModel(snapshot()).canPrepareNextBatch).toBe(false);
+  });
+
+  it('keeps later batches bounded and explains that no extension reload is needed', () => {
+    const model = deriveXSyncUiModel(
+      snapshot({
+        lastJob: job('complete'),
+        launchState: 'waiting',
+      }),
+    );
+
+    expect(model.candidateLimit).toBe(10);
+    expect(model.headline).toBe('已返回 X 同步入口');
+    expect(model.description).toContain('无需重载扩展');
+  });
+
+  it('preserves the terminal job while requiring a fresh one-shot intent for the next batch', () => {
+    const terminalJob = job('complete', {
+      budgets: {
+        maxItems: 10,
+        maxPages: 5,
+        maxDurationMs: 15_000,
+        maxItemBytes: 16_384,
+        maxMediaPerItem: 12,
+      },
+    });
+    const waiting = prepareNextXSyncBatch(terminalJob);
+    expect(waiting).toMatchObject({
+      launchState: 'waiting',
+      jobId: undefined,
+      launchIntent: undefined,
+      defaultReviewKey: '',
+      snapshot: { lastJob: terminalJob, items: [], pendingIntentCount: 0 },
+    });
+    expect(
+      deriveXSyncUiModel(
+        snapshot({
+          ...waiting.snapshot,
+          launchState: waiting.launchState,
+        }),
+      ).canStart,
+    ).toBe(false);
+
+    const intent = {
+      protocol: 'shuhai:x-sync:v1' as const,
+      action: 'start' as const,
+      windowId: 7,
+      createdAtMs: 1_000,
+      expiresAtMs: 61_000,
+      nonce: 'n'.repeat(43),
+    };
+    const ready = acceptFreshXSyncLaunchIntent(waiting.snapshot, intent, 2_000);
+    expect(ready).toMatchObject({
+      launchState: 'ready',
+      jobId: undefined,
+      launchIntent: intent,
+      snapshot: { lastJob: terminalJob, items: [], pendingIntentCount: 0 },
+    });
+    expect(
+      deriveXSyncUiModel(
+        snapshot({
+          ...ready!.snapshot,
+          launchState: ready!.launchState,
+        }),
+      ).canStart,
+    ).toBe(true);
+    expect(acceptFreshXSyncLaunchIntent(waiting.snapshot, intent, 61_000)).toBeUndefined();
   });
 
   it('reports an explicit no-write terminal result', () => {

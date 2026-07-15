@@ -51,13 +51,13 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 
 ## 5. 当前大模块
 
-| 顺序 | 模块                                | Goal    | 当前状态                                                |
-| ---: | ----------------------------------- | ------- | ------------------------------------------------------- |
-|    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计     |
-|    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                             |
-|    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                             |
-|    3 | X 与微博增量同步                    | 043/044 | 043B `IN_PROGRESS_DISPOSABLE_VAULT_GATE`，044 `PLANNED` |
-|    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032                   |
-|    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                               |
+| 顺序 | 模块                                | Goal    | 当前状态                                            |
+| ---: | ----------------------------------- | ------- | --------------------------------------------------- |
+|    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计 |
+|    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                         |
+|    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
+|    3 | X 与微博增量同步                    | 043/044 | 043B `IN_PROGRESS_REPAIR_RETEST`，044 `PLANNED`     |
+|    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032               |
+|    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS`。合同内离线实现、fixture route integration、独立 profile 人工 toolbar E2E、固定扩展 ID、content 构建、DOM 预算与虚拟列表前沿修复已通过。用户重载后在指定日常 X 收藏页执行的受界 no-Vault probe 已进入 10-candidate review：5 个 new/list-summary 默认可选，5 个 incomplete/metadata-only 未默认选择，changed/error/existing observations 均为 0；没有写 Vault，也没有声称到达 feed 末尾。当前进入 disposable Vault 人工门禁：必须由用户确认 worktree 内新目录并手动授权 picker，首次只写 1-3 条；第二次 incremental 只验证此前实际写入的 1-3 条返回 existing/skip 且文件数不增加，未写入项仍可继续显示为 new。隔离账号不可用时，只有用户明确指定的单个日常 X 收藏页标签可以作为例外，且不得读取或操作其它标签、整个 profile。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS_REPAIR_RETEST`。真实 no-Vault 10-candidate probe 与首次 disposable Vault 5 文件写入功能已经通过并记录范围偏差；第二次 incremental 暴露终态返回旧工作台、新 job 静默放大为 50 条、共享内容预算与可选 identity-only hint 解析反复误报结构变化。离线修复候选保持 Popup-only intent、10 candidates/5 scroll、单 tab/job/invocation/request、2 秒批次间隔、200 内容节点和 10,000 layout traversal 边界；后续过密卡片只能降级为严格 `metadata_only`，catalog match 不推进 authoritative frontier。当前必须先完成独立 review、提交/CI、重载，再验证 5 个已写项 existing/skip 且测试 Vault 文件数保持 5；禁止删除首轮文件、使用真实 Vault、读取其它标签或扩大日常 profile 授权。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

@@ -585,6 +585,81 @@ describe('X sync service worker route', () => {
     });
   });
 
+  it('does not silently expand a later user-started batch after a completed job', async () => {
+    const factory = new IDBFactory();
+    vi.stubGlobal('indexedDB', factory);
+    const previous = await openSyncStore({ indexedDB: factory });
+    await previous.createJob({
+      id: 'completed-bounded-batch',
+      source: 'x',
+      adapterVersion: 1,
+      budgets: {
+        maxItems: 10,
+        maxPages: 5,
+        maxDurationMs: 60_000,
+        maxItemBytes: 65_536,
+        maxMediaPerItem: 12,
+      },
+      createdAt: '2026-07-13T00:00:00.000Z',
+    });
+    await previous.claimScanRevision('completed-bounded-batch', 0, '2026-07-13T00:00:01.000Z');
+    await previous.finishScan('completed-bounded-batch', 1, '2026-07-13T00:00:02.000Z');
+    await previous.completeReviewWithoutWrites(
+      'completed-bounded-batch',
+      0,
+      '2026-07-13T00:00:03.000Z',
+    );
+    previous.close();
+
+    const harness = createChromeHarness();
+    harness.setPermission(true);
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+    const listener = harness.getMessageListener();
+    const missingIntent = await send(
+      listener,
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'start',
+        requestId: 'start-later-batch-without-intent',
+        launchNonce: 'z'.repeat(43),
+        mode: 'incremental',
+      },
+      sender('sidepanel'),
+    );
+    expect(missingIntent).toMatchObject({ ok: false, error: { code: 'launch_missing' } });
+
+    const launched = (await send(
+      listener,
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'launch',
+        requestId: 'launch-after-completed-batch',
+      },
+      sender('popup'),
+    )) as { result: { nonce: string } };
+    const started = (await send(
+      listener,
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'start',
+        requestId: 'start-after-completed-batch',
+        launchNonce: launched.result.nonce,
+        mode: 'incremental',
+      },
+      sender('sidepanel'),
+    )) as { ok: boolean; result?: { jobId: string } };
+
+    const inspected = await openSyncStore({ indexedDB: factory });
+    await expect(inspected.getJob(started.result!.jobId)).resolves.toMatchObject({
+      budgets: { maxItems: 10, maxPages: 5 },
+    });
+    inspected.close();
+
+    harness.setPermission(false);
+    harness.emitPermissionRemoved();
+  });
+
   it('resumes a prepared job left behind before its scan invocation started', async () => {
     const factory = new IDBFactory();
     vi.stubGlobal('indexedDB', factory);
