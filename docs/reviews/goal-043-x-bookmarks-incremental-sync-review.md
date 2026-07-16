@@ -471,4 +471,18 @@ File System Access API 的目录授权仍要求真实用户手势。Integrator �
 
 第二轮独立 review 又指出 identity-only catalog match 不能推进 authoritative known frontier，且原跨层测试绕过了 coordinator。修正时新增真实 coordinator 回归，立即发现 `parseAdapterBatchResult` 的精确键集合只接受基础四键，实际上会拒绝合法可选 `identityOnlySourceItemIds`；这是用户看到“约四条后 structure_changed”的直接跨层原因。最终候选允许基础四键或带该可选字段的精确五键，伪造 hint 仍在持久化前 fail closed；identity-only existing 会清空连续 frontier，只保留保守去重计数。测试同时锁定 observed-node/accepted-byte 计费、20 个 identity-only existing 不触发 `known_frontier`、继续读取下一批 trusted terminal，以及 incomplete 到 summary 的同 job 升级。
 
-最新离线证据：聚焦 68/68 tests、全仓 lint/typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；coverage 为 statements 54.49%、branches 73.83%、functions 73.34%、lines 54.49%。锁文件未改，SHA-256 仍为 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，因此没有重复运行已记录的 audit fallback。第三轮独立 actual-diff review 已 `PASS`，P0/P1/P2 均为 0；reviewer 确认 23 个修改文件都在 043B allowlist 内，并且未运行 Chrome、网络、Vault 或修改文件。修复提交 `058de72` 已普通 push 到 Draft PR #5；GitHub Actions run `29434729210` / job `87418378139` 在规定工具链下完整 `PASS`。证据收口提交 `924c43d` 对应的 run `29435114312` / job `87419676710` 也已 `PASS`。当前仍等待用户重载和第二次 10-candidate 去重复测。verdict：`REPAIR REVIEW AND CI PASS / REAL DEDUP RETEST PENDING / GOAL NOT PASS`。
+当时的离线证据为：聚焦 68/68 tests、全仓 lint/typecheck、41 files / 467 tests coverage、extension build、5 个 content script `node --check` 和 lock 检查均通过；coverage 为 statements 54.49%、branches 73.83%、functions 73.34%、lines 54.49%。锁文件未改，SHA-256 仍为 `552374FAA202BEC642B0BF2E849A855A15FBB05C3D13E48B7E033BC51E2F8EAB`，因此没有重复运行已记录的 audit fallback。第三轮独立 actual-diff review 已 `PASS`，P0/P1/P2 均为 0；reviewer 确认 23 个修改文件都在 043B allowlist 内，并且未运行 Chrome、网络、Vault 或修改文件。修复提交 `058de72` 已普通 push 到 Draft PR #5；GitHub Actions run `29434729210` / job `87418378139` 在规定工具链下完整 `PASS`。证据收口提交 `924c43d` 对应的 run `29435114312` / job `87419676710` 也已 `PASS`。该阶段 verdict 为 `REPAIR REVIEW AND CI PASS / REAL DEDUP RETEST PENDING / GOAL NOT PASS`；后续事实见 16.19 节。
+
+### 16.19 修复版第二轮受界去重观察与最终门禁
+
+用户确认重载固定 ID 后，在同一受界日常 `https://x.com/i/bookmarks` 标签重新进入 X 同步 preflight；界面明确显示 X 权限已授予、批次候选上限 10、Vault 仅在保存时请求。用户手动启动的第二轮 `incremental + maxCandidates=10 + maxScrollActions=5` 扫描在 `budget_exceeded` 正常暂停，Side Panel 聚合状态为 `6/10` 个候选与 7 条 catalog-existing observations。与旧回归不同，本轮没有在约四条后反复 `structure_changed`，也没有静默放大为 50 条。
+
+扫描暂停后，Integrator 只读核对既有 disposable Vault 的聚合信息：仍为 5 个文件、总计 5002 bytes、最小 865 bytes、最大 1200 bytes。没有读取或输出文件名、相对路径、正文、作者、source ID、URL 或媒体，也没有访问真实 Vault。该证据证明第二轮暂停前 catalog 去重观察已生效且没有发生新文件写入；由于任务尚未从 `paused` 转为 `ready_for_review/user_finalized_batch`，它还不能单独证明 7 条 existing observations 在复核页正确展示，或此前写入的 5 条均没有进入可写候选。
+
+浏览器控制策略拒绝自动操作 `chrome-extension://` Side Panel，并明确禁止通过 Computer Use、其它浏览器表面或原始调试协议绕过。Integrator 因此没有代点“使用本批结果”；该点击和 Side-Panel-only 复核截图仍由用户手动完成，不读取 X 页面正文。测试 Vault 在复核前保持不变。
+
+独立完成审查 Kepler (`019f6b19-7886-7212-8f4e-eab9def193cf`) 给出 `NEED_EVIDENCE`：P0 无；P1 为复核页尚未完成，以及严格按第 13.11 节仍缺最终构建上的真实 pause/resume 与同一 X 标签 `tab_changed`；P2 为 `finalizePausedScan` 缺少直接正反行为测试。代码与自动测试已覆盖 tab/document/window 绑定和 pause/resume，但此前真实 `tab_changed` 来自 content 构建失败，不足以冒充用户切离收藏页证据。
+
+P2 已在 allowlist 内的 `packages/extension/tests/sync-store.test.ts` 关闭：参数化测试证明只有 scanning 阶段的 `user_paused`、`budget_exceeded` 能进入 `ready_for_review/user_finalized_batch`；其余 7 个 stop reason 全部拒绝且完整 job 状态不变；writing 阶段即使原因相同也拒绝且完整状态不变。定向 49/49、全仓 lint/typecheck、41 files / 478 tests coverage、extension build、5 个 content script `node --check`、Prettier、`git diff --check` 和 lock SHA 不变均通过。独立 reviewer Hubble (`019f6b3c-fa31-7490-957a-d908785e457c`) 最终给出 `PASS`，P0/P1/P2 均为 0。提交 `4ca26dd` 已普通 push；GitHub Actions run `29506659950` 在 Node 20/pnpm `10.34.5` 下 `PASS`。
+
+当前 verdict：`DEDUP OBSERVATION AND NO-WRITE PASS / REVIEW PAGE + REAL PAUSE/TAB-CHANGE PENDING / GOAL NOT PASS`。下一步只允许用户点击“使用本批结果”进入复核且不保存；随后在同一 X 标签内完成最终 pause/resume 与 `tab_changed`，不得触碰其它标签、读取凭据或扩大写入授权。
