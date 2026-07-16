@@ -642,6 +642,88 @@ describe('SyncStore database and jobs', () => {
     store.close();
   });
 
+  it.each(['user_paused', 'budget_exceeded'] as const)(
+    'finalizes a %s scan pause into an explicit review batch',
+    async (stopReason) => {
+      const store = await openSyncStore({
+        indexedDB: new IDBFactory(),
+        dbName: `sync-finalize-${stopReason}`,
+      });
+      await createScanningJob(store);
+      const item = socialItem(98);
+      await persistScanBatch(store, 'job-1', [item], checkpoint(1, timestamp(2)));
+      await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+      await store.pauseJobWithStopRecord('job-1', 1, stopReason, 'scanning', timestamp(4));
+
+      await expect(store.finalizePausedScan('job-1', 1, timestamp(5))).resolves.toMatchObject({
+        status: 'ready_for_review',
+        scanRevision: 1,
+        scanCompletion: 'user_finalized_batch',
+      });
+      await expect(store.getJob('job-1')).resolves.not.toHaveProperty('stopRecord');
+      store.close();
+    },
+  );
+
+  it.each([
+    'login_required',
+    'rate_limited',
+    'structure_changed',
+    'tab_changed',
+    'permission_revoked',
+    'worker_interrupted',
+    'no_progress',
+  ] as const)('refuses to finalize a scan paused by %s', async (stopReason) => {
+    const store = await openSyncStore({
+      indexedDB: new IDBFactory(),
+      dbName: `sync-refuse-finalize-${stopReason}`,
+    });
+    await createScanningJob(store);
+    await store.pauseJobWithStopRecord('job-1', 1, stopReason, 'scanning', timestamp(2));
+    const before = await store.getJob('job-1');
+
+    await expect(store.finalizePausedScan('job-1', 1, timestamp(3))).rejects.toBeInstanceOf(
+      SyncStoreConflictError,
+    );
+    await expect(store.getJob('job-1')).resolves.toEqual(before);
+    store.close();
+  });
+
+  it.each(['user_paused', 'budget_exceeded'] as const)(
+    'refuses to finalize a %s pause from the writing phase',
+    async (stopReason) => {
+      const store = await openSyncStore({
+        indexedDB: new IDBFactory(),
+        dbName: `sync-refuse-writing-finalize-${stopReason}`,
+      });
+      await createScanningJob(store);
+      const item = socialItem(97);
+      await persistScanBatch(store, 'job-1', [item], checkpoint(1, timestamp(2)));
+      await classifyItem(store, 'job-1', item.sourceItemId, 'new', timestamp(3));
+      await store.finishScan('job-1', 1, timestamp(4));
+      const selection = await store.saveReviewSelection(
+        'job-1',
+        0,
+        [item.sourceItemId],
+        timestamp(5),
+      );
+      await store.authorizeReviewSelection(
+        'job-1',
+        selection.job.reviewRevision,
+        [item.sourceItemId],
+        timestamp(6),
+      );
+      await store.pauseJobWithStopRecord('job-1', 1, stopReason, 'writing', timestamp(7));
+      const before = await store.getJob('job-1');
+
+      await expect(store.finalizePausedScan('job-1', 1, timestamp(8))).rejects.toBeInstanceOf(
+        SyncStoreConflictError,
+      );
+      await expect(store.getJob('job-1')).resolves.toEqual(before);
+      store.close();
+    },
+  );
+
   it('rolls back the terminal scan transition when its commit guard expires', async () => {
     const store = await openSyncStore({
       indexedDB: new IDBFactory(),
