@@ -485,4 +485,14 @@ File System Access API 的目录授权仍要求真实用户手势。Integrator �
 
 P2 已在 allowlist 内的 `packages/extension/tests/sync-store.test.ts` 关闭：参数化测试证明只有 scanning 阶段的 `user_paused`、`budget_exceeded` 能进入 `ready_for_review/user_finalized_batch`；其余 7 个 stop reason 全部拒绝且完整 job 状态不变；writing 阶段即使原因相同也拒绝且完整状态不变。定向 49/49、全仓 lint/typecheck、41 files / 478 tests coverage、extension build、5 个 content script `node --check`、Prettier、`git diff --check` 和 lock SHA 不变均通过。独立 reviewer Hubble (`019f6b3c-fa31-7490-957a-d908785e457c`) 最终给出 `PASS`，P0/P1/P2 均为 0。提交 `4ca26dd` 已普通 push；GitHub Actions run `29506659950` 在 Node 20/pnpm `10.34.5` 下 `PASS`。
 
-当前 verdict：`DEDUP OBSERVATION AND NO-WRITE PASS / REVIEW PAGE + REAL PAUSE/TAB-CHANGE PENDING / GOAL NOT PASS`。下一步只允许用户点击“使用本批结果”进入复核且不保存；随后在同一 X 标签内完成最终 pause/resume 与 `tab_changed`，不得触碰其它标签、读取凭据或扩大写入授权。
+该阶段 verdict：`DEDUP OBSERVATION AND NO-WRITE PASS / REVIEW PAGE + REAL PAUSE/TAB-CHANGE PENDING / GOAL NOT PASS`。当时下一步只允许用户点击“使用本批结果”进入复核且不保存；后续事实见第 16.20 节。
+
+### 16.20 第二次 incremental 复核页与 no-write 证据
+
+用户手动点击“使用本批结果”后进入复核页。脱敏聚合证据为：`new=1`、`existing observations=7`、`changed=0`、`incomplete=5`、`error=0`、`summary=1`。5 条 `incomplete/metadata_only` 保持未选，只有 1 条 `new/list-summary` 默认选中，主动作显示保存 1 条；因此 7 条 catalog-existing observations 没有进入可写候选，也没有把不完整项自动加入选择。真实帖子标题、正文、作者、ID、URL 和媒体均未转录或写入仓库。
+
+复核页出现后，Integrator 再次只读核对同一 worktree disposable Vault 的聚合信息：仍为 5 个文件、总计 5002 bytes、最小 865 bytes、最大 1200 bytes，与复核前完全一致。没有读取文件名、相对路径或正文，也没有点击保存、访问真实 Vault 或修改 X 收藏。
+
+独立只读 reviewer Hypatia (`019f6b80-2d74-7361-8ef9-1a8220216c4f`) 给出 `NEED_EVIDENCE`，P0/P2 均为无。reviewer 确认第 16.19 节的复核页 P1 已关闭，且 `finalizePausedScan` 自动化缺口已由提交 `4ca26dd` 关闭；但自动化不能替代最终构建上的真实 `pause -> resume` 与同一 X 标签离开 `/i/bookmarks` 后的 `tab_changed`。
+
+当前 verdict：`REVIEW PAGE AND NO-WRITE PASS / REAL PAUSE-RESUME + SAME-TAB TAB_CHANGED PENDING / GOAL NOT PASS`。下一步仍不得保存或删除当前批次；若用户批准创建新的扩展本地 SyncJob，则只在同一个 X 标签执行一次受界 no-Vault pause/resume 和切页验收，不触碰其它标签、平台收藏或真实 Vault。
