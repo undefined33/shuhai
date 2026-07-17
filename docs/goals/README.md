@@ -3,6 +3,7 @@
 > 最后更新：2026-07-17
 > 当前状态：Goal 041/042/043 均已 `DONE/PASS`；X 保持 `LIMITED_GO/batch-only`，微博保持 `NO_GO`
 > 执行规则：当前没有 `READY` 或 `IN_PROGRESS` 生产 Goal。Goal 044-046 均不得自动开工；微博生产同步必须先通过新的独立研究门禁。
+> 讨论入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；建议把 046A 主壳切换放到 Goal 045 前，用户确认并转成完整 Goal 前不得改代码。
 
 ## 当前编排状态
 

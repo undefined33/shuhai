@@ -115,6 +115,7 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 ## 10. 当前文档
 
 - [产品路线图 v4](./product-roadmap-v4.md)
+- [主界面与视觉系统重构提案（DRAFT）](./proposals/2026-07-17-ui-shell-redesign.md)
 - [扩展架构 v4](./architecture/extension-v4.md)
 - [社交收藏增量同步调研](./research/2026-07-13-social-favorites-sync-feasibility.md)
 - [Goal 041 执行合同](./goals/goal-041-social-sync-feasibility-spike.md)
