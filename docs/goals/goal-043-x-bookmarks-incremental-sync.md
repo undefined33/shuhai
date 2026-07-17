@@ -1,16 +1,16 @@
 ---
 id: goal-043
 title: X Bookmarks Incremental Sync MVP
-status: IN_PROGRESS
+status: DONE
 version: 3
-updated: 2026-07-16
+updated: 2026-07-17
 depends_on: [goal-041, goal-042]
 branch: codex/social-sync-v4
 ---
 
 # Goal 043：X 收藏增量同步 MVP
 
-> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A fixture-only 候选和 043B 实施合同、离线代码、preloaded-extension route integration、独立 profile 人工 toolbar E2E、固定开发 ID、完整门禁与 Node 20 CI 均已通过。受界真实 no-Vault probe 进入 10-candidate review：5 个 `new/list-summary`、5 个 `incomplete/metadata-only`，`changed=0`、`error=0`；首轮 disposable Vault 因误保留全部选择而创建 5 个非空文件，记录了原定 1-3 条的 QA 范围偏差。第二次 incremental 暴露的旧工作台、50/20 静默放大和密集卡片 `structure_changed` 已修复。用户重载后的第二轮受界扫描在固定 10 条/5 次滚动预算下显示 `6/10` 个候选与 7 条 catalog-existing observations，并因安全预算正常暂停；复核页随后显示 `new=1`、`existing=7`、`incomplete=5`，5 条 incomplete 未选且 7 条 existing 未进入可写候选。测试 Vault 仍为 5 个文件、5002 bytes，没有再次写入。提交 `4ca26dd` 补齐 finalize pause 原因与 phase 的正反测试，全仓 478 tests、独立 review 和 CI 已通过。Goal 仍为 `IN_PROGRESS`：只需在最终构建上补一次真实 pause/resume 与同一 X 标签 `tab_changed`；真实页面仍只支持 `LIMITED_GO/batch-only`。
+> Goal 041 对 X 收藏页 DOM 路线只给出 `LIMITED_GO`，Goal 042 已 `DONE/PASS`。043A、043B 离线实现、生产接线、受界真实 X probe、disposable Vault 写入、catalog 去重、复核、pause/resume、同标签 `tab_changed`、取消、完整门禁和独立审查均已通过。最终 no-Vault 任务在 `5/10` 候选与 3 条 existing observations 时暂停；继续后 existing 增至 6，同一标签离开收藏页后以 `tab_changed` 再次暂停并由用户取消。测试 Vault 始终为 5 个文件、5002 bytes，没有再次写入。独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 给出 `PASS`，P0/P1/P2 均为 0。Goal 正式为 `DONE/PASS`，但真实页面仍只支持 `LIMITED_GO/batch-only`，没有稳定 feed end marker，不能宣称完整历史归档。
 
 ## 1. 用户问题
 
@@ -87,7 +87,7 @@ pnpm 10 修复候选已完成三轮独立合同复审和本地执行：CLI 精�
 
 ### 3.3 043B：真实 Chrome QA 与最小接线
 
-043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `IN_PROGRESS_FINAL_REAL_QA`：首次 disposable Vault 写入功能通过；第二次 incremental 暴露的 50/20 静默放大、旧工作台和密集卡片 `structure_changed` 已经修复。修复没有放宽 host、凭据或遍历安全边界：每批仍单请求、至少 2 秒间隔，全局 200 内容节点不变；只有已验证 stable permalink 的后续过密卡片降级为严格 `metadata_only`，可保守去重但不得推进 authoritative frontier，未知项以后可原位升级。所有新 job 保持受界 10 条/5 次滚动，标准 50 条只能由未来显式用户选择重新引入，不能由上次完成状态自动升级。修复版第二轮扫描已显示 `6/10` 个候选、7 条 existing observations 与 `budget_exceeded`；复核页确认 existing 未进入可写候选，测试 Vault 文件数和大小未变。当前只等待最终真实 pause/resume 与同一 X 标签 `tab_changed`。真实 Vault、其它标签、整个 profile、自动重试、提高并发或放宽 STOP 条件均未授权。
+043B 的精确实施、迁移、消息、UI、文件、命令与真实 Chrome QA 合同见第 13 节。当前阶段为 `DONE/PASS`：首次 disposable Vault 写入功能通过；第二次 incremental 的 50/20 静默放大、旧工作台和密集卡片 `structure_changed` 已修复，catalog-existing observations 没有进入可写候选。最终受界 no-Vault 任务证明 `user_paused -> resume -> tab_changed -> cancel`：任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一 X 标签切离收藏页后立即以 `tab_changed` 暂停且未读取新页面，随后由用户取消。测试 Vault 聚合保持 5 个文件、5002 bytes。真实 Vault、其它标签、整个 profile、自动重试、提高并发或放宽 STOP 条件均未授权；X 结论保持 `LIMITED_GO/batch-only`。
 
 ### 3.4 043B：稳定扩展身份前置门禁
 
@@ -686,7 +686,7 @@ npm exec --yes --ignore-scripts --prefer-online --cache=.pnpm-store/goal-043/npm
 - X/Twitter 不再获得常驻页面读取；X 同步只在用户首次确认后持有精确 X host permission，可撤销，拒绝授权时不创建 job 或注入。
 - 50 candidate/backfill/known frontier/finalize batch 语义没有永久卡住或“全部完成”误报。
 - DB3 upgrade transaction 原子、post-commit validation fail-closed、现有 catalog/Vault identity 不变，失败时不丢数据。
-- 用户精确选择前无文件写入；disposable Vault 1-3 条逐项结果真实，重复运行不新增重复文件。
+- 用户精确选择前无文件写入；disposable Vault 原定 1-3 条，实际首次误选 5 条并作为 QA 范围偏差留痕，后续去重与 no-write 证明没有新增重复文件。
 - 用户可持久化取消所有 pre-write pause；全部 excluded 可无 Vault 权限结束，且 classification error 不会被误报成功；post-write 只能在 reconcile 后安全停止并保留真实 outcomes。
 - 受界真实 X probe 没有使用 credential/private API/MAIN world/fetch，也没有触发风控绕过。
 - 完整门禁、Node 20 CI、独立 actual-diff review 与独立 QA 均通过。

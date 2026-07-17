@@ -6,7 +6,7 @@
 >
 > 独立 reviewer：Huygens (`019f5af2-d64e-76b0-91c8-bd9982d801e6`)
 >
-> 2026-07-13 历史快照：初始合同结论 `PASS`、G0 verdict `PASS`、043A fixture-only verdict `PASS`；当时整个 Goal 043 为 `BLOCKED_BY_REAL_X_EVIDENCE`。当前状态见第 16.18 节。
+> 2026-07-13 历史快照：初始合同结论 `PASS`、G0 verdict `PASS`、043A fixture-only verdict `PASS`；当时整个 Goal 043 为 `BLOCKED_BY_REAL_X_EVIDENCE`。最终状态见第 16.21 节。
 
 ## 1. 审查结论
 
@@ -496,3 +496,15 @@ P2 已在 allowlist 内的 `packages/extension/tests/sync-store.test.ts` 关闭�
 独立只读 reviewer Hypatia (`019f6b80-2d74-7361-8ef9-1a8220216c4f`) 给出 `NEED_EVIDENCE`，P0/P2 均为无。reviewer 确认第 16.19 节的复核页 P1 已关闭，且 `finalizePausedScan` 自动化缺口已由提交 `4ca26dd` 关闭；但自动化不能替代最终构建上的真实 `pause -> resume` 与同一 X 标签离开 `/i/bookmarks` 后的 `tab_changed`。
 
 当前 verdict：`REVIEW PAGE AND NO-WRITE PASS / REAL PAUSE-RESUME + SAME-TAB TAB_CHANGED PENDING / GOAL NOT PASS`。下一步仍不得保存或删除当前批次；若用户批准创建新的扩展本地 SyncJob，则只在同一个 X 标签执行一次受界 no-Vault pause/resume 和切页验收，不触碰其它标签、平台收藏或真实 Vault。
+
+### 16.21 最终真实 pause/resume、同标签 tab_changed 与完成审查
+
+用户在唯一获准的日常 `https://x.com/i/bookmarks` 标签启动新的受界 no-Vault 任务，并在 Side Panel 显示 `5/10` 个候选、3 条 catalog-existing observations 时主动暂停。暂停状态保留同一任务与“继续扫描”入口；用户继续后至少完成一批处理，existing observations 增至 6，没有创建新的 Vault 写入授权或结果。
+
+随后用户只在同一 X 标签从收藏页切到 X 首页。Side Panel 显示“收藏页已切换”，持久化停止原因为 `tab_changed`，任务仍停在 `5/10`，没有继续读取新页面，也没有切换、刷新或关闭其它标签。用户最终点击“取消本次任务”，完成 pre-write 取消链路。整个最终旅程没有修改平台收藏、读取 Cookie/token/Authorization、调用私有 API、自动重试或扩大扫描并发。
+
+Integrator 在暂停、切页和取消前后只读核对同一 worktree disposable Vault 的聚合信息：始终为 5 个文件、总计 5002 bytes、最小 865 bytes、最大 1200 bytes。没有读取文件名、相对路径、正文、作者、source ID、URL 或媒体，也没有访问真实 Vault。该结果与复核页证据共同证明 resume 和 `tab_changed` 期间没有发生隐式写入。
+
+独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 按第 13.12 节逐项复核生产路由与 schema、最小 X 权限、候选/backfill/frontier/finalize、DB3/catalog/Vault identity、选择前 no-write、去重、取消/partial/reconcile、凭据与私有 API 禁令、完整门禁、CI 和真实 Chrome 证据，最终给出 `PASS`，P0/P1/P2 均为 0。首轮原定 1-3 条但误选 5 条的 disposable Vault QA 范围偏差已如实记录，不构成剩余阻塞。
+
+最终 verdict：`GOAL 043 DONE/PASS / X LIMITED_GO BATCH-ONLY`。该结论证明受界批次可暂停、继续、复核、去重、取消并安全写入，不证明 X 提供稳定 feed end marker，也不宣称已经完整同步全部历史收藏。Goal 041/042/043 至此全部完成；微博仍为 `NO_GO`，Goal 044 不得自动进入生产实施。

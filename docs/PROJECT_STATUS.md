@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
-> 最后更新：2026-07-16
-> 状态：Goal 041/042 与 Goal 043A 已通过；Goal 043B 修复版第二次扫描、复核分类和 no-write 已通过，等待最终真实暂停/切页证据
+> 最后更新：2026-07-17
+> 状态：前三个 v4 大模块 Goal 041/042/043 均已 `DONE/PASS`；当前没有 `READY` 或 `IN_PROGRESS` 生产 Goal
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,7 +15,7 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-当前唯一生产实施 Goal 是 043B，正式状态仍为 `IN_PROGRESS`。用户在明确指定的日常 `https://x.com/i/bookmarks` 标签完成受界 `incremental + maxCandidates=10 + maxScrollActions=5` no-Vault probe；随后在用户单独授权的 worktree disposable Vault `.pnpm-store/goal-043/test-vault/real-20260715-10candidate` 首次写入 5 条，Side Panel 显示 `created=5`、`already_exists=0`、`skipped=0`，文件系统只读核对为 5 个非空文件、总计 5002 bytes、单文件 865-1200 bytes，未读取文件名或正文。第二次扫描暴露三项回归：终态返回旧总工作台、新 job 未经确认从 10/5 放大为 50/20，以及密集卡片触发 `structure_changed`。审计进一步确认密集卡片先耗尽共享内容预算，再因 coordinator 的精确键集合错误拒绝合法 `identityOnlySourceItemIds`；独立 review 还发现 identity-only catalog match 不得推进 authoritative known frontier。修复已固定新 job 为 10 candidates/5 scroll actions，终态返回 X 同步入口并等待新的 Popup-only intent；后续过密卡片只能在全局 200 内容节点内输出严格验证的 identity-only/`metadata_only`，可保守记为 existing，但会清零连续前沿，未知项可在后续完整读取时原位升级。第一条异常、伪造 hint、permalink 冲突与 10,000 layout traversal 越界继续 fail closed。用户重载后启动的第二次受界扫描已在 `budget_exceeded` 正常暂停，显示 `6/10` 个候选与 7 条 catalog-existing observations，没有再次触发 `structure_changed`。用户随后手动进入复核页：聚合为 `new=1`、`existing observations=7`、`changed=0`、`incomplete=5`、`error=0`、`summary=1`；5 条 `metadata_only` 保持未选，只有 1 条新摘要默认选中，证明已入库观察没有混入可写候选。复核后测试 Vault 仍为 5 个文件、5002 bytes、单文件 865-1200 bytes，证明未发生第二次写入。严格合同只剩最终构建上的一次真实暂停/继续和同一 X 标签内 `tab_changed`。为锁定 finalize 边界，提交 `4ca26dd` 新增正反行为测试；最新 lint、typecheck、41 files / 478 tests coverage、extension build、5 个 content script `node --check`、lock 检查和独立 review 均通过，GitHub Actions run `29506659950` 也已通过。disposable 测试 Vault 内现有 5 个文件不删除、不修改；授权不包含真实 Vault、其它标签、整个 profile 或其它站点。v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
+Goal 043 已完成最终真实 Chrome 门禁。用户在唯一获准的日常 `https://x.com/i/bookmarks` 标签启动新的受界 no-Vault 任务并于 `5/10` 候选、3 条 catalog-existing observations 时暂停；继续后至少完成一批处理，existing observations 增至 6。用户随后只在同一标签离开收藏页，Side Panel 以 `tab_changed` 显示“收藏页已切换”并保持暂停，没有读取新页面；用户最终取消任务。全程未触碰其它标签、Cookie、token、私有 API、真实 Vault 或平台收藏数据。worktree disposable Vault 在前后核对中始终为 5 个文件、总计 5002 bytes、单文件 865-1200 bytes，没有新增写入。独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 给出 `PASS`，P0/P1/P2 均为 0，因此 Goal 041/042/043 正式完成。X 结论仍严格限定为 `LIMITED_GO/batch-only`：没有稳定 feed end marker，不能宣称同步全部历史收藏。Goal 044 仍为 `PLANNED`，且微博当前为 `NO_GO`，不得自动进入生产实施。disposable 测试 Vault 内现有 5 个文件不删除、不修改；v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
 ## 2. 当前产品定义
 
@@ -57,7 +57,6 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 尚未完成或验证：
 
 - 微博收藏页仍只有 `NO_GO` 研究结论，没有生产枚举。
-- 最终构建上的真实 pause/resume 与同一 X 标签 `tab_changed` 证据。
 - 真正独立的 Popup、Side Panel、Options 构建和按需状态加载仍属于 Goal 046。
 
 ## 5. 冻结中的 Goal 032
@@ -76,13 +75,13 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 |    0 | Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 保留书签 operation journal 候选实现      |
 |    1 | Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 |
 |    2 | Goal 042 | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 |
-|    3 | Goal 043 | `IN_PROGRESS`             | 第二轮复核与 no-write 通过；等待最终 QA  |
+|    3 | Goal 043 | `DONE`                    | X 增量同步 MVP；`LIMITED_GO/batch-only`  |
 |    4 | Goal 044 | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045 | `PLANNED`                 | 书签整理流程收缩及 Goal 032 安全收口     |
 |    6 | Goal 046 | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    7 | Goal 047 | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042 已完成，043B 是当前唯一实施 Goal。043B 离线代码、自动 route integration、独立项目 Chrome profile 的人工 toolbar E2E、固定 unpacked extension ID、content 构建、DOM 预算与虚拟列表前沿修复均已通过。用户执行的真实 X no-Vault probe 已稳定进入 10-candidate review，并正确区分 5 个 new/list-summary 与 5 个 incomplete/metadata-only；没有写 Vault，也没有夸大全量完成。真实 selector、受界滚动和 10-item batch 得到证据；disposable Vault 首轮逐项写入、回归修复和独立 actual-diff review 已通过。修复版第二轮扫描在固定预算下显示 7 条 existing observations；复核页确认这些观察未进入可写候选，且测试 Vault 数量和大小未变。剩余不可代理门禁只有最终 pause/resume 和同一 X 标签 `tab_changed`。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
+用户已确认 v4；041/042/043 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。当前没有生产 writer，也没有可自动开工的 `READY` Goal；Goal 044 必须先处理微博 `NO_GO` 研究门禁，不能因为前三个模块完成就直接实施。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -104,14 +103,14 @@ Goal 042 基础与 Goal 043 已通过当前门禁的模块：
 - AI 不参与同步执行；未经用户明确选择，不发送社交正文给 Provider。
 - 书签删除、移动和 URL 更新必须确认、逐项记录、表达 partial 并可恢复。
 
-## 9. 当前下一步
+## 9. 当前收口与后续门禁
 
 1. 用户已在固定 ID 与精确 X 收藏页完成受界 no-Vault probe；10 个候选进入 review，`new=5`、`incomplete=5`、`changed=0`、`error=0`，无 Vault 写入。
 2. UI 只默认选择 5 个 new/list-summary，5 个 `metadata_only` 保持不可默认写入；当前批次没有被误报为全部收藏完成。
 3. 第一轮 disposable Vault 因用户误保留全部选择而实际创建 5 个文件；Side Panel 与文件数量/大小一致，作为首次写入功能证据通过，同时记录 1-3 条 QA 范围偏差，不删除、不修改。
 4. 修复版第二次 incremental 已固定 `maxCandidates=10 + maxScrollActions=5`，在 `6/10` 候选与 7 条 existing observations 时因安全预算暂停；复核页确认 7 条 existing 未进入可写候选、5 条 incomplete 未选、只有 1 条 new 默认选中，测试 Vault 仍保持 5 个文件且大小不变，没有再次保存。
-5. 严格关闭 Goal 043 前，在最终构建上补一次真实 pause/resume，并只在当前 X 标签内离开 `/i/bookmarks` 验证 `tab_changed`；不得触碰其它标签或写入平台/Vault 数据。
-6. 真实 Chrome 只使用本机已安装浏览器；不得读取、切换、刷新或关闭其它标签，不读取密码、验证码、Cookie、localStorage/sessionStorage token、Authorization 或整个 profile，也不得下载浏览器或干扰其它 Chrome 进程。
+5. 最终真实门禁已通过：任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6；同一标签切离 `/i/bookmarks` 后以 `tab_changed` 暂停，随后由用户取消，Vault 聚合保持不变。
+6. 前三个大模块已经收口。下一次实施只能从新的 `READY` Goal 开始；Goal 044 在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举，Goal 045/046 也不会自动开工。
 
 ## 10. 当前文档
 

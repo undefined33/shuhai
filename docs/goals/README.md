@@ -1,33 +1,33 @@
 # ShuHai Goal 状态索引
 
-> 最后更新：2026-07-16
-> 当前状态：Goal 041/042、Goal 043A、受界 no-Vault probe 与 disposable Vault 首次写入功能证据已通过；修复版第二次扫描及复核页已证明 7 条 existing 不进入可写候选，且测试 Vault 未新增文件
-> 执行规则：当前为 `IN_PROGRESS_FINAL_REAL_QA`；只剩最终构建上的真实 pause/resume 与同一 X 标签 `tab_changed`，不删除首轮文件、不再次保存或使用真实 Vault。
+> 最后更新：2026-07-17
+> 当前状态：Goal 041/042/043 均已 `DONE/PASS`；X 保持 `LIMITED_GO/batch-only`，微博保持 `NO_GO`
+> 执行规则：当前没有 `READY` 或 `IN_PROGRESS` 生产 Goal。Goal 044-046 均不得自动开工；微博生产同步必须先通过新的独立研究门禁。
 
 ## 当前编排状态
 
-| Lane     | 状态                      | 说明                                     | 恢复条件                        |
-| -------- | ------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032 | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041 | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042 | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `IN_PROGRESS`             | 第二轮复核与 no-write 已通过             | 最终暂停/恢复与同标签切页       |
-| 044-046  | `PLANNED`                 | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
-| Goal 047 | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `043B_FINAL_REAL_QA`      | 复核、测试加固与 CI 通过                 | pause/resume、tab change        |
+| Lane     | 状态                       | 说明                                     | 恢复条件                        |
+| -------- | -------------------------- | ---------------------------------------- | ------------------------------- |
+| Goal 032 | `PAUSED_BY_PRODUCT_RESET`  | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041 | `DONE`                     | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
+| Goal 042 | `DONE`                     | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
+| Goal 043 | `DONE`                     | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
+| 044-046  | `PLANNED`                  | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
+| Goal 047 | `RESEARCH_GATE`            | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
+| workflow | `FIRST_THREE_MODULES_DONE` | 041/042/043 已独立验收                   | 等待新的 `READY` Goal           |
 
 ## v4 当前队列
 
-| Goal                                                   | 状态                      | 目的                                      | 前置条件                         |
-| ------------------------------------------------------ | ------------------------- | ----------------------------------------- | -------------------------------- |
-| [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现             | Goal 045 重新审计                |
-| [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性             | 独立 PASS                        |
-| [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS                 |
-| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `IN_PROGRESS`             | X 收藏增量同步 MVP                        | pause/resume、tab change         |
-| 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | Goal 041 微博结论 + Goal 042/043 |
-| 045                                                    | `PLANNED`                 | 书签整理收缩和 Goal 032 安全收口          | v4 确认；独立 review 方案        |
-| 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收           |
-| 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据                 |
+| Goal                                                   | 状态                      | 目的                                      | 前置条件                       |
+| ------------------------------------------------------ | ------------------------- | ----------------------------------------- | ------------------------------ |
+| [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现             | Goal 045 重新审计              |
+| [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性             | 独立 PASS                      |
+| [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS               |
+| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `DONE`                    | X 收藏增量同步 MVP                        | 独立 review 与真实 QA PASS     |
+| 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | 新研究门禁改变当前微博 `NO_GO` |
+| 045                                                    | `PLANNED`                 | 书签整理收缩和 Goal 032 安全收口          | v4 确认；独立 review 方案      |
+| 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收         |
+| 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据               |
 
 032-040 原队列不再按旧依赖链自动推进。Goal 033-040 的安全、持久化、提取和 UI 结论没有删除，但必须在 042-046 中按 v4 用户旅程重新写范围，不得直接沿用旧编号实施。
 

@@ -1,6 +1,6 @@
 # ShuHai Workflow
 
-> 最后更新：2026-07-16
+> 最后更新：2026-07-17
 > 适用范围：ShuHai 的规划、实施、审查、QA、提交与状态维护。
 
 ## 1. 为什么有这套流程
@@ -56,8 +56,8 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 |    0 | 书签 operation journal 候选实现     | 032     | `PAUSED_BY_PRODUCT_RESET`，保留 diff，等待 045 审计 |
 |    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                         |
 |    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
-|    3 | X 与微博增量同步                    | 043/044 | 043B `IN_PROGRESS_FINAL_REAL_QA`，044 `PLANNED`     |
+|    3 | X 与微博增量同步                    | 043/044 | 043 `DONE/PASS`，044 `PLANNED`                      |
 |    4 | 书签整理安全收口                    | 045     | `PLANNED`，复用前独立 review Goal 032               |
 |    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-Goal 043B 是当前唯一生产实施 writer，状态为 `IN_PROGRESS_FINAL_REAL_QA`。真实 no-Vault 10-candidate probe 与首次 disposable Vault 5 文件写入功能已经通过并记录范围偏差；第二次 incremental 暴露终态返回旧工作台、新 job 静默放大为 50 条、共享内容预算与可选 identity-only hint 解析反复误报结构变化。修复保持 Popup-only intent、10 candidates/5 scroll、单 tab/job/invocation/request、2 秒批次间隔、200 内容节点和 10,000 layout traversal 边界；后续过密卡片只能降级为严格 `metadata_only`，catalog match 不推进 authoritative frontier。用户重载后的第二轮受界扫描已在 `6/10` 候选和 7 条 existing observations 时因安全预算正常暂停，没有再次误报 `structure_changed`；复核页确认 7 条 existing 不进入可写候选，5 条 incomplete 未选，只有 1 条 new 默认选中，测试 Vault 仍为 5 个文件、5002 bytes。提交 `4ca26dd` 又锁定只有 scanning 阶段的 `user_paused`/`budget_exceeded` 可使用本批结果，其它原因与 writing 阶段全部 fail closed；全仓 478 tests、独立 review 和 CI run `29506659950` 已通过。当前只等待最终 pause/resume 和同一 X 标签 `tab_changed` 证据。禁止删除首轮文件、再次保存、使用真实 Vault、读取其它标签或扩大日常 profile 授权。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 已完成最终真实 pause/resume、同一 X 标签 `tab_changed`、用户取消和 no-write 证据，独立完成审查为 `PASS`。X 仍是 `LIMITED_GO/batch-only`，不能用受界批次推导 feed 末尾或完整历史归档。当前没有生产实施 writer；Goal 044 保持 `PLANNED`，且必须先由新的研究门禁改变微博 `NO_GO` 结论。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此仍不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
