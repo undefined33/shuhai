@@ -20,6 +20,7 @@ describe('popup state normalization', () => {
     expect(state.exportManifests).toEqual([]);
     expect(state.pendingCaptures).toEqual([]);
     expect(state.urlHealthRecords).toEqual([]);
+    expect(state.bookmarkOperations).toEqual([]);
     expect(state.lastMoveRecordCount).toBe(0);
     expect(state.settings.useAi).toBe(true);
     expect(state.settings.customRules).toEqual([]);
@@ -28,10 +29,13 @@ describe('popup state normalization', () => {
   });
 
   it('falls back to defaults for malformed state payloads', () => {
-    const state = normalizeExtensionState(undefined);
+    const state = normalizeExtensionState({
+      bookmarkOperations: [{ id: 'untrusted-partial-operation' }],
+    });
 
     expect(state.bookmarks).toEqual([]);
     expect(state.folders).toEqual([]);
+    expect(state.bookmarkOperations).toEqual([]);
     expect(state.settings.activeProviderId).toBe('deepseek-default');
     expect(state.settings.aiProviders[0]).toMatchObject({
       provider: 'deepseek',

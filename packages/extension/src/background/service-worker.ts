@@ -2,6 +2,9 @@ import { AI_BATCH_SIZE } from '@shuhai/shared';
 import { classifyAllWithAi, testAiProviderConnection } from '../shared/ai-classifier.js';
 import type {
   BookmarkItem,
+  BookmarkOperation,
+  BookmarkOperationCommand,
+  BookmarkOperationCommandResponse,
   CapturedContent,
   ClassificationPortMessage,
   ClassificationPortRequest,
@@ -17,17 +20,25 @@ import type {
   UrlHealthProgress,
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
+import {
+  parseBookmarkOperationCommand,
+  parseBookmarkOperationCommandResponse,
+} from '../shared/bookmark-types.js';
 import { generateClassificationPlan } from '../shared/classifier.js';
 import { getLastMoveRecords, listBackups } from '../utils/backup.js';
+import { flattenBookmarkTree, getFullTree } from '../utils/chrome-bookmarks.js';
 import {
-  applyClassificationPlan,
-  flattenBookmarkTree,
-  getFullTree,
-  removeBookmarkWithBackup,
-  updateBookmarkUrlWithBackup,
-  undoMoveRecords,
-} from '../utils/chrome-bookmarks.js';
+  BookmarkOperationCommandError,
+  acceptBookmarkOperationCurrentState,
+  cancelBookmarkOperation,
+  executeBookmarkMoves,
+  executeBookmarkUrlUpdates,
+  executeDeleteBookmarks,
+  reconcileInterruptedBookmarkOperations,
+  restoreBookmarkOperation,
+} from '../utils/bookmark-operations.js';
 import {
+  BookmarkOperationStorageError,
   clearPendingCapture,
   clearUrlHealthRecords,
   getExportManifests,
@@ -44,11 +55,7 @@ import {
   saveUrlHealthRecords,
 } from '../utils/storage.js';
 import { checkBookmarkUrl, checkBookmarkUrls } from '../utils/url-health.js';
-import {
-  addActivityEntry,
-  summarizeClassifyApply,
-  summarizeClassifyUndo,
-} from '../utils/activity-log.js';
+import { addActivityEntry } from '../utils/activity-log.js';
 import { inferErrorCode } from '../utils/error-messages.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
@@ -1120,6 +1127,7 @@ const xSyncRecovery = openSyncStore()
   .catch(() => ({ ok: false }) as const);
 
 async function getState(): Promise<ExtensionState> {
+  const bookmarkOperations = await reconcileInterruptedBookmarkOperations();
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
   const backups = await listBackups();
@@ -1138,6 +1146,7 @@ async function getState(): Promise<ExtensionState> {
     exportManifests,
     pendingCaptures,
     urlHealthRecords,
+    bookmarkOperations,
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
@@ -1588,43 +1597,6 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         return { ok: true, data: await getStateSummary() };
       case 'plan:create':
         return { ok: true, data: await createPlan(request.mode) };
-      case 'plan:apply': {
-        const result = await applyClassificationPlan(request.plan, request.selectedMoveIds);
-        const selectedIds = new Set(request.selectedMoveIds);
-        const selectedMoves = request.plan.moves.filter((move) => selectedIds.has(move.id));
-        const targetFolders = new Set(selectedMoves.map((move) => move.targetFolder));
-
-        if (result.moved > 0) {
-          await addActivityEntry({
-            type: 'classify_apply',
-            summary: summarizeClassifyApply(result.moved, targetFolders.size),
-            details: selectedMoves.slice(0, result.moved).map((move) => ({
-              label: move.bookmarkTitle,
-              meta: `${move.currentFolder || '根目录'} → ${move.targetFolder}`,
-            })),
-          });
-        }
-
-        return {
-          ok: true,
-          data: result,
-        };
-      }
-      case 'plan:undoLast': {
-        const records = await getLastMoveRecords();
-        const undone = await undoMoveRecords(records);
-        if (undone > 0) {
-          await addActivityEntry({
-            type: 'classify_undo',
-            summary: summarizeClassifyUndo(undone),
-            details: records.slice(0, undone).map((record) => ({
-              label: record.bookmarkTitle,
-              meta: '回到原位置',
-            })),
-          });
-        }
-        return { ok: true, data: { undone } };
-      }
       case 'settings:get':
         return { ok: true, data: await getSettings() };
       case 'settings:set': {
@@ -1675,10 +1647,6 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
         return { ok: true, data: { cleared: true } };
       case 'health:retryOne':
         return { ok: true, data: await retryBookmarkHealth(request.bookmarkId) };
-      case 'bookmark:delete':
-        return { ok: true, data: await removeBookmarkWithBackup(request.id) };
-      case 'bookmark:updateUrl':
-        return { ok: true, data: await updateBookmarkUrlWithBackup(request.id, request.url) };
       case 'backups:list':
         return { ok: true, data: await listBackups() };
       default:
@@ -1690,6 +1658,132 @@ async function handleRequest(request: ExtensionRequest): Promise<ExtensionRespon
       error: error instanceof Error ? error.message : String(error),
       errorCode: inferErrorCode(error),
     };
+  }
+}
+
+type BookmarkOperationMessageResponse =
+  | { ok: true; data: BookmarkOperationCommandResponse }
+  | {
+      ok: false;
+      error: 'Bookmark operation command rejected';
+      errorCode: string;
+    };
+
+function hasBookmarkOperationTypePrefix(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  try {
+    const type = Reflect.get(value, 'type');
+    return typeof type === 'string' && type.startsWith('bookmarkOperations:');
+  } catch {
+    return true;
+  }
+}
+
+function isBookmarkOperationSender(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id || sender.tab !== undefined) {
+    return false;
+  }
+  try {
+    const popupUrl = chrome.runtime.getURL('popup/index.html');
+    const sidePanelUrl = chrome.runtime.getURL('sidepanel/index.html');
+    return sender.url === popupUrl || sender.url === sidePanelUrl;
+  } catch {
+    return false;
+  }
+}
+
+function bookmarkOperationFailure(errorCode: string): BookmarkOperationMessageResponse {
+  return {
+    ok: false,
+    error: 'Bookmark operation command rejected',
+    errorCode,
+  };
+}
+
+function bookmarkOperationErrorCode(error: unknown): string {
+  if (
+    error instanceof BookmarkOperationCommandError ||
+    error instanceof BookmarkOperationStorageError
+  ) {
+    return error.code;
+  }
+  return 'internal_error';
+}
+
+function publishBookmarkOperation(operation: BookmarkOperation): void {
+  if (typeof chrome.runtime.sendMessage !== 'function') {
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(
+      { type: 'bookmarkOperations:progress', operation },
+      () => void chrome.runtime.lastError,
+    );
+  } catch {
+    // The persisted journal remains authoritative if no extension page is listening.
+  }
+}
+
+async function handleBookmarkOperationMessage(
+  message: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<BookmarkOperationMessageResponse> {
+  if (!isBookmarkOperationSender(sender)) {
+    return bookmarkOperationFailure('forbidden_sender');
+  }
+
+  let command: BookmarkOperationCommand;
+  try {
+    command = parseBookmarkOperationCommand(message);
+  } catch {
+    return bookmarkOperationFailure('invalid_request');
+  }
+
+  try {
+    await reconcileInterruptedBookmarkOperations();
+    let response: BookmarkOperationCommandResponse;
+    switch (command.type) {
+      case 'bookmarkOperations:delete':
+        response = await executeDeleteBookmarks(command.requestId, command.bookmarkIds, 'health', {
+          onChange: publishBookmarkOperation,
+        });
+        break;
+      case 'bookmarkOperations:updateUrls':
+        response = await executeBookmarkUrlUpdates(command.requestId, command.updates, 'health', {
+          onChange: publishBookmarkOperation,
+        });
+        break;
+      case 'bookmarkOperations:move':
+        response = await executeBookmarkMoves(command.requestId, command.moves, 'classification', {
+          onChange: publishBookmarkOperation,
+        });
+        break;
+      case 'bookmarkOperations:restore':
+        response = await restoreBookmarkOperation(command.requestId, command.operationId, {
+          onChange: publishBookmarkOperation,
+        });
+        break;
+      case 'bookmarkOperations:acceptCurrent':
+        response = await acceptBookmarkOperationCurrentState(
+          command.requestId,
+          command.operationId,
+          { onChange: publishBookmarkOperation },
+        );
+        break;
+      case 'bookmarkOperations:cancel':
+        response = await cancelBookmarkOperation(command.requestId, command.operationId, {
+          onChange: publishBookmarkOperation,
+        });
+        break;
+    }
+    return {
+      ok: true,
+      data: parseBookmarkOperationCommandResponse(response),
+    };
+  } catch (error) {
+    return bookmarkOperationFailure(bookmarkOperationErrorCode(error));
   }
 }
 
@@ -1866,6 +1960,10 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (hasXSyncProtocolEnvelope(message)) {
     void handleXSyncUiMessage(message, sender).then(sendResponse);
+    return true;
+  }
+  if (hasBookmarkOperationTypePrefix(message)) {
+    void handleBookmarkOperationMessage(message, sender).then(sendResponse);
     return true;
   }
   void handleRequest(message as ExtensionRequest).then(sendResponse);

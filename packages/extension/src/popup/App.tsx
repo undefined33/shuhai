@@ -15,6 +15,9 @@ import type {
   BackupRecord,
   BookmarkItem,
   BookmarkNode,
+  BookmarkOperation,
+  BookmarkOperationCommand,
+  BookmarkOperationCommandResponse,
   CapturedContent,
   ClassificationPortMessage,
   ClassificationPortRequest,
@@ -32,6 +35,10 @@ import type {
   UrlHealthPortRequest,
   UrlHealthProgress,
   UrlHealthRecord,
+} from '../shared/bookmark-types.js';
+import {
+  isBookmarkOperation,
+  parseBookmarkOperationCommandResponse,
 } from '../shared/bookmark-types.js';
 import { Badge } from '../components/ui/badge.js';
 import { Button } from '../components/ui/button.js';
@@ -68,6 +75,8 @@ import {
 } from '../social/x-sync-messages.js';
 import {
   addActivityEntry,
+  summarizeClassifyApply,
+  summarizeClassifyUndo,
   summarizeHealthDelete,
   summarizeHealthUpdate,
 } from '../utils/activity-log.js';
@@ -153,6 +162,7 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
     exportManifests: arrayOrEmpty<ExportManifest>(state.exportManifests),
     pendingCaptures: arrayOrEmpty<CapturedContent>(state.pendingCaptures),
     urlHealthRecords: arrayOrEmpty<UrlHealthRecord>(state.urlHealthRecords),
+    bookmarkOperations: arrayOrEmpty<unknown>(state.bookmarkOperations).filter(isBookmarkOperation),
     lastMoveRecordCount:
       typeof state.lastMoveRecordCount === 'number' && Number.isFinite(state.lastMoveRecordCount)
         ? state.lastMoveRecordCount
@@ -186,7 +196,7 @@ function normalizeStateSummary(value: unknown): StateSummary {
   };
 }
 
-function sendMessage<T>(request: ExtensionRequest): Promise<T> {
+function sendMessage<T>(request: ExtensionRequest | BookmarkOperationCommand): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(request, (response: ExtensionResponse | undefined) => {
       const error = chrome.runtime.lastError?.message;
@@ -210,6 +220,26 @@ function sendMessage<T>(request: ExtensionRequest): Promise<T> {
       resolve(response.data as T);
     });
   });
+}
+
+function createOperationRequestId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (!randomId) {
+    throw new Error('无法创建安全的书签操作请求');
+  }
+  return `ui:${randomId}`;
+}
+
+async function sendBookmarkOperation(
+  request: BookmarkOperationCommand,
+): Promise<BookmarkOperationCommandResponse> {
+  const response = parseBookmarkOperationCommandResponse(await sendMessage<unknown>(request));
+  if (!response.receipt.result.ok) {
+    const error = new Error('书签操作未执行') as Error & { errorCode?: string };
+    error.errorCode = response.receipt.result.errorCode;
+    throw error;
+  }
+  return response;
 }
 
 function selectedMoveIds(plan: ClassificationPlan): string[] {
@@ -878,6 +908,36 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const busy = Boolean(busyAction) || healthChecking;
 
   useEffect(() => {
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      const event = objectRecord(message);
+      if (
+        sender.id !== chrome.runtime.id ||
+        sender.tab ||
+        event.type !== 'bookmarkOperations:progress' ||
+        !isBookmarkOperation(event.operation)
+      ) {
+        return;
+      }
+      const operation = event.operation;
+
+      setState((current) =>
+        current
+          ? {
+              ...current,
+              bookmarkOperations: [
+                operation,
+                ...current.bookmarkOperations.filter((candidate) => candidate.id !== operation.id),
+              ],
+            }
+          : current,
+      );
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
+
+  useEffect(() => {
     if (notice?.kind !== 'success') {
       return undefined;
     }
@@ -1246,21 +1306,57 @@ function AppContent({ surface = 'popup' }: AppProps) {
       return;
     }
 
+    const selectedMoves = plan.moves.filter((move) => move.selected);
+    if (selectedMoves.length === 0) {
+      return;
+    }
+
     setBusyAction('apply');
     setNotice(undefined);
-    setStatus('正在备份并移动书签...');
+    setStatus('正在逐项记录并移动书签...');
     try {
-      const result = await sendMessage<{ moved: number; failed: unknown[] }>({
-        type: 'plan:apply',
-        plan,
-        selectedMoveIds: selectedMoveIds(plan),
+      const { operation } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:move',
+        requestId: createOperationRequestId(),
+        moves: selectedMoves.map((move) => ({
+          bookmarkId: move.bookmarkId,
+          targetFolder: move.targetFolder,
+        })),
       });
-      setStatus(`已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个`);
+      const targetFolders = new Set(selectedMoves.map((move) => move.targetFolder));
+      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
+      setStatus(
+        `整理结果：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}`,
+      );
       toast({
-        kind: result.failed.length > 0 ? 'info' : 'success',
-        message: `已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个。`,
+        kind: operation.status === 'complete' ? 'success' : 'info',
+        message:
+          operation.status === 'complete'
+            ? `已移动 ${operation.summary.succeeded} 个书签。`
+            : `整理部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
+        description:
+          operation.summary.succeeded > 0
+            ? '成功项已记录，可使用“撤销上次整理”安全恢复。'
+            : undefined,
       });
-      setLastAppliedMoveCount(result.moved);
+      if (operation.summary.succeeded > 0) {
+        await addActivityEntry({
+          type: 'classify_apply',
+          summary: summarizeClassifyApply(operation.summary.succeeded, targetFolders.size),
+          details: selectedMoves
+            .filter((move) =>
+              operation.items.some(
+                (item) =>
+                  item.bookmarkId === move.bookmarkId && item.executionStatus === 'succeeded',
+              ),
+            )
+            .map((move) => ({
+              label: move.bookmarkTitle,
+              meta: `${move.currentFolder || '根目录'} → ${move.targetFolder}`,
+            })),
+        }).catch(() => undefined);
+      }
+      setLastAppliedMoveCount(operation.summary.succeeded);
       setPlan(undefined);
       setPage('organize');
       setOrganizeMode('browse');
@@ -1274,13 +1370,49 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   const undoLast = async () => {
+    const operation = state?.bookmarkOperations.find(
+      (candidate) =>
+        candidate.type === 'move_bookmarks' &&
+        (candidate.status === 'complete' ||
+          candidate.status === 'partial' ||
+          candidate.status === 'restore_partial'),
+    );
+    if (!operation) {
+      return;
+    }
+
     setBusyAction('undo');
     setNotice(undefined);
     setStatus('正在撤销上次整理...');
     try {
-      const result = await sendMessage<{ undone: number }>({ type: 'plan:undoLast' });
-      setStatus(`已撤销 ${result.undone} 个移动操作`);
-      toast({ kind: 'success', message: `已撤销 ${result.undone} 个移动操作。` });
+      const { operation: restored } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:restore',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      setStatus(
+        `恢复结果：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}`,
+      );
+      toast({
+        kind: restored.status === 'restored' ? 'success' : 'info',
+        message:
+          restored.status === 'restored'
+            ? `已恢复 ${restored.summary.restored} 个书签。`
+            : `恢复部分完成：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}。`,
+        description:
+          restored.summary.restoreConflicts > 0
+            ? '冲突项保持当前状态，没有覆盖你之后的修改。'
+            : undefined,
+      });
+      if (restored.summary.restored > 0) {
+        await addActivityEntry({
+          type: 'classify_undo',
+          summary: summarizeClassifyUndo(restored.summary.restored),
+          details: restored.items
+            .filter((item) => item.restoreStatus === 'restored')
+            .map((item) => ({ label: item.title, meta: '回到原位置' })),
+        }).catch(() => undefined);
+      }
       await loadState();
     } catch (undoError) {
       showError(undoError);
@@ -1351,32 +1483,45 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
 
     const confirmed = window.confirm(
-      `确定批量删除 ${records.length} 个 Chrome 书签吗？\n\n删除前会逐条创建备份。`,
+      `确定批量删除 ${records.length} 个 Chrome 书签吗？\n\nShuHai 会逐项记录结果；实际删除成功的项目可以安全恢复。`,
     );
 
     if (!confirmed) {
       return;
     }
 
+    setBusyAction('health');
+    setNotice(undefined);
     try {
-      for (const record of records) {
-        await sendMessage<{ deleted: boolean; backupKey: string }>({
-          type: 'bookmark:delete',
-          id: record.bookmarkId,
-        });
-      }
-      await addActivityEntry({
-        type: 'health_delete',
-        summary: summarizeHealthDelete(records.length),
-        details: records.map((record) => ({
-          label: record.bookmarkTitle,
-          meta: record.bookmarkUrl,
-        })),
+      const { operation } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:delete',
+        requestId: createOperationRequestId(),
+        bookmarkIds: records.map((record) => record.bookmarkId),
       });
-      toast({ kind: 'success', message: `已删除 ${records.length} 个书签，并已创建备份。` });
+      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
+      if (operation.summary.succeeded > 0) {
+        await addActivityEntry({
+          type: 'health_delete',
+          summary: summarizeHealthDelete(operation.summary.succeeded),
+          details: operation.items
+            .filter((item) => item.executionStatus === 'succeeded')
+            .map((item) => ({ label: item.title })),
+        }).catch(() => undefined);
+      }
+      toast({
+        kind: operation.status === 'complete' ? 'success' : 'info',
+        message:
+          operation.status === 'complete'
+            ? `已删除 ${operation.summary.succeeded} 个书签。`
+            : `删除部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
+        description:
+          operation.summary.succeeded > 0 ? '成功项可从本页的最近操作中恢复。' : undefined,
+      });
       await loadState();
     } catch (deleteError) {
       showError(deleteError);
+    } finally {
+      setBusyAction(undefined);
     }
   };
 
@@ -1420,21 +1565,38 @@ function AppContent({ surface = 'popup' }: AppProps) {
       return;
     }
 
+    setBusyAction('health');
+    setNotice(undefined);
     try {
-      await sendMessage<{ updated: boolean; backupKey: string }>({
-        type: 'bookmark:updateUrl',
-        id: record.bookmarkId,
-        url,
+      const { operation } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:updateUrls',
+        requestId: createOperationRequestId(),
+        updates: [{ id: record.bookmarkId, url }],
       });
-      await addActivityEntry({
-        type: 'health_update',
-        summary: summarizeHealthUpdate(1),
-        details: [{ label: record.bookmarkTitle, meta: `${record.bookmarkUrl} → ${url}` }],
+      if (operation.summary.succeeded > 0) {
+        await addActivityEntry({
+          type: 'health_update',
+          summary: summarizeHealthUpdate(operation.summary.succeeded),
+          details: [{ label: record.bookmarkTitle }],
+        }).catch(() => undefined);
+      }
+      toast({
+        kind:
+          operation.status === 'complete' && operation.summary.succeeded > 0 ? 'success' : 'info',
+        message:
+          operation.summary.succeeded > 0
+            ? '已更新书签链接。'
+            : operation.summary.skipped > 0
+              ? '书签已经是目标链接，没有执行修改。'
+              : '书签已发生变化或更新失败，当前链接没有被覆盖。',
+        description:
+          operation.summary.succeeded > 0 ? '这次更新可从本页的最近操作中恢复。' : undefined,
       });
-      toast({ kind: 'success', message: '已更新书签链接，并已创建备份。' });
       await loadState();
     } catch (updateError) {
       showError(updateError);
+    } finally {
+      setBusyAction(undefined);
     }
   };
 
@@ -1447,7 +1609,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
 
     const confirmed = window.confirm(
-      `确定批量更新 ${updatableRecords.length} 个重定向书签吗？\n\n会把它们替换为检测到的跳转目标，更新前会逐条创建备份。`,
+      `确定批量更新 ${updatableRecords.length} 个重定向书签吗？\n\n会替换为检测到的跳转目标，并逐项记录结果和恢复数据。`,
     );
 
     if (!confirmed) {
@@ -1457,31 +1619,133 @@ function AppContent({ surface = 'popup' }: AppProps) {
     setBusyAction('health');
     setNotice(undefined);
     try {
-      for (const [index, record] of updatableRecords.entries()) {
-        setStatus(`正在更新重定向 ${index + 1}/${updatableRecords.length}`);
-        await sendMessage<{ updated: boolean; backupKey: string }>({
-          type: 'bookmark:updateUrl',
+      const { operation } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:updateUrls',
+        requestId: createOperationRequestId(),
+        updates: updatableRecords.map((record) => ({
           id: record.bookmarkId,
           url: record.finalUrl ?? record.bookmarkUrl,
-        });
-      }
-      await addActivityEntry({
-        type: 'health_update',
-        summary: summarizeHealthUpdate(updatableRecords.length),
-        details: updatableRecords.map((record) => ({
-          label: record.bookmarkTitle,
-          meta: `${record.bookmarkUrl} → ${record.finalUrl ?? record.bookmarkUrl}`,
         })),
       });
+      if (operation.summary.succeeded > 0) {
+        await addActivityEntry({
+          type: 'health_update',
+          summary: summarizeHealthUpdate(operation.summary.succeeded),
+          details: operation.items
+            .filter((item) => item.executionStatus === 'succeeded')
+            .map((item) => ({ label: item.title })),
+        }).catch(() => undefined);
+      }
+      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
       toast({
-        kind: 'success',
-        message: `已更新 ${updatableRecords.length} 个重定向书签，并已创建备份。`,
+        kind:
+          operation.status === 'complete' && operation.summary.succeeded > 0 ? 'success' : 'info',
+        message:
+          operation.summary.succeeded > 0 && operation.status === 'complete'
+            ? `已更新 ${operation.summary.succeeded} 个重定向书签。`
+            : operation.summary.succeeded === 0 &&
+                operation.summary.skipped > 0 &&
+                failedCount === 0
+              ? `所选 ${operation.summary.skipped} 个书签已经是目标链接，没有执行修改。`
+              : `更新部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
+        description:
+          operation.summary.succeeded > 0 ? '成功项可从本页的最近操作中恢复。' : undefined,
       });
       await loadState();
     } catch (updateError) {
       showError(updateError);
     } finally {
       setBusyAction(undefined);
+    }
+  };
+
+  const restoreBookmarkOperation = async (operation: BookmarkOperation) => {
+    const restorableCount = operation.items.filter(
+      (item) =>
+        item.executionStatus === 'succeeded' &&
+        item.restoreStatus !== 'restored' &&
+        item.restoreStatus !== 'accepted_current',
+    ).length;
+    if (
+      restorableCount === 0 ||
+      !window.confirm(
+        `恢复这次操作中 ${restorableCount} 个成功变更吗？\n\n如果书签后来被修改，ShuHai 会保留当前状态并标记冲突。`,
+      )
+    ) {
+      return;
+    }
+
+    setBusyAction('health');
+    setNotice(undefined);
+    try {
+      const { operation: restored } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:restore',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      toast({
+        kind: restored.status === 'restored' ? 'success' : 'info',
+        message:
+          restored.status === 'restored'
+            ? `已恢复 ${restored.summary.restored} 个书签。`
+            : `恢复部分完成：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}。`,
+        description:
+          restored.summary.restoreConflicts > 0
+            ? '冲突项保持当前状态，没有覆盖后续修改。'
+            : undefined,
+      });
+      await loadState();
+    } catch (restoreError) {
+      showError(restoreError);
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const acceptBookmarkOperationCurrentState = async (operation: BookmarkOperation) => {
+    const unresolvedCount = operation.items.filter(
+      (item) => item.restoreStatus === 'conflict' || item.restoreStatus === 'restore_failed',
+    ).length;
+    if (
+      unresolvedCount === 0 ||
+      !window.confirm(
+        `接受 ${unresolvedCount} 个书签的当前状态吗？\n\n接受后 ShuHai 不会再次尝试覆盖这些项目。`,
+      )
+    ) {
+      return;
+    }
+
+    setBusyAction('health');
+    setNotice(undefined);
+    try {
+      const { operation: resolved } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:acceptCurrent',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      toast({
+        kind: 'success',
+        message: `已接受 ${resolved.summary.acceptedCurrent} 个书签的当前状态。`,
+      });
+      await loadState();
+    } catch (acceptError) {
+      showError(acceptError);
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const cancelBookmarkOperation = async (operation: BookmarkOperation) => {
+    try {
+      await sendBookmarkOperation({
+        type: 'bookmarkOperations:cancel',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      setStatus('正在安全停止书签操作...');
+      await loadState();
+    } catch (cancelError) {
+      showError(cancelError);
     }
   };
 
@@ -1586,7 +1850,20 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const settings = state?.settings ?? DEFAULT_SETTINGS;
   const bookmarks = state?.bookmarks ?? [];
   const exportBookmarks = plan ? applyPlanFolders(bookmarks, plan) : bookmarks;
-  const canUndo = (state?.lastMoveRecordCount ?? 0) > 0;
+  const canUndo =
+    state?.bookmarkOperations.some(
+      (operation) =>
+        operation.type === 'move_bookmarks' &&
+        (operation.status === 'complete' ||
+          operation.status === 'partial' ||
+          operation.status === 'restore_partial') &&
+        operation.items.some(
+          (item) =>
+            item.executionStatus === 'succeeded' &&
+            item.restoreStatus !== 'restored' &&
+            item.restoreStatus !== 'accepted_current',
+        ),
+    ) ?? false;
   const selectedCount = useMemo(
     () => plan?.moves.filter((move) => move.selected).length ?? 0,
     [plan],
@@ -1787,13 +2064,20 @@ function AppContent({ surface = 'popup' }: AppProps) {
       <HealthPage
         bookmarks={bookmarks}
         checking={healthChecking}
+        onAcceptCurrent={acceptBookmarkOperationCurrentState}
         onCancel={cancelHealthCheck}
+        onCancelOperation={cancelBookmarkOperation}
         onClear={clearHealthRecords}
         onDeleteMany={deleteBookmarksFromHealth}
         onRetry={retryHealthRecord}
+        onRestoreOperation={restoreBookmarkOperation}
         onStart={startHealthCheck}
         onUpdateManyUrls={updateBookmarkUrlsFromHealth}
         onUpdateUrl={updateBookmarkUrlFromHealth}
+        operations={(state?.bookmarkOperations ?? []).filter(
+          (operation) =>
+            operation.type === 'delete_bookmarks' || operation.type === 'update_bookmark_urls',
+        )}
         progress={urlHealthProgress}
         records={state?.urlHealthRecords ?? []}
       />

@@ -34,10 +34,7 @@ function countBookmarks(node: chrome.bookmarks.BookmarkTreeNode): number {
   return (node.children ?? []).reduce((total, child) => total + countBookmarks(child), 0);
 }
 
-function toBookmarkNode(
-  node: chrome.bookmarks.BookmarkTreeNode,
-  parentPath = '',
-): BookmarkNode {
+function toBookmarkNode(node: chrome.bookmarks.BookmarkTreeNode, parentPath = ''): BookmarkNode {
   const title = node.title ?? '';
   const folderPath = node.url ? parentPath : normalizeFolderPath(`${parentPath}/${title}`);
   const children = node.children?.map((child) => toBookmarkNode(child, folderPath));
@@ -64,6 +61,38 @@ export function getFullTree(): Promise<BookmarkNode[]> {
         return;
       }
 
+      resolve(nodes.map((node) => toBookmarkNode(node)));
+    });
+  });
+}
+
+export function getBookmarkById(id: string): Promise<BookmarkNode | undefined> {
+  return new Promise((resolve, reject) => {
+    chrome.bookmarks.get(id, (nodes) => {
+      const error = getLastError();
+      if (error) {
+        if (/can't find|cannot find|not find|not found|no node/i.test(error.message)) {
+          resolve(undefined);
+          return;
+        }
+        reject(error);
+        return;
+      }
+
+      const node = nodes[0];
+      resolve(node ? toBookmarkNode(node) : undefined);
+    });
+  });
+}
+
+export function getBookmarkChildren(parentId: string): Promise<BookmarkNode[]> {
+  return new Promise((resolve, reject) => {
+    chrome.bookmarks.getChildren(parentId, (nodes) => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
       resolve(nodes.map((node) => toBookmarkNode(node)));
     });
   });
@@ -114,9 +143,9 @@ export function removeBookmark(id: string): Promise<void> {
   });
 }
 
-export function createFolder(title: string, parentId: string): Promise<BookmarkNode> {
+export function createBookmark(details: chrome.bookmarks.CreateDetails): Promise<BookmarkNode> {
   return new Promise((resolve, reject) => {
-    chrome.bookmarks.create({ parentId, title }, (node) => {
+    chrome.bookmarks.create(details, (node) => {
       const error = getLastError();
       if (error) {
         reject(error);
@@ -126,6 +155,10 @@ export function createFolder(title: string, parentId: string): Promise<BookmarkN
       resolve(toBookmarkNode(node));
     });
   });
+}
+
+export function createFolder(title: string, parentId: string): Promise<BookmarkNode> {
+  return createBookmark({ parentId, title });
 }
 
 export function searchBookmarks(query: string): Promise<BookmarkNode[]> {
@@ -145,9 +178,7 @@ export function searchBookmarks(query: string): Promise<BookmarkNode[]> {
 function getDefaultParentFolderId(nodes: BookmarkNode[]): string {
   const root = nodes[0];
   const folders = root?.children?.filter((node) => !isBookmarkNode(node)) ?? [];
-  const bookmarkBar = folders.find((folder) =>
-    ['Bookmarks Bar', '书签栏'].includes(folder.title),
-  );
+  const bookmarkBar = folders.find((folder) => ['Bookmarks Bar', '书签栏'].includes(folder.title));
 
   return bookmarkBar?.id ?? folders[0]?.id ?? root?.id ?? '1';
 }
@@ -333,7 +364,7 @@ export async function applyClassificationPlan(
   };
 }
 
-function assertHttpUrl(url: string): void {
+export function assertHttpUrl(url: string): void {
   try {
     const parsed = new URL(url);
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {

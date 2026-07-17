@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type {
   BookmarkItem,
+  BookmarkOperation,
   UrlHealthProgress,
   UrlHealthRecord,
   UrlHealthStatus,
@@ -33,12 +34,16 @@ import { friendlyHealthError } from '../../utils/error-messages.js';
 interface HealthPageProps {
   bookmarks: BookmarkItem[];
   checking: boolean;
+  operations: BookmarkOperation[];
   progress?: UrlHealthProgress;
   records: UrlHealthRecord[];
+  onAcceptCurrent(operation: BookmarkOperation): void;
   onCancel(): void;
+  onCancelOperation(operation: BookmarkOperation): void;
   onClear(): void;
   onDeleteMany(records: UrlHealthRecord[]): void;
   onRetry(record: UrlHealthRecord): void;
+  onRestoreOperation(operation: BookmarkOperation): void;
   onStart(): void;
   onUpdateManyUrls(records: UrlHealthRecord[]): void;
   onUpdateUrl(record: UrlHealthRecord, url: string): void;
@@ -105,6 +110,40 @@ function formatDuration(ms: number | undefined): string {
   }
 
   return `${Math.ceil(seconds / 60)} 分钟`;
+}
+
+function operationStatusLabel(status: BookmarkOperation['status']): string {
+  switch (status) {
+    case 'prepared':
+      return '准备中';
+    case 'running':
+      return '执行中';
+    case 'complete':
+      return '全部成功';
+    case 'partial':
+      return '部分完成';
+    case 'failed':
+      return '未执行';
+    case 'cancelled':
+      return '已取消';
+    case 'restoring':
+      return '恢复中';
+    case 'restored':
+      return '已恢复';
+    case 'restore_partial':
+      return '部分恢复';
+    case 'resolved':
+      return '已处理';
+  }
+}
+
+function restorableCount(operation: BookmarkOperation): number {
+  return operation.items.filter(
+    (item) =>
+      item.executionStatus === 'succeeded' &&
+      item.restoreStatus !== 'restored' &&
+      item.restoreStatus !== 'accepted_current',
+  ).length;
 }
 
 function hostFromUrl(url: string): string {
@@ -182,12 +221,16 @@ function buildRows(records: UrlHealthRecord[]): HealthRow[] {
 export default function HealthPage({
   bookmarks,
   checking,
+  operations,
   progress,
   records,
+  onAcceptCurrent,
   onCancel,
+  onCancelOperation,
   onClear,
   onDeleteMany,
   onRetry,
+  onRestoreOperation,
   onStart,
   onUpdateManyUrls,
   onUpdateUrl,
@@ -275,6 +318,17 @@ export default function HealthPage({
   }, [selectedRecords]);
   const percent =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const latestOperation = operations[0];
+  const latestRestorableCount = latestOperation ? restorableCount(latestOperation) : 0;
+  const latestUnresolvedCount = latestOperation
+    ? latestOperation.items.filter(
+        (item) => item.restoreStatus === 'conflict' || item.restoreStatus === 'restore_failed',
+      ).length
+    : 0;
+  const operationRunning =
+    latestOperation?.status === 'prepared' ||
+    latestOperation?.status === 'running' ||
+    latestOperation?.status === 'restoring';
 
   const setReplacement = (id: string, value: string) => {
     setReplacementById((current) => ({ ...current, [id]: value }));
@@ -334,7 +388,7 @@ export default function HealthPage({
         </CardHeader>
         <CardContent className="space-y-3 p-3">
           <Alert variant="warning">
-            ShuHai 只给出筛选建议，不会自动删除书签。删除或替换链接前会先创建备份。
+            ShuHai 只给出筛选建议，不会自动删除书签。确认后才会逐项执行并记录恢复数据。
           </Alert>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-md bg-muted/50 p-2">
@@ -400,6 +454,78 @@ export default function HealthPage({
           </div>
         </CardContent>
       </Card>
+
+      {latestOperation ? (
+        <Card variant="soft">
+          <CardContent className="space-y-2 p-3 text-[13px]">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium">
+                  最近操作 · {latestOperation.type === 'delete_bookmarks' ? '删除书签' : '更新链接'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  成功 <MetricNumber>{latestOperation.summary.succeeded}</MetricNumber> · 失败{' '}
+                  <MetricNumber>{latestOperation.summary.failed}</MetricNumber> · 冲突{' '}
+                  <MetricNumber>
+                    {latestOperation.summary.executionConflicts +
+                      latestOperation.summary.restoreConflicts}
+                  </MetricNumber>
+                </p>
+              </div>
+              <Badge
+                variant={
+                  latestOperation.status === 'complete' ||
+                  latestOperation.status === 'restored' ||
+                  latestOperation.status === 'resolved'
+                    ? 'success'
+                    : latestOperation.status === 'failed'
+                      ? 'danger'
+                      : 'warning'
+                }
+              >
+                {operationStatusLabel(latestOperation.status)}
+              </Badge>
+            </div>
+
+            {latestOperation.status === 'restore_partial' ? (
+              <p className="text-xs text-muted-foreground">
+                已恢复 <MetricNumber>{latestOperation.summary.restored}</MetricNumber> · 恢复失败{' '}
+                <MetricNumber>{latestOperation.summary.restoreFailed}</MetricNumber> · 恢复冲突{' '}
+                <MetricNumber>{latestOperation.summary.restoreConflicts}</MetricNumber>
+              </p>
+            ) : null}
+
+            <div className="flex flex-wrap justify-end gap-2">
+              {operationRunning ? (
+                <Button
+                  onClick={() => onCancelOperation(latestOperation)}
+                  size="sm"
+                  variant="outline"
+                >
+                  安全停止
+                </Button>
+              ) : null}
+              {latestUnresolvedCount > 0 && latestOperation.status === 'restore_partial' ? (
+                <Button
+                  onClick={() => onAcceptCurrent(latestOperation)}
+                  size="sm"
+                  variant="outline"
+                >
+                  接受当前状态 {latestUnresolvedCount}
+                </Button>
+              ) : null}
+              {latestRestorableCount > 0 &&
+              (latestOperation.status === 'complete' ||
+                latestOperation.status === 'partial' ||
+                latestOperation.status === 'restore_partial') ? (
+                <Button onClick={() => onRestoreOperation(latestOperation)} size="sm">
+                  恢复成功项 {latestRestorableCount}
+                </Button>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {!checking && activeRecords.length > 0 ? (
         <Card className="bg-primary/5" variant="soft">

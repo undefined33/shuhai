@@ -1,21 +1,24 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-17
-> 当前状态：Goal 041/042/043 均已 `DONE/PASS`；X 保持 `LIMITED_GO/batch-only`，微博保持 `NO_GO`
-> 执行规则：当前没有 `READY` 或 `IN_PROGRESS` 生产 Goal。Goal 044-046 均不得自动开工；微博生产同步必须先通过新的独立研究门禁。
-> 讨论入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；建议把 046A 主壳切换放到 Goal 045 前，用户确认并转成完整 Goal 前不得改代码。
+> 当前状态：Goal 041/042/043/045A 均已 `DONE/PASS`；Goal 045B 正在进入合同准备
+> 执行规则：按 045A -> 045B -> 045C 串行修复 P0/P1；只有前一子 Goal 独立 `PASS` 后才能推进下一项。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；045A 数据安全门已通过，但生产主壳仍等待 045B/045C 的 P1 收口。
 
 ## 当前编排状态
 
-| Lane     | 状态                       | 说明                                     | 恢复条件                        |
-| -------- | -------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032 | `PAUSED_BY_PRODUCT_RESET`  | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041 | `DONE`                     | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042 | `DONE`                     | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043 | `DONE`                     | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
-| 044-046  | `PLANNED`                  | 微博、书签和 UI                          | 按各自前置另写可执行 spec       |
-| Goal 047 | `RESEARCH_GATE`            | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow | `FIRST_THREE_MODULES_DONE` | 041/042/043 已独立验收                   | 等待新的 `READY` Goal           |
+| Lane      | 状态                        | 说明                                     | 恢复条件                        |
+| --------- | --------------------------- | ---------------------------------------- | ------------------------------- |
+| Goal 032  | `PAUSED_BY_PRODUCT_RESET`   | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041  | `DONE`                      | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
+| Goal 042  | `DONE`                      | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
+| Goal 043  | `DONE`                      | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
+| Goal 045A | `DONE`                      | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045B | `PLANNED`                   | 消息、URL 健康和权限安全                 | 045A 独立 PASS                  |
+| Goal 045C | `PLANNED`                   | 内容保存与 AI 隐私收口                   | 045B 独立 PASS                  |
+| 044/046   | `PLANNED`                   | 微博研究门禁、UI 与 dogfood              | 不与当前安全 writer 并行        |
+| Goal 047  | `RESEARCH_GATE`             | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
+| workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 串行修复审计确认的 P0/P1                 | 当前 Goal 独立验收后自动推进    |
 
 ## v4 当前队列
 
@@ -26,7 +29,9 @@
 | [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS               |
 | [043](./goal-043-x-bookmarks-incremental-sync.md)      | `DONE`                    | X 收藏增量同步 MVP                        | 独立 review 与真实 QA PASS     |
 | 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | 新研究门禁改变当前微博 `NO_GO` |
-| 045                                                    | `PLANNED`                 | 书签整理收缩和 Goal 032 安全收口          | v4 确认；独立 review 方案      |
+| [045A](./goal-045a-bookmark-mutation-safety.md)        | `DONE`                    | 删除、URL 更新和分类移动 journal          | mock-only + 独立 review PASS   |
+| 045B                                                   | `PLANNED`                 | 通用消息、URL 健康和权限生命周期          | 045A PASS                      |
+| 045C                                                   | `PLANNED`                 | 内容保存链路和 AI 隐私边界                | 045B PASS                      |
 | 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收         |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据               |
 
