@@ -7,7 +7,7 @@ import type {
   MovePlan,
 } from '../shared/bookmark-types.js';
 import { stripRootFolder } from '../shared/classifier.js';
-import { generateBookmarkMarkdown, generateCapturedContentMarkdown } from './markdown-generator.js';
+import { generateBookmarkMarkdown } from './markdown-generator.js';
 import {
   assertSafeRelativePath,
   sanitizeFileName,
@@ -111,18 +111,6 @@ function captureSourceFolder(source: CapturedContent['source']): string {
   }
 
   return source;
-}
-
-function captureSourceLabel(source: CapturedContent['source']): string {
-  if (source === 'article') {
-    return '文章';
-  }
-
-  if (source === 'twitter') {
-    return 'Twitter/X';
-  }
-
-  return '微博';
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -761,63 +749,12 @@ export async function exportBookmarksToVault(
 }
 
 export async function exportCaptureToVault(
-  handle: FileSystemDirectoryHandle,
-  capture: CapturedContent,
-  directoryPrefix: string,
-  settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>,
+  _handle: FileSystemDirectoryHandle,
+  _capture: CapturedContent,
+  _directoryPrefix: string,
+  _settings?: Pick<AppSettings, 'templates' | 'activeTemplateIds'>,
 ): Promise<ExportResult> {
-  const segments = buildCaptureExportPath(capture, directoryPrefix);
-  const fileName = segments.at(-1) ?? sanitizeFileName(capture.title || capture.url);
-  const folderSegments = segments.slice(0, -1);
-  const relativePath = segments.join('/');
-  const manifest: ExportManifest = {
-    id: crypto.randomUUID(),
-    exportedAt: new Date().toISOString(),
-    vaultPath: handle.name,
-    files: [],
-    fileLabels: [],
-    bookmarkCount: 1,
-    type: 'capture',
-    sourceLabel: captureSourceLabel(capture.source),
-  };
-  const result: ExportResult = {
-    exported: 0,
-    skipped: 0,
-    errors: [],
-    files: manifest.files,
-    manifest,
-  };
-
-  try {
-    const directory = await ensureDirectory(handle, folderSegments);
-    if (await fileExists(directory, fileName)) {
-      result.skipped = 1;
-    } else {
-      await writeTextFile(
-        directory,
-        fileName,
-        generateCapturedContentMarkdown(capture, new Date(), settings),
-      );
-      result.exported = 1;
-      result.files.push(relativePath);
-      result.manifest.fileLabels?.push(fileName);
-    }
-  } catch (error) {
-    result.errors.push({
-      path: relativePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  await saveExportManifest(manifest);
-  if (result.exported > 0) {
-    await addActivityEntry({
-      type: 'vault_export',
-      summary: summarizeVaultExport(result.exported, directoryPrefix),
-      details: result.files.map((file) => ({ label: file })),
-    });
-  }
-  return result;
+  throw new Error('legacy_capture_unavailable');
 }
 
 export async function exportActivityLogToVault(

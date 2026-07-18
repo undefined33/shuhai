@@ -5,7 +5,12 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzVH54/jlOqx4H3Dds99QtxyzwYGjNMZeG0zSWWu77bz9Jy2khABHbHdTQKKOLAZoden/xzl3vLQUJ/hHZm4zkjjc1uE1bwWfwpXx+lbsMMWBBmU5f0gFNbW+u+6gi4Bi8RUxObM83L0jdGlHZ4bwjSFN+m/YUsi7RDKr1muSKw2IMUfYdQ9s9NZ617JjY/HvoI+QPuXi7nPtbeJ1oX0tzSJx3e2BUk73qqu9ceXuC1Ldn4tS4dPk5Qqhe8jic+GIJxWd7BdpqKK8+V2k3HV8vH6Y9mtY78c51pgBqhh5IrT55YwCypguJ+8beeFkpcfGO0Lruz1OwEiioC+I6Txz1QIDAQAB",
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
   "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel", "activeTab", "scripting"],
-  "optional_host_permissions": ["https://x.com/*"],
+  "optional_host_permissions": [
+    "https://x.com/*",
+    "https://api.deepseek.com/*",
+    "https://api.moonshot.cn/*",
+    "https://open.bigmodel.cn/*"
+  ],
   "action": {
     "default_popup": "popup/index.html",
     "default_title": "ShuHai"

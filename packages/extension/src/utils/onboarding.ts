@@ -29,8 +29,7 @@ export function computeOnboardingProgress({
     providerConfigured: Boolean(
       settings.useAi &&
         activeProvider?.enabled &&
-        activeProvider.apiKey.trim() &&
-        activeProvider.baseUrl.trim() &&
+        activeProvider.hasApiKey &&
         activeProvider.model.trim(),
     ),
     firstClassifyDone: lastMoveRecordCount > 0,

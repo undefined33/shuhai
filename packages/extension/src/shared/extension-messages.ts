@@ -2,13 +2,15 @@ import { z } from 'zod';
 
 import type {
   AiProviderConfig,
+  AiProviderErrorCode,
+  AiProviderTestResult,
+  AiProviderType,
   AppSettings,
   BackupRecord,
   BookmarkItem,
   BookmarkNode,
   BookmarkOperation,
   BookmarkOperationCommandResponse,
-  CapturedContent,
   ClassificationPlan,
   ClassificationProgress,
   CustomRule,
@@ -25,6 +27,12 @@ import {
   BookmarkOperationErrorCodeSchema,
   BookmarkOperationSchema,
 } from './bookmark-types.js';
+import {
+  AI_PROVIDER_TYPES,
+  DEFAULT_PROVIDER_IDS,
+  isValidAiModel,
+  providerTemplate,
+} from './ai-providers.js';
 
 export const EXTENSION_MESSAGE_LIMITS = Object.freeze({
   legacyRequest: {
@@ -299,16 +307,30 @@ const httpUrlSchema = boundedText(8_192, 1).refine((value) => {
   }
 });
 
-const aiProviderSchema: z.ZodType<AiProviderConfig> = z.strictObject({
-  id: boundedText(128, 1),
-  name: boundedText(256, 1),
-  provider: z.enum(['deepseek', 'kimi', 'glm', 'openai-compatible']),
-  enabled: z.boolean(),
-  apiKey: boundedText(16_384),
-  baseUrl: boundedText(8_192),
-  model: boundedText(512),
-  temperature: finiteNumber.optional(),
-  maxTokens: z.number().int().min(1).max(1_000_000).optional(),
+const aiProviderTypeSchema = z.enum(AI_PROVIDER_TYPES);
+const aiConsentSchema: z.ZodType<{ provider: AiProviderType; confirmed: true }> = z.strictObject({
+  provider: aiProviderTypeSchema,
+  confirmed: z.literal(true),
+});
+const aiProviderSchema: z.ZodType<AiProviderConfig> = z
+  .strictObject({
+    id: boundedText(128, 1),
+    name: boundedText(256, 1),
+    provider: aiProviderTypeSchema,
+    enabled: z.boolean(),
+    model: boundedText(128, 1).refine(isValidAiModel),
+    hasApiKey: z.boolean(),
+  })
+  .superRefine((value, context) => {
+    const template = providerTemplate(value.provider);
+    if (value.id !== DEFAULT_PROVIDER_IDS[value.provider] || value.name !== template.name) {
+      context.addIssue({ code: 'custom', message: 'Provider identity mismatch' });
+    }
+  });
+
+const aiLegacySummarySchema = z.strictObject({
+  builtInConflicts: z.array(aiProviderTypeSchema).max(AI_PROVIDER_TYPES.length),
+  customState: z.enum(['absent', 'disabled_no_key', 'conflict_has_key']),
 });
 
 const customRuleSchema: z.ZodType<CustomRule> = z.strictObject({
@@ -334,7 +356,19 @@ const markdownTemplateSchema: z.ZodType<MarkdownTemplate> = z.strictObject({
 const appSettingsSchema: z.ZodType<AppSettings> = z.strictObject({
   useAi: z.boolean(),
   activeProviderId: boundedText(128, 1),
-  aiProviders: z.array(aiProviderSchema).max(64),
+  aiProviders: z
+    .array(aiProviderSchema)
+    .length(AI_PROVIDER_TYPES.length)
+    .superRefine((providers, context) => {
+      const types = new Set(providers.map((provider) => provider.provider));
+      if (
+        types.size !== AI_PROVIDER_TYPES.length ||
+        AI_PROVIDER_TYPES.some((provider) => !types.has(provider))
+      ) {
+        context.addIssue({ code: 'custom', message: 'Provider set mismatch' });
+      }
+    }),
+  aiLegacySummary: aiLegacySummarySchema,
   customRules: z.array(customRuleSchema).max(10_000),
   templates: z.array(markdownTemplateSchema).max(128),
   activeTemplateIds: z.strictObject({
@@ -413,29 +447,6 @@ const classificationProgressSchema: z.ZodType<ClassificationProgress> = z.strict
   cancelled: z.boolean().optional(),
 });
 
-const capturedMediaSchema = z.strictObject({
-  type: z.enum(['image', 'video']).optional(),
-  url: boundedText(16_384, 1),
-  alt: boundedText(8_192).optional(),
-});
-
-const capturedContentSchema: z.ZodType<CapturedContent> = z.strictObject({
-  id: boundedText(512, 1),
-  source: z.enum(['page', 'twitter', 'weibo', 'article']),
-  title: boundedText(16_384),
-  url: boundedText(16_384, 1),
-  author: boundedText(8_192).optional(),
-  handle: boundedText(4_096).optional(),
-  created: boundedText(256).optional(),
-  text: boundedText(2 * 1_024 * 1_024),
-  media: z.array(capturedMediaSchema).max(1_024),
-  tags: z.array(boundedText(512)).max(1_024),
-  capturedAt: boundedText(64, 1),
-  siteName: boundedText(8_192).optional(),
-  description: boundedText(64 * 1_024).optional(),
-  wordCount: optionalNonNegativeInteger,
-});
-
 export const UrlHealthRecordSchema: z.ZodType<UrlHealthRecord> = z.strictObject({
   bookmarkId: byteBoundedText(512, 1),
   bookmarkTitle: byteBoundedText(4 * 1_024),
@@ -479,7 +490,6 @@ const extensionStateSchema: z.ZodType<ExtensionState> = z.strictObject({
   folders: z.array(folderItemSchema).max(100_000),
   backups: z.array(backupRecordSchema).max(100),
   exportManifests: z.array(exportManifestSchema).max(1_000),
-  pendingCaptures: z.array(capturedContentSchema).max(20),
   urlHealthRecords: z.array(UrlHealthRecordSchema).max(10_000),
   bookmarkOperations: z.array(BookmarkOperationSchema).max(0),
   lastMoveRecordCount: nonNegativeInteger,
@@ -490,7 +500,6 @@ const extensionStateSchema: z.ZodType<ExtensionState> = z.strictObject({
 const stateSummarySchema: z.ZodType<StateSummary> = z.strictObject({
   bookmarkCount: nonNegativeInteger,
   folderCount: nonNegativeInteger,
-  pendingCaptureCount: nonNegativeInteger,
   onboarded: z.boolean(),
   hasVaultHandle: z.boolean(),
   hasAiProvider: z.boolean(),
@@ -510,35 +519,80 @@ export const AI_PROVIDER_CONNECTION_RESULTS = Object.freeze({
     code: 'connection_ok',
     message: '连接成功，模型可用',
   }),
-  api_key_required: Object.freeze({
+  permission_required: Object.freeze({
     success: false,
-    code: 'api_key_required',
-    message: '请先填写 API Key',
+    code: 'permission_required',
+    message: '需要先允许访问当前 AI 服务',
   }),
-  base_url_required: Object.freeze({
+  permission_denied: Object.freeze({
     success: false,
-    code: 'base_url_required',
-    message: '请先填写 API 地址',
+    code: 'permission_denied',
+    message: '未获得当前 AI 服务权限',
   }),
-  model_required: Object.freeze({
+  secret_unavailable: Object.freeze({
     success: false,
-    code: 'model_required',
-    message: '请先填写模型名称',
+    code: 'secret_unavailable',
+    message: 'API Key 不可用，请重新配置',
+  }),
+  legacy_ai_config_conflict: Object.freeze({
+    success: false,
+    code: 'legacy_ai_config_conflict',
+    message: '旧 AI 配置存在冲突，请先在设置中处理',
+  }),
+  request_invalid: Object.freeze({
+    success: false,
+    code: 'request_invalid',
+    message: 'AI 请求配置无效',
   }),
   unauthorized: Object.freeze({
     success: false,
     code: 'unauthorized',
     message: 'API Key 无效',
   }),
-  not_found: Object.freeze({
+  forbidden: Object.freeze({
     success: false,
-    code: 'not_found',
-    message: '模型不存在或 API 地址错误',
+    code: 'forbidden',
+    message: 'AI 服务拒绝了请求',
   }),
-  request_failed: Object.freeze({
+  rate_limited: Object.freeze({
     success: false,
-    code: 'request_failed',
-    message: 'AI 服务请求失败',
+    code: 'rate_limited',
+    message: 'AI 服务请求过于频繁，请稍后重试',
+  }),
+  provider_unavailable: Object.freeze({
+    success: false,
+    code: 'provider_unavailable',
+    message: 'AI 服务暂时不可用',
+  }),
+  timeout: Object.freeze({
+    success: false,
+    code: 'timeout',
+    message: 'AI 请求超时',
+  }),
+  aborted: Object.freeze({
+    success: false,
+    code: 'aborted',
+    message: 'AI 请求已取消',
+  }),
+  response_too_large: Object.freeze({
+    success: false,
+    code: 'response_too_large',
+    message: 'AI 响应超过安全上限',
+  }),
+  content_type_invalid: Object.freeze({
+    success: false,
+    code: 'content_type_invalid',
+    message: 'AI 响应格式不受支持',
+  }),
+  response_encoding_invalid: Object.freeze({
+    success: false,
+    code: 'response_encoding_invalid',
+    message: 'AI 响应编码无效',
+  }),
+  response_invalid: Object.freeze({
+    success: false,
+    code: 'response_invalid',
+    message: 'AI 响应未通过安全校验',
   }),
   network_failed: Object.freeze({
     success: false,
@@ -547,12 +601,29 @@ export const AI_PROVIDER_CONNECTION_RESULTS = Object.freeze({
   }),
 } as const);
 
-export type SafeAiProviderTestResult =
-  (typeof AI_PROVIDER_CONNECTION_RESULTS)[keyof typeof AI_PROVIDER_CONNECTION_RESULTS];
+export type SafeAiProviderTestResult = AiProviderTestResult;
 
-const aiProviderTestResultSchema: z.ZodType<SafeAiProviderTestResult> = z.discriminatedUnion(
-  'code',
-  [
+const aiProviderErrorCodeSchema: z.ZodType<AiProviderErrorCode> = z.enum([
+  'permission_required',
+  'permission_denied',
+  'secret_unavailable',
+  'legacy_ai_config_conflict',
+  'request_invalid',
+  'unauthorized',
+  'forbidden',
+  'rate_limited',
+  'provider_unavailable',
+  'timeout',
+  'aborted',
+  'response_too_large',
+  'content_type_invalid',
+  'response_encoding_invalid',
+  'response_invalid',
+  'network_failed',
+]);
+
+const aiProviderTestResultSchema: z.ZodType<SafeAiProviderTestResult> = z
+  .union([
     z.strictObject({
       success: z.literal(true),
       code: z.literal('connection_ok'),
@@ -560,61 +631,74 @@ const aiProviderTestResultSchema: z.ZodType<SafeAiProviderTestResult> = z.discri
     }),
     z.strictObject({
       success: z.literal(false),
-      code: z.literal('api_key_required'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.api_key_required.message),
+      code: aiProviderErrorCodeSchema,
+      message: boundedText(128, 1),
     }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('base_url_required'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.base_url_required.message),
-    }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('model_required'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.model_required.message),
-    }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('unauthorized'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.unauthorized.message),
-    }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('not_found'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.not_found.message),
-    }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('request_failed'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.request_failed.message),
-    }),
-    z.strictObject({
-      success: z.literal(false),
-      code: z.literal('network_failed'),
-      message: z.literal(AI_PROVIDER_CONNECTION_RESULTS.network_failed.message),
-    }),
-  ],
-);
+  ])
+  .superRefine((value, context) => {
+    const expected =
+      AI_PROVIDER_CONNECTION_RESULTS[value.code as keyof typeof AI_PROVIDER_CONNECTION_RESULTS];
+    if (!expected || value.message !== expected.message || value.success !== expected.success) {
+      context.addIssue({ code: 'custom', message: 'AI result code/message mismatch' });
+    }
+  });
+
+export interface LegacyPendingSummary {
+  present: boolean;
+  count: number | null;
+  approximateBytes: number;
+  state: 'absent' | 'valid' | 'invalid' | 'oversize' | 'unavailable';
+}
+
+const legacyPendingSummarySchema: z.ZodType<LegacyPendingSummary> = z.strictObject({
+  present: z.boolean(),
+  count: z.number().int().min(0).max(20).nullable(),
+  approximateBytes: nonNegativeInteger,
+  state: z.enum(['absent', 'valid', 'invalid', 'oversize', 'unavailable']),
+});
 
 export const LegacyRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('security:getBootstrapStatus') }),
   z.strictObject({ type: z.literal('state:get') }),
   z.strictObject({ type: z.literal('state:summary') }),
   z.strictObject({ type: z.literal('operations:getRecent') }),
-  z.strictObject({ type: z.literal('plan:create'), mode: z.enum(['safe', 'full']) }),
+  z.strictObject({
+    type: z.literal('plan:create'),
+    mode: z.enum(['safe', 'full']),
+    ai: aiConsentSchema.optional(),
+  }),
   z.strictObject({ type: z.literal('settings:get') }),
   z.strictObject({ type: z.literal('settings:set'), settings: appSettingsSchema }),
-  z.strictObject({ type: z.literal('ai:testConnection'), provider: aiProviderSchema }),
+  z.strictObject({
+    type: z.literal('ai:secret:set'),
+    provider: aiProviderTypeSchema,
+    apiKey: z.string().regex(/^[\x21-\x7e]{1,4096}$/),
+  }),
+  z.strictObject({
+    type: z.literal('ai:secret:clear'),
+    provider: aiProviderTypeSchema,
+    confirmed: z.literal(true),
+  }),
+  z.strictObject({
+    type: z.literal('ai:legacy:discard'),
+    confirmed: z.literal(true),
+  }),
+  z.strictObject({ type: z.literal('ai:testConnection'), provider: aiProviderTypeSchema }),
   z.strictObject({ type: z.literal('onboarding:getProgress') }),
   z.strictObject({ type: z.literal('onboarding:set'), onboarded: z.boolean() }),
-  z.strictObject({ type: z.literal('capture:getPending') }),
-  z.strictObject({ type: z.literal('capture:removePending'), id: boundedText(512, 1) }),
-  z.strictObject({ type: z.literal('capture:clearPending') }),
   z.strictObject({
-    type: z.literal('capture:currentSocial'),
-    source: z.enum(['twitter', 'weibo']),
+    type: z.literal('legacyPending:inspect'),
+    requestId: requestIdSchema,
   }),
-  z.strictObject({ type: z.literal('capture:currentArticle') }),
+  z.strictObject({
+    type: z.literal('legacyPending:clear'),
+    requestId: requestIdSchema,
+    confirmed: z.literal(true),
+  }),
+  z.strictObject({
+    type: z.literal('xSingle:start'),
+    requestId: requestIdSchema,
+  }),
   z.strictObject({ type: z.literal('health:clearRecords') }),
   z.strictObject({ type: z.literal('backups:list') }),
 ]);
@@ -629,14 +713,20 @@ export interface LegacySuccessDataByType {
   'plan:create': ClassificationPlan;
   'settings:get': AppSettings;
   'settings:set': AppSettings;
+  'ai:secret:set': AppSettings;
+  'ai:secret:clear': AppSettings;
+  'ai:legacy:discard': AppSettings;
   'ai:testConnection': SafeAiProviderTestResult;
   'onboarding:getProgress': OnboardingProgressState;
   'onboarding:set': { onboarded: boolean };
-  'capture:getPending': CapturedContent[];
-  'capture:removePending': { removed: boolean };
-  'capture:clearPending': { cleared: boolean };
-  'capture:currentSocial': { capture: CapturedContent };
-  'capture:currentArticle': { capture: CapturedContent };
+  'legacyPending:inspect': LegacyPendingSummary;
+  'legacyPending:clear': { cleared: true };
+  'xSingle:start': {
+    jobId: string;
+    status: 'ready_for_review';
+    classification: 'new' | 'existing' | 'changed' | 'incomplete' | 'error';
+    noWriteCandidate: boolean;
+  };
   'health:clearRecords': { cleared: boolean };
   'backups:list': BackupRecord[];
 }
@@ -650,6 +740,11 @@ export const LEGACY_ERROR_MESSAGES = Object.freeze({
   storage_unavailable: 'ShuHai secure storage is unavailable',
   security_bootstrap_failed: 'ShuHai security initialization failed',
   operation_failed: 'ShuHai request failed',
+  x_route_invalid: 'Open an exact X status page and try again',
+  x_tab_changed: 'The X tab changed before capture completed',
+  x_extract_failed: 'The X item could not be extracted safely',
+  x_payload_invalid: 'The extracted X item failed validation',
+  active_x_job_exists: 'Finish or cancel the current X review first',
 } as const);
 
 export type LegacyErrorCode = keyof typeof LEGACY_ERROR_MESSAGES;
@@ -674,6 +769,11 @@ const legacyErrorSchema = z
       LEGACY_ERROR_MESSAGES.storage_unavailable,
       LEGACY_ERROR_MESSAGES.security_bootstrap_failed,
       LEGACY_ERROR_MESSAGES.operation_failed,
+      LEGACY_ERROR_MESSAGES.x_route_invalid,
+      LEGACY_ERROR_MESSAGES.x_tab_changed,
+      LEGACY_ERROR_MESSAGES.x_extract_failed,
+      LEGACY_ERROR_MESSAGES.x_payload_invalid,
+      LEGACY_ERROR_MESSAGES.active_x_job_exists,
     ]),
     errorCode: z.enum([
       'invalid_request',
@@ -682,6 +782,11 @@ const legacyErrorSchema = z
       'storage_unavailable',
       'security_bootstrap_failed',
       'operation_failed',
+      'x_route_invalid',
+      'x_tab_changed',
+      'x_extract_failed',
+      'x_payload_invalid',
+      'active_x_job_exists',
     ]),
   })
   .superRefine((value, context) => {
@@ -700,14 +805,20 @@ const successDataSchemas: Record<ExtensionRequest['type'], z.ZodType> = {
   'plan:create': classificationPlanSchema,
   'settings:get': appSettingsSchema,
   'settings:set': appSettingsSchema,
+  'ai:secret:set': appSettingsSchema,
+  'ai:secret:clear': appSettingsSchema,
+  'ai:legacy:discard': appSettingsSchema,
   'ai:testConnection': aiProviderTestResultSchema,
   'onboarding:getProgress': onboardingProgressSchema,
   'onboarding:set': z.strictObject({ onboarded: z.boolean() }),
-  'capture:getPending': z.array(capturedContentSchema).max(20),
-  'capture:removePending': z.strictObject({ removed: z.boolean() }),
-  'capture:clearPending': z.strictObject({ cleared: z.boolean() }),
-  'capture:currentSocial': z.strictObject({ capture: capturedContentSchema }),
-  'capture:currentArticle': z.strictObject({ capture: capturedContentSchema }),
+  'legacyPending:inspect': legacyPendingSummarySchema,
+  'legacyPending:clear': z.strictObject({ cleared: z.literal(true) }),
+  'xSingle:start': z.strictObject({
+    jobId: boundedText(128, 1),
+    status: z.literal('ready_for_review'),
+    classification: z.enum(['new', 'existing', 'changed', 'incomplete', 'error']),
+    noWriteCandidate: z.boolean(),
+  }),
   'health:clearRecords': z.strictObject({ cleared: z.boolean() }),
   'backups:list': z.array(backupRecordSchema).max(100),
 };
@@ -809,6 +920,7 @@ export const ClassificationPortRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('plan:create'),
     requestId: requestIdSchema,
     mode: z.enum(['safe', 'full']),
+    ai: aiConsentSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('cancel'),

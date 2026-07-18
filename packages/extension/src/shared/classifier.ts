@@ -488,6 +488,10 @@ function isSelectedByDefault(
   suggestion: ClassificationSuggestion,
   mode: ClassificationMode,
 ): boolean {
+  if (suggestion.reason === 'ai') {
+    return false;
+  }
+
   if (suggestion.confidence < 0.6) {
     return false;
   }
@@ -513,7 +517,17 @@ export function generateClassificationPlan(
   let unchanged = 0;
 
   for (const bookmark of bookmarks) {
-    const suggestion = aiById.get(bookmark.id) ?? classifyBookmark(bookmark, customRules, mode);
+    const localSuggestion = classifyBookmark(bookmark, customRules, mode);
+    const aiSuggestion = aiById.get(bookmark.id);
+    const currentFolder = stripRootFolder(bookmark.parentPath);
+    const canUseAiSuggestion =
+      localSuggestion.reason === 'rule' &&
+      localSuggestion.ruleName === 'fallback' &&
+      (currentFolder === '' || currentFolder === '未分类') &&
+      aiSuggestion?.reason === 'ai' &&
+      aiSuggestion.confidence === 0.5 &&
+      existingFolders.has(normalizeFolderPath(aiSuggestion.targetFolder));
+    const suggestion = canUseAiSuggestion ? aiSuggestion : localSuggestion;
     const targetFolder = normalizeFolderPath(suggestion.targetFolder);
 
     if (!shouldMove(bookmark.parentPath, targetFolder)) {

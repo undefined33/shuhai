@@ -22,6 +22,7 @@ import {
   type ExtensionRequest,
   type StructuredInputLimits,
 } from '../src/shared/extension-messages.js';
+import { DEFAULT_SETTINGS } from '../src/utils/storage.js';
 
 const EXTENSION_ID = 'a'.repeat(32);
 const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
@@ -66,41 +67,11 @@ function asciiPayloadAtSerializedBytes(
 }
 
 function settings() {
-  return {
-    useAi: false,
-    activeProviderId: 'deepseek-default',
-    aiProviders: [],
-    customRules: [],
-    templates: [],
-    activeTemplateIds: {},
-    defaultClassifyMode: 'safe' as const,
-    exportDirectory: 'Bookmarks',
-  };
+  return structuredClone(DEFAULT_SETTINGS);
 }
 
 function provider() {
-  return {
-    id: 'provider-deepseek',
-    name: 'DeepSeek',
-    provider: 'deepseek' as const,
-    enabled: true,
-    apiKey: '',
-    baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
-  };
-}
-
-function capture() {
-  return {
-    id: 'capture-1',
-    source: 'article' as const,
-    title: 'Article',
-    url: 'https://example.com/article',
-    text: 'Body',
-    media: [],
-    tags: [],
-    capturedAt: new Date(0).toISOString(),
-  };
+  return 'deepseek' as const;
 }
 
 function densePreparedOperation(operationIndex: number): BookmarkOperation {
@@ -530,14 +501,15 @@ describe('legacy request and response correlation', () => {
     { type: 'plan:create', mode: 'safe' },
     { type: 'settings:get' },
     { type: 'settings:set', settings: settings() },
+    { type: 'ai:secret:set', provider: provider(), apiKey: 'private-key' },
+    { type: 'ai:secret:clear', provider: provider(), confirmed: true },
+    { type: 'ai:legacy:discard', confirmed: true },
     { type: 'ai:testConnection', provider: provider() },
     { type: 'onboarding:getProgress' },
     { type: 'onboarding:set', onboarded: true },
-    { type: 'capture:getPending' },
-    { type: 'capture:removePending', id: 'capture-1' },
-    { type: 'capture:clearPending' },
-    { type: 'capture:currentSocial', source: 'twitter' },
-    { type: 'capture:currentArticle' },
+    { type: 'legacyPending:inspect', requestId: 'legacy-inspect-1' },
+    { type: 'legacyPending:clear', requestId: 'legacy-clear-1', confirmed: true },
+    { type: 'xSingle:start', requestId: 'x-single-start-1' },
     { type: 'health:clearRecords' },
     { type: 'backups:list' },
   ] satisfies unknown[])('accepts the minimal strict request $type', (request) => {
@@ -551,6 +523,15 @@ describe('legacy request and response correlation', () => {
     expect(() =>
       parseExtensionRequest({ type: 'health:retryOne', bookmarkId: 'bookmark-1' }),
     ).toThrow(StructuredInputError);
+    for (const retired of [
+      { type: 'capture:getPending' },
+      { type: 'capture:removePending', id: 'capture-1' },
+      { type: 'capture:clearPending' },
+      { type: 'capture:currentSocial', source: 'twitter' },
+      { type: 'capture:currentArticle' },
+    ]) {
+      expect(() => parseExtensionRequest(retired)).toThrow(StructuredInputError);
+    }
   });
 
   it('requires response data to match the original request', () => {
@@ -574,7 +555,6 @@ describe('legacy request and response correlation', () => {
         folders: [],
         backups: [],
         exportManifests: [],
-        pendingCaptures: [],
         urlHealthRecords: [],
         bookmarkOperations: [],
         lastMoveRecordCount: 0,
@@ -587,7 +567,6 @@ describe('legacy request and response correlation', () => {
       {
         bookmarkCount: 0,
         folderCount: 0,
-        pendingCaptureCount: 0,
         onboarded: false,
         hasVaultHandle: false,
         hasAiProvider: false,
@@ -607,6 +586,9 @@ describe('legacy request and response correlation', () => {
     ],
     [{ type: 'settings:get' }, settings()],
     [{ type: 'settings:set', settings: settings() }, settings()],
+    [{ type: 'ai:secret:set', provider: provider(), apiKey: 'private-key' }, settings()],
+    [{ type: 'ai:secret:clear', provider: provider(), confirmed: true }, settings()],
+    [{ type: 'ai:legacy:discard', confirmed: true }, settings()],
     [
       { type: 'ai:testConnection', provider: provider() },
       { success: true, code: 'connection_ok', message: '连接成功，模型可用' },
@@ -621,11 +603,28 @@ describe('legacy request and response correlation', () => {
       },
     ],
     [{ type: 'onboarding:set', onboarded: true }, { onboarded: true }],
-    [{ type: 'capture:getPending' }, []],
-    [{ type: 'capture:removePending', id: 'capture-1' }, { removed: true }],
-    [{ type: 'capture:clearPending' }, { cleared: true }],
-    [{ type: 'capture:currentSocial', source: 'twitter' }, { capture: capture() }],
-    [{ type: 'capture:currentArticle' }, { capture: capture() }],
+    [
+      { type: 'legacyPending:inspect', requestId: 'legacy-inspect-1' },
+      {
+        present: false,
+        count: 0,
+        approximateBytes: 0,
+        state: 'absent',
+      },
+    ],
+    [
+      { type: 'legacyPending:clear', requestId: 'legacy-clear-1', confirmed: true },
+      { cleared: true },
+    ],
+    [
+      { type: 'xSingle:start', requestId: 'x-single-start-1' },
+      {
+        jobId: 'x-single-job-1',
+        status: 'ready_for_review',
+        classification: 'new',
+        noWriteCandidate: false,
+      },
+    ],
     [{ type: 'health:clearRecords' }, { cleared: true }],
     [{ type: 'backups:list' }, []],
   ] satisfies Array<[unknown, unknown]>)(

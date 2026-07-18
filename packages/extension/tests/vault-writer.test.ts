@@ -209,26 +209,21 @@ describe('vault writer', () => {
     );
   });
 
-  it('writes captured articles under the article folder', async () => {
-    const root = new FakeDirectoryHandle('Vault') as unknown as FileSystemDirectoryHandle;
-    const result = await exportCaptureToVault(root, articleCapture, 'Bookmarks');
-    const snapshot = getStorageSnapshot();
+  it('fails the legacy captured-article writer closed before any file-system call', async () => {
+    const fakeRoot = new FakeDirectoryHandle('Vault');
+    const root = fakeRoot as unknown as FileSystemDirectoryHandle;
 
     expect(buildCaptureExportPath(articleCapture, 'Bookmarks')).toEqual([
       'Bookmarks',
       '文章',
       '深入理解 eBPF.md',
     ]);
-    expect(result.exported).toBe(1);
-    expect(result.files).toEqual(['Bookmarks/文章/深入理解 eBPF.md']);
-    expect(snapshot.exportManifests).toEqual([
-      expect.objectContaining({
-        type: 'capture',
-        sourceLabel: '文章',
-        fileLabels: ['深入理解 eBPF.md'],
-        bookmarkCount: 1,
-      }),
-    ]);
+    await expect(exportCaptureToVault(root, articleCapture, 'Bookmarks')).rejects.toThrow(
+      'legacy_capture_unavailable',
+    );
+    expect(fakeRoot.dirs.size).toBe(0);
+    expect(fakeRoot.files.size).toBe(0);
+    expect(getStorageSnapshot()).not.toHaveProperty('exportManifests');
   });
 
   it('records activity log exports with an activity manifest', async () => {

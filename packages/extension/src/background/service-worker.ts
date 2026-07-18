@@ -1,13 +1,18 @@
-import { AI_BATCH_SIZE } from '@shuhai/shared';
-import { classifyAllWithAi, testAiProviderConnection } from '../shared/ai-classifier.js';
+import {
+  AI_REQUEST_BATCH_SIZE,
+  AiRequestError,
+  classifyAllWithAi,
+  inspectAiClassificationCandidates,
+  testAiProviderConnection,
+} from '../shared/ai-classifier.js';
 import type {
+  AiProviderType,
   BookmarkOperation,
   BookmarkOperationCommand,
   BookmarkOperationCommandResponse,
-  CapturedContent,
+  ClassificationSuggestion,
   ClassificationProgress,
   ClassificationMode,
-  DiagnosticReport,
   ExtensionState,
   StateSummary,
 } from '../shared/bookmark-types.js';
@@ -30,19 +35,21 @@ import {
 } from '../utils/bookmark-operations.js';
 import {
   BookmarkOperationStorageError,
-  clearPendingCapture,
+  clearAiProviderSecret,
+  clearLegacyPendingCapture,
   clearUrlHealthRecords,
+  discardLegacyAiConfiguration,
+  getAiProviderSecretForUse,
   getExportManifests,
   getOnboardingProgress,
-  getPendingCaptures,
   getSettings,
+  inspectLegacyPendingCapture,
   normalizeSettings,
   getOnboarded,
   getBookmarkOperations,
   getUrlHealthRecords,
   ensureTrustedLocalStorageAccess,
-  removePendingCapture,
-  savePendingCapture,
+  setAiProviderSecret,
   saveOnboarded,
   saveSettings,
 } from '../utils/storage.js';
@@ -50,11 +57,12 @@ import type {
   ClassificationPortMessage,
   ClassificationPortRequest,
   ExtensionRequest,
+  LegacyErrorCode,
   LegacyResponse,
-  SafeAiProviderTestResult,
 } from '../shared/extension-messages.js';
 import {
   AI_PROVIDER_CONNECTION_RESULTS,
+  StructuredInputError,
   makeLegacyError,
   parseClassificationPortMessage,
   parseClassificationPortRequest,
@@ -62,7 +70,8 @@ import {
   parseLegacyResponse,
   validateExtensionUiSender,
 } from '../shared/extension-messages.js';
-import { addActivityEntry } from '../utils/activity-log.js';
+import { DEFAULT_PROVIDER_IDS, providerPermission } from '../shared/ai-providers.js';
+import { addXItemReviewActivity } from '../utils/activity-log.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
 import {
@@ -112,17 +121,21 @@ import {
   type XSyncRuntimeProfile,
   type XSyncRuntimePauseReason,
 } from '../social/x-sync-runtime.js';
-
-type SocialCaptureSource = 'twitter' | 'weibo';
-
-interface SocialExtractResponse {
-  ok?: boolean;
-  data?: CapturedContent;
-  error?: string;
-  diagnostic?: DiagnosticReport;
-}
+import {
+  X_SINGLE_EXTRACT_PROTOCOL,
+  X_SINGLE_VERSION,
+  canonicalizeXStatusUrl,
+  createXSingleDiagnostic,
+  createXSingleSyncJob,
+  parseXSingleExtractRequest,
+  parseXSingleExtractResponse,
+  type XSingleExtractRequest,
+  type XSingleExtractResponse,
+  type XStatusIdentity,
+} from '../social/x-single-item.js';
 
 const X_SYNC_CONTENT_FILE = 'content/x-bookmarks.js';
+const X_SINGLE_CONTENT_FILE = 'content/twitter.js';
 const X_SYNC_ORIGIN = 'https://x.com/*';
 const X_SYNC_LEGACY_BROAD_ORIGINS = ['http://*/*', 'https://*/*'] as const;
 const X_SYNC_INITIAL_CANDIDATE_LIMIT = 10;
@@ -141,6 +154,8 @@ interface SecurityBootstrapFailure {
 type SecurityBootstrapResult = SecurityBootstrapSuccess | SecurityBootstrapFailure;
 
 let securityBootstrapExpired = false;
+const activeAiRequestsByPermission = new Map<string, Set<AbortController>>();
+const permissionRevokedAiRequests = new WeakSet<AbortController>();
 
 function assertSecurityBootstrapActive(): void {
   if (securityBootstrapExpired) {
@@ -594,6 +609,59 @@ function containsXPermission(): Promise<boolean> {
       });
     });
   });
+}
+
+function containsProviderPermission(permission: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!chrome.permissions?.contains) {
+      resolve(false);
+      return;
+    }
+    chrome.permissions.contains({ origins: [permission] }, (granted) => {
+      resolve(!chrome.runtime.lastError && granted === true);
+    });
+  });
+}
+
+function trackAiRequest(
+  permission: string,
+  parentSignal?: AbortSignal,
+): { controller: AbortController; cleanup: () => void } {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (parentSignal?.aborted) {
+    controller.abort();
+  } else {
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  const active = activeAiRequestsByPermission.get(permission) ?? new Set<AbortController>();
+  active.add(controller);
+  activeAiRequestsByPermission.set(permission, active);
+
+  return {
+    controller,
+    cleanup: () => {
+      parentSignal?.removeEventListener('abort', abortFromParent);
+      active.delete(controller);
+      if (active.size === 0) {
+        activeAiRequestsByPermission.delete(permission);
+      }
+    },
+  };
+}
+
+function abortAiRequestsForRemovedPermissions(origins: readonly string[]): void {
+  for (const origin of origins) {
+    const active = activeAiRequestsByPermission.get(origin);
+    if (!active) {
+      continue;
+    }
+    for (const controller of active) {
+      permissionRevokedAiRequests.add(controller);
+      controller.abort();
+    }
+  }
 }
 
 async function assertXAccess(tabId: number, windowId: number): Promise<void> {
@@ -1341,7 +1409,6 @@ async function getState(): Promise<ExtensionState> {
   const exportManifests = await getExportManifests();
   const lastMoveRecords = await getLastMoveRecords();
   const settings = await getSettings();
-  const pendingCaptures = await getPendingCaptures();
   const urlHealthRecords = await getUrlHealthRecords();
   const onboarded = await getOnboarded();
 
@@ -1351,7 +1418,6 @@ async function getState(): Promise<ExtensionState> {
     folders: summary.folders,
     backups,
     exportManifests,
-    pendingCaptures,
     urlHealthRecords,
     bookmarkOperations: [],
     lastMoveRecordCount: lastMoveRecords.length,
@@ -1364,19 +1430,15 @@ async function getStateSummary(): Promise<StateSummary> {
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
   const settings = await getSettings();
-  const pendingCaptures = await getPendingCaptures();
   const exportManifests = await getExportManifests();
   const vaultHandle = await getVaultHandle().catch(() => null);
 
   return {
     bookmarkCount: summary.bookmarks.length,
     folderCount: summary.folders.length,
-    pendingCaptureCount: pendingCaptures.length,
     onboarded: await getOnboarded(),
     hasVaultHandle: Boolean(vaultHandle),
-    hasAiProvider: settings.aiProviders.some(
-      (provider) => provider.enabled && provider.apiKey.trim().length > 0,
-    ),
+    hasAiProvider: settings.aiProviders.some((provider) => provider.enabled && provider.hasApiKey),
     lastExportDate: exportManifests[0]?.exportedAt,
   };
 }
@@ -1384,6 +1446,7 @@ async function getStateSummary(): Promise<StateSummary> {
 async function createPlan(
   mode: ClassificationMode,
   options: {
+    aiProvider?: AiProviderType;
     signal?: AbortSignal;
     onProgress?: (progress: ClassificationProgress) => void;
   } = {},
@@ -1397,19 +1460,72 @@ async function createPlan(
     done: 0,
     total,
     batch: 0,
-    totalBatches: Math.ceil(total / AI_BATCH_SIZE),
+    totalBatches: options.aiProvider ? Math.ceil(total / AI_REQUEST_BATCH_SIZE) : 0,
     elapsedMs: 0,
   };
 
   options.onProgress?.(initialProgress);
-  const aiSuggestions = await classifyAllWithAi(summary.bookmarks, settings, {
-    mode,
-    folders: summary.folders,
-    signal: options.signal,
-    onProgress: (_done, _total, _batch, _totalBatches, progress) => {
-      options.onProgress?.(progress);
-    },
-  });
+  let aiSuggestions: ClassificationSuggestion[] = [];
+  if (options.aiProvider) {
+    const activeProvider = settings.aiProviders.find(
+      (provider) => provider.id === settings.activeProviderId && provider.enabled,
+    );
+    const legacyConflict =
+      settings.aiLegacySummary.builtInConflicts.includes(options.aiProvider) ||
+      settings.aiLegacySummary.customState === 'conflict_has_key';
+    const aiUnavailable =
+      !settings.useAi || !activeProvider?.hasApiKey || legacyConflict || !activeProvider;
+
+    if (
+      !aiUnavailable &&
+      (activeProvider.provider !== options.aiProvider ||
+        settings.activeProviderId !== DEFAULT_PROVIDER_IDS[options.aiProvider])
+    ) {
+      throw new Error('request_invalid');
+    }
+
+    if (!aiUnavailable) {
+      if (options.signal?.aborted) {
+        throw new AiRequestError('aborted');
+      }
+      const candidateInspection = inspectAiClassificationCandidates(summary.bookmarks, settings, {
+        mode,
+        folders: summary.folders,
+      });
+      const permission = providerPermission(options.aiProvider);
+      if (
+        !candidateInspection.errorCode &&
+        candidateInspection.count > 0 &&
+        (await containsProviderPermission(permission))
+      ) {
+        const tracked = trackAiRequest(permission, options.signal);
+        try {
+          const secret = await getAiProviderSecretForUse(options.aiProvider);
+          aiSuggestions = await classifyAllWithAi(summary.bookmarks, settings, {
+            mode,
+            folders: summary.folders,
+            secret,
+            permissionChecker: containsProviderPermission,
+            signal: tracked.controller.signal,
+            onProgress: (_done, _total, _batch, _totalBatches, progress) => {
+              options.onProgress?.(progress);
+            },
+          });
+        } catch (error) {
+          const permissionUnavailable =
+            error instanceof AiRequestError &&
+            (error.code === 'permission_required' ||
+              (error.code === 'aborted' && permissionRevokedAiRequests.has(tracked.controller)));
+          if (!permissionUnavailable) {
+            throw error;
+          }
+          aiSuggestions = [];
+        } finally {
+          tracked.cleanup();
+        }
+      }
+    }
+  }
   const elapsedMs = Date.now() - startedAt;
 
   const plan = generateClassificationPlan(
@@ -1424,198 +1540,14 @@ async function createPlan(
     options.onProgress?.({
       done: total,
       total,
-      batch: Math.ceil(total / AI_BATCH_SIZE),
-      totalBatches: Math.ceil(total / AI_BATCH_SIZE),
+      batch: options.aiProvider ? Math.ceil(total / AI_REQUEST_BATCH_SIZE) : 0,
+      totalBatches: options.aiProvider ? Math.ceil(total / AI_REQUEST_BATCH_SIZE) : 0,
       elapsedMs,
       remainingMs: 0,
     });
   }
 
   return plan;
-}
-
-function openSidePanelForTab(tab: chrome.tabs.Tab | undefined): Promise<void | undefined> {
-  const windowId = tab?.windowId;
-  if (typeof windowId === 'number' && chrome.sidePanel?.open) {
-    return chrome.sidePanel.open({ windowId }).catch(() => undefined);
-  }
-
-  return Promise.resolve(undefined);
-}
-
-async function storeCapture(
-  capture: CapturedContent | undefined,
-  tab?: chrome.tabs.Tab,
-): Promise<CapturedContent | undefined> {
-  if (!capture) {
-    return undefined;
-  }
-
-  await savePendingCapture(capture);
-  await addActivityEntry({
-    type: 'capture_save',
-    summary: `保存了「${capture.title}」(${capture.source})`,
-    details: [{ label: capture.title, meta: capture.url }],
-  });
-  await openSidePanelForTab(tab);
-  await showTabToast(tab, '已提取到 ShuHai · 打开侧边栏写入 Vault →', 'success');
-
-  return capture;
-}
-
-async function showTabToast(
-  tab: chrome.tabs.Tab | undefined,
-  message: string,
-  kind: 'success' | 'error' | 'info' = 'success',
-): Promise<void> {
-  const tabId = tab?.id;
-  if (typeof tabId !== 'number') {
-    return;
-  }
-
-  const payload = { type: 'toast:show', message, kind };
-
-  try {
-    await chrome.tabs.sendMessage(tabId, payload);
-    return;
-  } catch {
-    // The toast listener is injected lazily so ordinary pages stay untouched.
-  }
-
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content/toast.js'],
-    });
-    await chrome.tabs.sendMessage(tabId, payload);
-  } catch {
-    // Toast is best-effort feedback; capture success should not fail because of it.
-  }
-}
-
-function socialDetailMessage(source: SocialCaptureSource): string {
-  return source === 'twitter'
-    ? '请先打开一条推文的详情页（点击推文进入）'
-    : '请先打开一条微博的详情页';
-}
-
-function matchesSocialSource(tabUrl: string | undefined, source: SocialCaptureSource): boolean {
-  if (!tabUrl) {
-    return false;
-  }
-
-  try {
-    const url = new URL(tabUrl);
-    if (source === 'twitter') {
-      return (
-        (url.hostname === 'x.com' ||
-          url.hostname.endsWith('.x.com') ||
-          url.hostname === 'twitter.com' ||
-          url.hostname.endsWith('.twitter.com')) &&
-        /\/[^/]+\/status\/\d+/.test(url.pathname)
-      );
-    }
-
-    return (
-      (url.hostname === 'weibo.com' ||
-        url.hostname.endsWith('.weibo.com') ||
-        url.hostname === 'm.weibo.cn') &&
-      (/\/detail\/[^/?#]+/.test(url.pathname) || /\/status\/[^/?#]+/.test(url.pathname))
-    );
-  } catch {
-    return false;
-  }
-}
-
-function contentScriptFileForSource(source: SocialCaptureSource): string {
-  return source === 'twitter' ? 'content/twitter.js' : 'content/weibo.js';
-}
-
-function sendSocialExtractMessage(
-  tabId: number,
-  source: SocialCaptureSource,
-): Promise<SocialExtractResponse> {
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(
-      tabId,
-      { type: 'social:extract', source },
-      (response: SocialExtractResponse | undefined) => {
-        const error = chrome.runtime.lastError?.message;
-        if (error) {
-          reject(new Error(error));
-          return;
-        }
-
-        resolve(response ?? { ok: false, error: '页面结构可能已更新，提取失败。请反馈此问题。' });
-      },
-    );
-  });
-}
-
-async function executeSocialExtractor(tabId: number, source: SocialCaptureSource): Promise<void> {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: [contentScriptFileForSource(source)],
-  });
-}
-
-async function extractSocialCapture(
-  tab: chrome.tabs.Tab | undefined,
-  source: SocialCaptureSource,
-): Promise<CapturedContent> {
-  const tabId = tab?.id;
-  if (typeof tabId !== 'number') {
-    throw new Error('无法识别当前标签页');
-  }
-
-  if (!matchesSocialSource(tab?.url, source)) {
-    throw new Error(socialDetailMessage(source));
-  }
-
-  let response: SocialExtractResponse;
-  try {
-    response = await sendSocialExtractMessage(tabId, source);
-  } catch {
-    await executeSocialExtractor(tabId, source);
-    response = await sendSocialExtractMessage(tabId, source);
-  }
-
-  if (!response.ok || !response.data) {
-    if (response.diagnostic) {
-      await saveExtractorDiagnostic(response.diagnostic);
-    }
-    throw new Error(response.error ?? '页面结构可能已更新，提取失败。请反馈此问题。');
-  }
-
-  if (!response.data.text.trim()) {
-    if (response.diagnostic) {
-      await saveExtractorDiagnostic({
-        ...response.diagnostic,
-        error: '页面可能未完全加载，请等待内容显示后重试。',
-      });
-    }
-    throw new Error('页面结构可能已更新，提取失败。请反馈此问题。');
-  }
-
-  if (response.diagnostic) {
-    await saveExtractorDiagnostic(response.diagnostic);
-  }
-
-  return response.data;
-}
-
-async function captureSocialFromTab(
-  tab: chrome.tabs.Tab | undefined,
-  source: SocialCaptureSource,
-): Promise<CapturedContent> {
-  const capture = await extractSocialCapture(tab, source);
-  await storeCapture(capture, tab);
-
-  return capture;
-}
-
-function requestCapture(tab: chrome.tabs.Tab | undefined, source: SocialCaptureSource): void {
-  void captureSocialFromTab(tab, source).catch(() => undefined);
 }
 
 function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -1632,90 +1564,163 @@ function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
   });
 }
 
-async function captureCurrentSocial(
-  source: SocialCaptureSource,
-): Promise<{ capture: CapturedContent }> {
-  const capture = await captureSocialFromTab(await getActiveTab(), source);
-  return { capture };
+class XSingleServiceError extends Error {
+  constructor(readonly code: LegacyErrorCode) {
+    super(code);
+    this.name = 'XSingleServiceError';
+  }
 }
 
-async function executeArticleExtractor(tabId: number): Promise<CapturedContent> {
-  const injected = await new Promise<boolean>((resolve) => {
-    chrome.tabs.sendMessage(
-      tabId,
-      { type: 'article:ping' },
-      (response: { ok?: boolean } | undefined) => {
-        resolve(!chrome.runtime.lastError && response?.ok === true);
-      },
-    );
+function getTabById(tabId: number): Promise<chrome.tabs.Tab> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        reject(new XSingleServiceError('x_tab_changed'));
+        return;
+      }
+      resolve(tab);
+    });
   });
+}
 
-  if (!injected) {
+function createXSingleRequest(identity: XStatusIdentity): XSingleExtractRequest {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (!randomId) {
+    throw new XSingleServiceError('x_payload_invalid');
+  }
+  return parseXSingleExtractRequest({
+    protocol: X_SINGLE_EXTRACT_PROTOCOL,
+    version: X_SINGLE_VERSION,
+    type: 'xSingle:extract',
+    requestId: `xsingle:${randomId}`,
+    canonicalUrl: identity.canonicalUrl,
+    sourceItemId: identity.sourceItemId,
+  });
+}
+
+function sendXSingleExtractMessage(
+  tabId: number,
+  request: XSingleExtractRequest,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, request, (response: unknown) => {
+      if (chrome.runtime.lastError) {
+        reject(new XSingleServiceError('x_extract_failed'));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function saveXPayloadDiagnostic(errorCode: 'payload_invalid' | 'payload_oversize') {
+  await saveExtractorDiagnostic(
+    createXSingleDiagnostic(errorCode, [
+      { name: 'primary_article', found: false },
+      { name: 'status_permalink', found: false },
+      { name: 'tweet_text', found: false },
+      { name: 'author', found: false },
+      { name: 'timestamp', found: false },
+    ]),
+  ).catch(() => undefined);
+}
+
+async function extractXSingleItem(
+  tabId: number,
+  identity: XStatusIdentity,
+): Promise<XSingleExtractResponse> {
+  const request = createXSingleRequest(identity);
+  try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['content/article.js'],
+      files: [X_SINGLE_CONTENT_FILE],
+      world: 'ISOLATED',
     });
+  } catch {
+    throw new XSingleServiceError('x_extract_failed');
   }
 
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(
-      tabId,
-      { type: 'article:extract' },
-      (response: { ok?: boolean; data?: CapturedContent; error?: string } | undefined) => {
-        const runtimeError = chrome.runtime.lastError?.message;
-        if (runtimeError) {
-          reject(new Error(runtimeError));
-          return;
-        }
+  let rawResponse: unknown;
+  try {
+    rawResponse = await sendXSingleExtractMessage(tabId, request);
+  } catch (error) {
+    if (error instanceof XSingleServiceError) {
+      throw error;
+    }
+    throw new XSingleServiceError('x_extract_failed');
+  }
 
-        if (!response?.ok || !response.data) {
-          reject(new Error(response?.error ?? '无法提取当前页面正文'));
-          return;
-        }
-
-        resolve(response.data);
-      },
-    );
-  });
+  let response: XSingleExtractResponse;
+  try {
+    response = parseXSingleExtractResponse(rawResponse);
+  } catch (error) {
+    const diagnosticCode =
+      error instanceof StructuredInputError &&
+      (error.code === 'message_too_large' || error.code === 'string_too_large')
+        ? 'payload_oversize'
+        : 'payload_invalid';
+    await saveXPayloadDiagnostic(diagnosticCode);
+    throw new XSingleServiceError('x_payload_invalid');
+  }
+  if (response.requestId !== request.requestId) {
+    await saveXPayloadDiagnostic('payload_invalid');
+    throw new XSingleServiceError('x_payload_invalid');
+  }
+  if (!response.ok) {
+    await saveExtractorDiagnostic(response.diagnostic).catch(() => undefined);
+    throw new XSingleServiceError('x_extract_failed');
+  }
+  return response;
 }
 
-function requestArticleCapture(tab: chrome.tabs.Tab | undefined): void {
-  const tabId = tab?.id;
-  if (typeof tabId !== 'number') {
-    return;
+async function startXSingleCapture(): Promise<{
+  jobId: string;
+  status: 'ready_for_review';
+  classification: 'new' | 'existing' | 'changed' | 'incomplete' | 'error';
+  noWriteCandidate: boolean;
+}> {
+  const initialTab = await getActiveTab();
+  const tabId = initialTab?.id;
+  const identity = canonicalizeXStatusUrl(initialTab?.url);
+  if (typeof tabId !== 'number' || !identity) {
+    throw new XSingleServiceError('x_route_invalid');
   }
 
-  void executeArticleExtractor(tabId)
-    .then((capture) => storeCapture(capture, tab))
-    .catch(() => undefined);
-}
-
-function sanitizeAiProviderTestResult(
-  result: Awaited<ReturnType<typeof testAiProviderConnection>>,
-): SafeAiProviderTestResult {
-  if (result.success) {
-    return AI_PROVIDER_CONNECTION_RESULTS.connection_ok;
+  const response = await extractXSingleItem(tabId, identity);
+  if (!response.ok) {
+    throw new XSingleServiceError('x_extract_failed');
+  }
+  const currentTab = await getTabById(tabId);
+  const currentIdentity = canonicalizeXStatusUrl(currentTab.url);
+  if (
+    !currentIdentity ||
+    currentIdentity.canonicalUrl !== identity.canonicalUrl ||
+    currentIdentity.sourceItemId !== identity.sourceItemId
+  ) {
+    throw new XSingleServiceError('x_tab_changed');
   }
 
-  if (result.message === '请先填写 API Key') {
-    return AI_PROVIDER_CONNECTION_RESULTS.api_key_required;
+  const store = await openSyncStore();
+  try {
+    const result = await createXSingleSyncJob(store, response.item, identity);
+    await addXItemReviewActivity(
+      result.classification,
+      result.noWriteCandidate ? 'no_write' : 'review_ready',
+    ).catch(() => undefined);
+    return {
+      jobId: result.job.id,
+      status: 'ready_for_review',
+      classification: result.classification,
+      noWriteCandidate: result.noWriteCandidate,
+    };
+  } catch (error) {
+    if (error instanceof ActiveSyncJobExistsError) {
+      throw new XSingleServiceError('active_x_job_exists');
+    }
+    throw error;
+  } finally {
+    store.close();
   }
-  if (result.message === '请先填写 API 地址') {
-    return AI_PROVIDER_CONNECTION_RESULTS.base_url_required;
-  }
-  if (result.message === '请先填写模型名称') {
-    return AI_PROVIDER_CONNECTION_RESULTS.model_required;
-  }
-  if (result.status === 401) {
-    return AI_PROVIDER_CONNECTION_RESULTS.unauthorized;
-  }
-  if (result.status === 404) {
-    return AI_PROVIDER_CONNECTION_RESULTS.not_found;
-  }
-  if (result.status !== undefined) {
-    return AI_PROVIDER_CONNECTION_RESULTS.request_failed;
-  }
-  return AI_PROVIDER_CONNECTION_RESULTS.network_failed;
 }
 
 async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown> {
@@ -1729,19 +1734,60 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
     case 'operations:getRecent':
       return { ok: true, data: { operations: await getBookmarkOperations() } };
     case 'plan:create':
-      return { ok: true, data: await createPlan(request.mode) };
+      return {
+        ok: true,
+        data: await createPlan(request.mode, { aiProvider: request.ai?.provider }),
+      };
     case 'settings:get':
       return { ok: true, data: await getSettings() };
     case 'settings:set': {
       const settings = normalizeSettings(request.settings);
       await saveSettings(settings);
-      return { ok: true, data: settings };
+      return { ok: true, data: await getSettings() };
     }
-    case 'ai:testConnection':
-      return {
-        ok: true,
-        data: sanitizeAiProviderTestResult(await testAiProviderConnection(request.provider)),
-      };
+    case 'ai:secret:set':
+      await setAiProviderSecret(request.provider, request.apiKey);
+      return { ok: true, data: await getSettings() };
+    case 'ai:secret:clear':
+      await clearAiProviderSecret(request.provider);
+      return { ok: true, data: await getSettings() };
+    case 'ai:legacy:discard':
+      return { ok: true, data: await discardLegacyAiConfiguration() };
+    case 'ai:testConnection': {
+      const settings = await getSettings();
+      if (
+        settings.aiLegacySummary.builtInConflicts.includes(request.provider) ||
+        settings.aiLegacySummary.customState === 'conflict_has_key'
+      ) {
+        return {
+          ok: true,
+          data: AI_PROVIDER_CONNECTION_RESULTS.legacy_ai_config_conflict,
+        };
+      }
+      const provider = settings.aiProviders.find(
+        (candidate) => candidate.provider === request.provider,
+      );
+      if (!provider) {
+        throw new Error('request_invalid');
+      }
+      const permission = providerPermission(request.provider);
+      const tracked = trackAiRequest(permission);
+      try {
+        return {
+          ok: true,
+          data: await testAiProviderConnection(
+            provider,
+            await getAiProviderSecretForUse(request.provider),
+            {
+              permissionChecker: containsProviderPermission,
+              signal: tracked.controller.signal,
+            },
+          ),
+        };
+      } finally {
+        tracked.cleanup();
+      }
+    }
     case 'onboarding:getProgress':
       return {
         ok: true,
@@ -1755,29 +1801,13 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
     case 'onboarding:set':
       await saveOnboarded(request.onboarded);
       return { ok: true, data: { onboarded: request.onboarded } };
-    case 'capture:getPending':
-      return { ok: true, data: await getPendingCaptures() };
-    case 'capture:currentSocial':
-      return { ok: true, data: await captureCurrentSocial(request.source) };
-    case 'capture:currentArticle': {
-      const tab = await getActiveTab();
-      if (typeof tab?.id !== 'number') {
-        throw new Error('capture_failed');
-      }
-
-      const capture = await executeArticleExtractor(tab.id);
-      const stored = await storeCapture(capture, tab);
-      if (!stored) {
-        throw new Error('capture_failed');
-      }
-
-      return { ok: true, data: { capture: stored } };
-    }
-    case 'capture:removePending':
-      return { ok: true, data: { removed: await removePendingCapture(request.id) } };
-    case 'capture:clearPending':
-      await clearPendingCapture();
+    case 'legacyPending:inspect':
+      return { ok: true, data: await inspectLegacyPendingCapture() };
+    case 'legacyPending:clear':
+      await clearLegacyPendingCapture();
       return { ok: true, data: { cleared: true } };
+    case 'xSingle:start':
+      return { ok: true, data: await startXSingleCapture() };
     case 'health:clearRecords':
       await clearUrlHealthRecords();
       return { ok: true, data: { cleared: true } };
@@ -1820,7 +1850,10 @@ async function handleLegacyMessage(
 
   try {
     return validatedLegacyResponse(request, await executeLegacyRequest(request));
-  } catch {
+  } catch (error) {
+    if (error instanceof XSingleServiceError) {
+      return makeLegacyError(error.code);
+    }
     return makeLegacyError('operation_failed');
   }
 }
@@ -2074,6 +2107,7 @@ function handleClassificationPort(port: chrome.runtime.Port): void {
       const requestController = controller;
       try {
         const plan = await createPlan(request.mode, {
+          aiProvider: request.ai?.provider,
           signal: requestController.signal,
           onProgress: (progress) => {
             if (activeRequestId !== request.requestId) {
@@ -2140,23 +2174,6 @@ chrome.runtime.onInstalled.addListener(() => {
         title: '打开 ShuHai 侧边栏',
         contexts: ['action'],
       });
-      chrome.contextMenus.create({
-        id: 'shuhai-save-article',
-        title: '提取文章正文到 ShuHai',
-        contexts: ['page', 'selection'],
-      });
-      chrome.contextMenus.create({
-        id: 'shuhai-save-tweet',
-        title: '提取推文正文到 ShuHai',
-        contexts: ['page'],
-        documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
-      });
-      chrome.contextMenus.create({
-        id: 'shuhai-save-weibo',
-        title: '提取微博正文到 ShuHai',
-        contexts: ['page'],
-        documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
-      });
     });
   });
 });
@@ -2214,7 +2231,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.permissions.onRemoved.addListener((permissions) => {
-  if (permissions.origins?.includes(X_SYNC_ORIGIN)) {
+  const origins = permissions.origins ?? [];
+  abortAiRequestsForRemovedPermissions(origins);
+  if (origins.includes(X_SYNC_ORIGIN)) {
     activeXSyncRun?.adapter.requestPause('permission_revoked');
   }
 });
@@ -2231,20 +2250,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         void chrome.sidePanel.open({ windowId }).catch(() => undefined);
       }
       return;
-    }
-
-    if (info.menuItemId === 'shuhai-save-tweet') {
-      requestCapture(tab, 'twitter');
-      return;
-    }
-
-    if (info.menuItemId === 'shuhai-save-weibo') {
-      requestCapture(tab, 'weibo');
-      return;
-    }
-
-    if (info.menuItemId === 'shuhai-save-article') {
-      requestArticleCapture(tab);
     }
   });
 });

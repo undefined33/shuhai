@@ -4,6 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { X_SYNC_BOOKMARKS_URL, X_SYNC_PROTOCOL } from '../src/social/x-sync-messages.js';
 import { openSyncStore } from '../src/social/sync-store.js';
+import {
+  X_SINGLE_PROTOCOL,
+  X_SINGLE_RESPONSE_PROTOCOL,
+  X_SINGLE_VERSION,
+  type XSingleExtractRequest,
+} from '../src/social/x-single-item.js';
 
 const EXTENSION_ID = 'a'.repeat(32);
 const POPUP_URL = `chrome-extension://${EXTENSION_ID}/popup/index.html`;
@@ -19,9 +25,14 @@ type ConnectListener = (port: chrome.runtime.Port) => void;
 
 interface ChromeHarness {
   readonly chrome: typeof chrome;
+  readonly local: Record<string, unknown>;
   readonly session: Record<string, unknown>;
   readonly executeScript: ReturnType<typeof vi.fn>;
+  readonly openSidePanel: ReturnType<typeof vi.fn>;
+  readonly sendMessage: ReturnType<typeof vi.fn>;
   readonly queries: chrome.tabs.QueryInfo[];
+  emitContextMenuClick(menuItemId: string): void;
+  emitInstalled(): void;
   getConnectListener(): ConnectListener;
   getMessageListener(): MessageListener;
   emitPermissionRemoved(): void;
@@ -90,24 +101,73 @@ function xBookmarksTab(overrides: Partial<chrome.tabs.Tab> = {}): chrome.tabs.Ta
   };
 }
 
+function xStatusTab(overrides: Partial<chrome.tabs.Tab> = {}): chrome.tabs.Tab {
+  return xBookmarksTab({
+    title: 'Fixture X status',
+    url: 'https://x.com/alice/status/123456789?source=fixture#reply',
+    ...overrides,
+  });
+}
+
+function xSingleResponse(
+  request: XSingleExtractRequest,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    protocol: X_SINGLE_RESPONSE_PROTOCOL,
+    version: X_SINGLE_VERSION,
+    requestId: request.requestId,
+    ok: true,
+    item: {
+      protocol: X_SINGLE_PROTOCOL,
+      version: X_SINGLE_VERSION,
+      routeFamily: 'x/status',
+      sourceItemId: request.sourceItemId,
+      canonicalUrl: request.canonicalUrl,
+      title: 'Fixture X item',
+      text: 'Fixture body',
+      author: {
+        displayName: 'Fixture Author',
+        handle: 'alice',
+      },
+      publishedAt: '2026-07-18T00:00:00.000Z',
+      media: [],
+      contentKind: 'post',
+    },
+    ...overrides,
+  };
+}
+
 function createChromeHarness(): ChromeHarness {
   let connectListener: ConnectListener | undefined;
+  let contextMenuClickListener:
+    | ((info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => void)
+    | undefined;
+  let installedListener: ((details: chrome.runtime.InstalledDetails) => void) | undefined;
   let messageListener: MessageListener | undefined;
   let permissionRemovedListener:
     | ((permissions: chrome.permissions.Permissions) => void)
     | undefined;
   let activeTab = xBookmarksTab({ title: 'Fixture bookmarks' });
   let permissionOrigins: string[] = [];
+  const local: Record<string, unknown> = {};
   const session: Record<string, unknown> = {};
   const queries: chrome.tabs.QueryInfo[] = [];
   const executeScript = vi.fn(async () => [
     { frameId: 0, documentId: 'document-fixture', result: undefined },
   ]);
+  const openSidePanel = vi.fn(async () => undefined);
+  const sendMessage = vi.fn();
   const runtime = {
     id: EXTENSION_ID,
     lastError: undefined,
     getURL: (path: string) => `chrome-extension://${EXTENSION_ID}${path}`,
-    onInstalled: event(),
+    onInstalled: {
+      addListener: vi.fn((listener: (details: chrome.runtime.InstalledDetails) => void) => {
+        installedListener = listener;
+      }),
+      removeListener: vi.fn(),
+    },
     onConnect: {
       addListener: vi.fn((listener: ConnectListener) => {
         connectListener = listener;
@@ -125,9 +185,58 @@ function createChromeHarness(): ChromeHarness {
     runtime,
     storage: {
       local: {
-        get: vi.fn(),
-        remove: vi.fn(),
-        set: vi.fn(),
+        get: vi.fn(
+          (
+            keys: string | string[] | Record<string, unknown> | null,
+            callback: (items: Record<string, unknown>) => void,
+          ) => {
+            if (keys === null) {
+              callback(structuredClone(local));
+              return;
+            }
+            const requested = typeof keys === 'string' ? [keys] : keys;
+            if (Array.isArray(requested)) {
+              callback(
+                Object.fromEntries(
+                  requested
+                    .filter((key) => Object.prototype.hasOwnProperty.call(local, key))
+                    .map((key) => [key, structuredClone(local[key])]),
+                ),
+              );
+              return;
+            }
+            callback({
+              ...structuredClone(requested),
+              ...Object.fromEntries(
+                Object.keys(requested)
+                  .filter((key) => Object.prototype.hasOwnProperty.call(local, key))
+                  .map((key) => [key, structuredClone(local[key])]),
+              ),
+            });
+          },
+        ),
+        getBytesInUse: vi.fn(
+          (keys: string | string[] | null, callback: (bytesInUse: number) => void) => {
+            const requested =
+              keys === null ? Object.keys(local) : typeof keys === 'string' ? [keys] : keys;
+            const selected = Object.fromEntries(
+              requested
+                .filter((key) => Object.prototype.hasOwnProperty.call(local, key))
+                .map((key) => [key, local[key]]),
+            );
+            callback(new TextEncoder().encode(JSON.stringify(selected)).byteLength);
+          },
+        ),
+        remove: vi.fn((keys: string | string[], callback?: () => void) => {
+          for (const key of typeof keys === 'string' ? [keys] : keys) {
+            delete local[key];
+          }
+          callback?.();
+        }),
+        set: vi.fn((items: Record<string, unknown>, callback?: () => void) => {
+          Object.assign(local, structuredClone(items));
+          callback?.();
+        }),
         setAccessLevel: vi.fn(
           (_options: { accessLevel: 'TRUSTED_CONTEXTS' }, callback: () => void) => callback(),
         ),
@@ -156,7 +265,7 @@ function createChromeHarness(): ChromeHarness {
       get: (_tabId: number, callback: (tab: chrome.tabs.Tab) => void) => {
         callback(activeTab);
       },
-      sendMessage: vi.fn(),
+      sendMessage,
       onUpdated: event(),
       onActivated: event(),
       onRemoved: event(),
@@ -192,18 +301,44 @@ function createChromeHarness(): ChromeHarness {
       },
     },
     contextMenus: {
-      onClicked: event(),
-      removeAll: vi.fn(),
+      onClicked: {
+        addListener: vi.fn(
+          (listener: (info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab) => void) => {
+            contextMenuClickListener = listener;
+          },
+        ),
+        removeListener: vi.fn(),
+      },
+      removeAll: vi.fn((callback?: () => void) => callback?.()),
       create: vi.fn(),
     },
-    sidePanel: {},
+    sidePanel: {
+      open: openSidePanel,
+      setPanelBehavior: vi.fn(async () => undefined),
+    },
   } as unknown as typeof chrome;
 
   return {
     chrome: chromeMock,
+    local,
     session,
     executeScript,
+    openSidePanel,
+    sendMessage,
     queries,
+    emitContextMenuClick: (menuItemId) => {
+      contextMenuClickListener?.(
+        { menuItemId, editable: false, pageUrl: activeTab.url },
+        activeTab,
+      );
+    },
+    emitInstalled: () => {
+      installedListener?.({
+        id: EXTENSION_ID,
+        reason: 'install',
+        previousVersion: undefined,
+      });
+    },
     emitPermissionRemoved: () => {
       permissionRemovedListener?.({ origins: ['https://x.com/*'] });
     },
@@ -294,6 +429,257 @@ describe('X sync service worker route', () => {
       ok: false,
       error: { code: 'invalid_message' },
     });
+  });
+
+  it('installs only the open-workspace menu and ignores retired capture menu IDs', async () => {
+    const harness = createChromeHarness();
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    harness.emitInstalled();
+    await vi.waitFor(() => {
+      expect(harness.chrome.contextMenus.create).toHaveBeenCalledOnce();
+    });
+    expect(harness.chrome.contextMenus.create).toHaveBeenCalledWith({
+      id: 'shuhai-open',
+      title: '打开 ShuHai 侧边栏',
+      contexts: ['action'],
+    });
+
+    harness.emitContextMenuClick('shuhai-save-current-article');
+    await Promise.resolve();
+    expect(harness.openSidePanel).not.toHaveBeenCalled();
+
+    harness.emitContextMenuClick('shuhai-open');
+    await vi.waitFor(() => {
+      expect(harness.openSidePanel).toHaveBeenCalledWith({ windowId: 4 });
+    });
+  });
+
+  it('creates one persisted X review job through the strict single-item route', async () => {
+    const harness = createChromeHarness();
+    harness.setActiveTab(xStatusTab());
+    harness.sendMessage.mockImplementation(
+      (_tabId: number, request: XSingleExtractRequest, callback: (response: unknown) => void) =>
+        callback(xSingleResponse(request)),
+    );
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-success' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        status: 'ready_for_review',
+        classification: 'new',
+        noWriteCandidate: false,
+      },
+    });
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 17 },
+      files: ['content/twitter.js'],
+      world: 'ISOLATED',
+    });
+    expect(harness.sendMessage).toHaveBeenCalledTimes(1);
+    const store = await openSyncStore();
+    try {
+      const jobs = await store.listJobs({ source: 'x' });
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({
+        source: 'x',
+        status: 'ready_for_review',
+        scanMode: 'incremental',
+      });
+      await expect(store.listJobItems(jobs[0].id)).resolves.toHaveLength(1);
+    } finally {
+      store.close();
+    }
+    expect(JSON.stringify(harness.local)).not.toContain('Fixture X item');
+    expect(JSON.stringify(harness.local)).not.toContain('Fixture body');
+    expect(JSON.stringify(harness.local)).not.toContain('/alice/status/');
+  });
+
+  it('returns the persisted X review job when the optional activity log is corrupt', async () => {
+    const harness = createChromeHarness();
+    harness.local.activityLog = [{ privateTitle: 'must-not-be-read-or-rewritten' }];
+    harness.setActiveTab(xStatusTab());
+    harness.sendMessage.mockImplementation(
+      (_tabId: number, request: XSingleExtractRequest, callback: (response: unknown) => void) =>
+        callback(xSingleResponse(request)),
+    );
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-corrupt-activity' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        status: 'ready_for_review',
+        classification: 'new',
+        noWriteCandidate: false,
+      },
+    });
+    expect(harness.local.activityLog).toEqual([{ privateTitle: 'must-not-be-read-or-rewritten' }]);
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rejects a non-status active tab before injection or persistence', async () => {
+    const harness = createChromeHarness();
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-wrong-route' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'x_route_invalid' });
+    expect(harness.executeScript).not.toHaveBeenCalled();
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('fails closed if activeTab injection access disappears before extraction', async () => {
+    const harness = createChromeHarness();
+    harness.setActiveTab(xStatusTab());
+    harness.executeScript.mockRejectedValueOnce(new Error('permission revoked'));
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-access-revoked' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'x_extract_failed' });
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rejects a response nonce mismatch before creating a job', async () => {
+    const harness = createChromeHarness();
+    harness.setActiveTab(xStatusTab());
+    harness.sendMessage.mockImplementation(
+      (_tabId: number, request: XSingleExtractRequest, callback: (response: unknown) => void) =>
+        callback(xSingleResponse(request, { requestId: 'xsingle:forged-response' })),
+    );
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-forged-response' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'x_payload_invalid' });
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toEqual([]);
+    } finally {
+      store.close();
+    }
+    expect(JSON.stringify(harness.local)).not.toContain('forged-response');
+  });
+
+  it('rejects an oversized content response and stores only a fixed diagnostic', async () => {
+    const harness = createChromeHarness();
+    harness.setActiveTab(xStatusTab());
+    harness.sendMessage.mockImplementation(
+      (_tabId: number, request: XSingleExtractRequest, callback: (response: unknown) => void) => {
+        const response = xSingleResponse(request);
+        const item = response.item as Record<string, unknown>;
+        callback({
+          ...response,
+          item: {
+            ...item,
+            text: 'private-body'.repeat(1_500),
+          },
+        });
+      },
+    );
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-oversized-response' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'x_payload_invalid' });
+    expect(harness.local).toMatchObject({
+      extractorDiagnostics: [
+        expect.objectContaining({
+          platform: 'x',
+          routeFamily: 'x/status',
+          errorCode: 'payload_oversize',
+        }),
+      ],
+    });
+    expect(JSON.stringify(harness.local)).not.toContain('private-body');
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rechecks the original tab identity after extraction and before persistence', async () => {
+    const harness = createChromeHarness();
+    harness.setActiveTab(xStatusTab());
+    harness.sendMessage.mockImplementation(
+      (_tabId: number, request: XSingleExtractRequest, callback: (response: unknown) => void) => {
+        harness.setActiveTab({
+          url: 'https://x.com/bob/status/987654321',
+        });
+        callback(xSingleResponse(request));
+      },
+    );
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'xSingle:start', requestId: 'single-start-tab-changed' },
+      sender('popup'),
+    );
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'x_tab_changed' });
+    const store = await openSyncStore();
+    try {
+      await expect(store.listJobs({ source: 'x' })).resolves.toEqual([]);
+    } finally {
+      store.close();
+    }
   });
 
   it('broadcasts persisted task changes to a newly opened Side Panel before its first command', async () => {

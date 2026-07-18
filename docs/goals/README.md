@@ -1,24 +1,24 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-18
-> 当前状态：Goal 041/042/043/045A/045B 均已 `DONE/PASS`；Goal 045C 为下一合同候选，尚未进入实施
-> 执行规则：按 045A -> 045B -> 045C 串行修复 P0/P1；只有前一子 Goal 独立 `PASS` 后才能推进下一项。
-> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；045A/045B 安全门已通过，但生产主壳仍等待 045C 的 P1 收口。
+> 当前状态：Goal 041/042/043/045A/045B/045C 均已 `DONE/PASS`；当前没有 `READY` 或 `IN_PROGRESS` Goal
+> 执行规则：P0/P1 串行安全收口已经完成；下一 Goal 必须先完成独立合同并显式转为 `READY`。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；Goal 046 仍为 `PLANNED`，不得自动实施。
 
 ## 当前编排状态
 
-| Lane      | 状态                        | 说明                                     | 恢复条件                        |
-| --------- | --------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032  | `PAUSED_BY_PRODUCT_RESET`   | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041  | `DONE`                      | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042  | `DONE`                      | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043  | `DONE`                      | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
-| Goal 045A | `DONE`                      | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
-| Goal 045B | `DONE`                      | 消息边界、storage 隔离和 URL 体检退役    | 独立 review PASS，P0/P1/P2 为 0 |
-| Goal 045C | `PLANNED`                   | 内容保存与 AI 隐私收口                   | 写合同并完成独立预审            |
-| 044/046   | `PLANNED`                   | 微博研究门禁、UI 与 dogfood              | 不与当前安全 writer 并行        |
-| Goal 047  | `RESEARCH_GATE`             | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 串行修复审计确认的 P0/P1                 | 当前 Goal 独立验收后自动推进    |
+| Lane      | 状态                      | 说明                                     | 恢复条件                        |
+| --------- | ------------------------- | ---------------------------------------- | ------------------------------- |
+| Goal 032  | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041  | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
+| Goal 042  | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
+| Goal 043  | `DONE`                    | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
+| Goal 045A | `DONE`                    | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045B | `DONE`                    | 消息边界、storage 隔离和 URL 体检退役    | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045C | `DONE`                    | 内容保存与 AI 隐私收口                   | 独立 review PASS，P0/P1/P2 为 0 |
+| 044/046   | `PLANNED`                 | 微博研究门禁、UI 与 dogfood              | 需要新合同和显式状态推进        |
+| Goal 047  | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
+| workflow  | `AUTO_ORCHESTRATION_IDLE` | P0/P1 安全收口已完成                     | 等待新 Goal 转为 `READY`        |
 
 ## v4 当前队列
 
@@ -31,7 +31,7 @@
 | 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | 新研究门禁改变当前微博 `NO_GO` |
 | [045A](./goal-045a-bookmark-mutation-safety.md)        | `DONE`                    | 删除、URL 更新和分类移动 journal          | mock-only + 独立 review PASS   |
 | [045B](./goal-045b-extension-trust-boundary.md)        | `DONE`                    | 消息、storage、权限与 URL 体检退役        | mock-only + 独立 review PASS   |
-| 045C                                                   | `PLANNED`                 | 内容保存链路和 AI 隐私边界                | 写合同并完成独立预审           |
+| [045C](./goal-045c-content-save-ai-privacy.md)         | `DONE`                    | 内容保存链路和 AI 隐私边界                | mock-only + 独立 review PASS   |
 | 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收         |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据               |
 

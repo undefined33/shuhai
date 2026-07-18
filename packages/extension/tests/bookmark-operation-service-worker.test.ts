@@ -80,7 +80,36 @@ vi.mock('../src/utils/storage.js', () => {
     getSettings: vi.fn(async () => ({
       useAi: false,
       activeProviderId: 'deepseek-default',
-      aiProviders: [],
+      aiProviders: [
+        {
+          id: 'deepseek-default',
+          name: 'DeepSeek',
+          provider: 'deepseek',
+          enabled: true,
+          model: 'deepseek-v4-flash',
+          hasApiKey: false,
+        },
+        {
+          id: 'kimi-default',
+          name: 'Kimi (Moonshot)',
+          provider: 'kimi',
+          enabled: true,
+          model: 'kimi-k3',
+          hasApiKey: false,
+        },
+        {
+          id: 'glm-default',
+          name: '智谱 GLM',
+          provider: 'glm',
+          enabled: true,
+          model: 'glm-5.2',
+          hasApiKey: false,
+        },
+      ],
+      aiLegacySummary: {
+        builtInConflicts: [],
+        customState: 'absent',
+      },
       customRules: [],
       templates: [],
       activeTemplateIds: {},

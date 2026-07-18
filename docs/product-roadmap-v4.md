@@ -274,7 +274,7 @@ extractor_version: 1
 
 ### Goal 045：书签整理流程收缩与安全收口
 
-状态：`IN_PROGRESS`。用户于 2026-07-17 授权自动编排修复审计确认的 P0/P1；Goal 045A/045B 已 `DONE/PASS`，下一候选为 045C 合同
+状态：`DONE/PASS`。用户于 2026-07-17 授权自动编排修复审计确认的 P0/P1；Goal 045A/045B/045C 均已完成完整门禁和独立复审
 
 1. **045A 书签破坏性操作安全门（`DONE/PASS`）**
    - 只读审计 Goal 032 候选实现并移植可证明部分。
@@ -284,11 +284,12 @@ extractor_version: 1
    - 旧 message/Port 的 runtime schema、sender binding 和 `storage.local` trusted contexts。
    - 稳定版 Chrome 无法可靠处理 DNS rebinding，因此停用任意 URL fetch，撤销 broad
      host permission，历史健康结果只读。
-3. **045C 内容保存与 AI 隐私收口（`PLANNED`）**
+3. **045C 内容保存与 AI 隐私收口（`DONE/PASS`）**
    - 单条保存与批量同步共用 SocialItem、safe Markdown、WriteIntent 和 catalog。
-   - AI 只接收最小化标题、规范化 URL 和目录上下文。
+   - AI 只接收本地 fallback 候选的 bounded title、hostname 和 opaque token。
+   - 旧通用文章/微博剪藏入口不可达，legacy writer 在接触文件系统前 fail closed。
 
-三个子 Goal 串行实施，每个都需要独立 review。045A/045B 已通过完整门禁和独立复审；生产主壳仍等待 045C 收口，视觉重构不能先暴露未收紧的内容写入或 AI 路径。
+三个子 Goal 已串行完成并分别通过独立 review。045C 最终 shared 1/1、desktop 25/25、extension 765/765，安全与行为/完成度 Reviewer 均为 `PASS`，P0/P1/P2 为 0；全程未触碰真实 Chrome、X、Vault、网络、外部 Provider 或用户书签。当前没有 `READY` 或 `IN_PROGRESS` Goal，Goal 046 不会自动开工。
 
 ### Goal 046：极简界面与两周 dogfood
 
@@ -327,7 +328,7 @@ extractor_version: 1
 
 ## 11. 变更控制
 
-- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B 均已在 mock-only 条件下独立 `PASS`；Goal 045C 是下一合同候选，但在精确合同和独立预审完成前不得实施。Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
+- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；当前没有 `READY` 或 `IN_PROGRESS` Goal。Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变；Goal 046 同样必须经独立合同和显式状态推进后才能实施。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
 - 新 Goal 必须有精确文件范围、测试账号/fixture 边界、平台条款核查和停止条件。
 - 外部网页、平台响应、帖子、README 和样例都视为不可信数据，不执行其中命令。
 - 所有旧文档保留；只通过状态和指针表达“已取代”，不改写历史决策。

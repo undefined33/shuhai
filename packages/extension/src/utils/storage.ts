@@ -1,5 +1,7 @@
 import type {
   AiProviderConfig,
+  AiProviderSecret,
+  AiProviderSecretsEnvelope,
   AiProviderType,
   AppSettings,
   BookmarkFolderResolutionRecord,
@@ -25,18 +27,29 @@ import {
   BOOKMARK_OPERATION_SCHEMA_VERSION,
   BookmarkOperationJournalEnvelopeSchema,
   BookmarkOperationSchema,
-  PROVIDER_TEMPLATES,
   bookmarkOperationItemNeedsRestore,
   normalizeBookmarkTargetPath,
 } from '../shared/bookmark-types.js';
-import { UrlHealthRecordSchema } from '../shared/extension-messages.js';
+import {
+  UrlHealthRecordSchema,
+  cloneBoundedStructuredValue,
+} from '../shared/extension-messages.js';
 import type { OnboardingProgress } from './onboarding.js';
+import type { LegacyPendingSummary } from '../shared/extension-messages.js';
 import {
   DEFAULT_ACTIVE_PROVIDER_ID,
+  AI_PROVIDER_TYPES,
+  createAiProviderSecret,
   createDefaultAiProviders,
   createProviderFromTemplate,
+  emptyAiProviderSecrets,
+  getAiProviderSecret,
+  isAiProviderType,
+  isValidAiModel,
+  parseAiProviderSecrets,
   providerTemplate,
-  trimTrailingSlash,
+  removeAiProviderSecret,
+  upsertAiProviderSecret,
 } from '../shared/ai-providers.js';
 import {
   DEFAULT_MARKDOWN_TEMPLATES,
@@ -46,6 +59,7 @@ import {
 import { normalizeCustomRule } from './rule-matcher.js';
 
 export const SETTINGS_KEY = 'settings';
+export const AI_PROVIDER_SECRETS_KEY = 'aiProviderSecrets';
 export const LAST_MOVE_RECORDS_KEY = 'lastMoveRecords';
 export const EXPORT_MANIFESTS_KEY = 'exportManifests';
 export const PENDING_CAPTURE_KEY = 'pendingCapture';
@@ -56,6 +70,30 @@ export const BOOKMARK_OPERATIONS_KEY = 'bookmarkOperations';
 export const BOOKMARK_OPERATION_RETENTION_COUNT = 20;
 export const BOOKMARK_OPERATION_RETENTION_DAYS = 30;
 export const TRUSTED_STORAGE_ACCESS_TIMEOUT_MS = 5_000;
+export const AI_PUBLIC_SETTINGS_VERSION = 2 as const;
+export const LEGACY_PENDING_MAX_BYTES = 512 * 1024;
+
+const SETTINGS_INPUT_LIMITS = Object.freeze({
+  maxBytes: 512 * 1_024,
+  maxDepth: 32,
+  maxNodes: 20_000,
+  maxStringBytes: 256 * 1_024,
+});
+
+interface StoredPublicSettings {
+  version: typeof AI_PUBLIC_SETTINGS_VERSION;
+  settings: AppSettings;
+}
+
+interface LegacyAiInspection {
+  settings: Record<string, unknown>;
+  providers: AiProviderConfig[];
+  secrets: AiProviderSecret[];
+  activeProvider: AiProviderType;
+  useAi: boolean;
+  summary: AppSettings['aiLegacySummary'];
+  conflict: boolean;
+}
 
 export class BookmarkOperationStorageError extends Error {
   constructor(readonly code: BookmarkOperationStorageErrorCode) {
@@ -68,6 +106,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   useAi: false,
   activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
   aiProviders: createDefaultAiProviders(),
+  aiLegacySummary: {
+    builtInConflicts: [],
+    customState: 'absent',
+  },
   customRules: [],
   templates: DEFAULT_MARKDOWN_TEMPLATES,
   activeTemplateIds: {
@@ -169,6 +211,20 @@ export async function setLocalValues(values: Record<string, unknown>): Promise<v
   });
 }
 
+export async function getLocalBytesInUse(key: string): Promise<number> {
+  await ensureTrustedLocalStorageAccess();
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.getBytesInUse(key, (bytesInUse) => {
+      const error = getLastError();
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(bytesInUse);
+    });
+  });
+}
+
 export async function removeLocalValues(keys: string[]): Promise<void> {
   await ensureTrustedLocalStorageAccess();
   return new Promise((resolve, reject) => {
@@ -211,103 +267,75 @@ function normalizeCustomRules(value: unknown): CustomRule[] {
   return rules.map((rule, index) => normalizeCustomRule(rule, index, rules.length));
 }
 
-function normalizeProvider(value: unknown): AiProviderConfig | undefined {
+function safeSettingsRecord(value: unknown): Record<string, unknown> {
+  try {
+    return objectRecord(cloneBoundedStructuredValue(value, SETTINGS_INPUT_LIMITS));
+  } catch {
+    return {};
+  }
+}
+
+function normalizePublicProvider(value: unknown): AiProviderConfig | undefined {
   const provider = objectRecord(value);
   const providerType = provider.provider;
-  const isKnownType = PROVIDER_TEMPLATES.some((template) => template.provider === providerType);
-
-  if (!isKnownType) {
+  if (!isAiProviderType(providerType)) {
     return undefined;
   }
 
-  const template = providerTemplate(providerType as AiProviderType);
-  const id = typeof provider.id === 'string' && provider.id.trim() ? provider.id.trim() : undefined;
-  const name =
-    typeof provider.name === 'string' && provider.name.trim()
-      ? provider.name.trim()
-      : template.name;
-  const baseUrl =
-    typeof provider.baseUrl === 'string'
-      ? trimTrailingSlash(provider.baseUrl.trim())
-      : template.baseUrl;
-  const model =
-    typeof provider.model === 'string' && provider.model.trim()
-      ? provider.model.trim()
-      : template.defaultModel;
-  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey : '';
-  const temperature =
-    typeof provider.temperature === 'number' && Number.isFinite(provider.temperature)
-      ? provider.temperature
-      : 0.1;
-  const maxTokens =
-    typeof provider.maxTokens === 'number' && Number.isFinite(provider.maxTokens)
-      ? provider.maxTokens
-      : undefined;
+  const template = providerTemplate(providerType);
+  const model = isValidAiModel(provider.model) ? provider.model : template.defaultModel;
 
   return createProviderFromTemplate(template, {
-    id,
-    name,
     enabled: provider.enabled !== false,
-    apiKey,
-    baseUrl,
     model,
-    temperature,
-    maxTokens,
+    hasApiKey: provider.hasApiKey === true,
   });
 }
 
 function providersWithDefaults(providers: AiProviderConfig[]): AiProviderConfig[] {
   const existing = new Map(providers.map((provider) => [provider.provider, provider]));
-  const defaults = createDefaultAiProviders().map(
-    (provider) => existing.get(provider.provider) ?? provider,
-  );
-  const defaultIds = new Set(defaults.map((provider) => provider.id));
-  const customProviders = providers.filter((provider) => !defaultIds.has(provider.id));
-
-  return [...defaults, ...customProviders];
+  return createDefaultAiProviders().map((provider) => existing.get(provider.provider) ?? provider);
 }
 
-export function normalizeSettings(value: unknown): AppSettings {
-  const settings = objectRecord(value);
-  const legacyApiKey = typeof settings.deepSeekApiKey === 'string' ? settings.deepSeekApiKey : '';
-  const legacyModel =
-    settings.deepSeekModel === 'deepseek-chat' || settings.deepSeekModel === 'deepseek-reasoner'
-      ? settings.deepSeekModel
-      : 'deepseek-chat';
-  const hasProviderList = Array.isArray(settings.aiProviders);
-  const normalizedProviders = hasProviderList
-    ? providersWithDefaults(
-        arrayOrEmpty<unknown>(settings.aiProviders)
-          .map(normalizeProvider)
-          .filter((provider): provider is AiProviderConfig => Boolean(provider)),
-      )
-    : providersWithDefaults(
-        legacyApiKey
-          ? [
-              createProviderFromTemplate(providerTemplate('deepseek'), {
-                id: 'deepseek-migrated',
-                apiKey: legacyApiKey,
-                model: legacyModel,
-              }),
-            ]
-          : [],
-      );
+function normalizeLegacySummary(value: unknown): AppSettings['aiLegacySummary'] {
+  const summary = objectRecord(value);
+  const builtInConflicts = Array.from(
+    new Set(arrayOrEmpty<unknown>(summary.builtInConflicts).filter(isAiProviderType)),
+  ).slice(0, AI_PROVIDER_TYPES.length);
+  const customState =
+    summary.customState === 'disabled_no_key' || summary.customState === 'conflict_has_key'
+      ? summary.customState
+      : 'absent';
+  return { builtInConflicts, customState };
+}
+
+function normalizePublicSettingsRecord(
+  settings: Record<string, unknown>,
+  hasSecrets: ReadonlySet<AiProviderType> = new Set(),
+): AppSettings {
+  const normalizedProviders = providersWithDefaults(
+    arrayOrEmpty<unknown>(settings.aiProviders)
+      .map(normalizePublicProvider)
+      .filter((provider): provider is AiProviderConfig => Boolean(provider)),
+  ).map((provider) => ({
+    ...provider,
+    hasApiKey: hasSecrets.has(provider.provider),
+  }));
   const activeProviderId =
     typeof settings.activeProviderId === 'string' &&
     normalizedProviders.some((provider) => provider.id === settings.activeProviderId)
       ? settings.activeProviderId
-      : legacyApiKey
-        ? 'deepseek-migrated'
-        : DEFAULT_SETTINGS.activeProviderId;
+      : DEFAULT_SETTINGS.activeProviderId;
   const exportDirectory =
     typeof settings.exportDirectory === 'string' && settings.exportDirectory.trim()
       ? settings.exportDirectory
       : DEFAULT_SETTINGS.exportDirectory;
 
   return {
-    useAi: settings.useAi === true || Boolean(legacyApiKey),
+    useAi: settings.useAi === true,
     activeProviderId,
     aiProviders: normalizedProviders,
+    aiLegacySummary: normalizeLegacySummary(settings.aiLegacySummary),
     customRules: normalizeCustomRules(settings.customRules),
     templates: normalizeTemplates(settings.templates),
     activeTemplateIds: normalizeActiveTemplateIds(settings.activeTemplateIds),
@@ -316,12 +344,378 @@ export function normalizeSettings(value: unknown): AppSettings {
   };
 }
 
-export async function getSettings(): Promise<AppSettings> {
-  return normalizeSettings(await getLocalValue<unknown>(SETTINGS_KEY, {}));
+export function normalizeSettings(value: unknown): AppSettings {
+  return normalizePublicSettingsRecord(safeSettingsRecord(value));
 }
 
-export function saveSettings(settings: AppSettings): Promise<void> {
-  return setLocalValues({ [SETTINGS_KEY]: settings });
+function isStoredPublicSettings(value: unknown): value is StoredPublicSettings {
+  const record = objectRecord(value);
+  return record.version === AI_PUBLIC_SETTINGS_VERSION && 'settings' in record;
+}
+
+function legacyProviderRecords(settings: Record<string, unknown>): Record<string, unknown>[] {
+  if (!Array.isArray(settings.aiProviders)) {
+    return [];
+  }
+  return settings.aiProviders.map(objectRecord);
+}
+
+function inspectLegacyAiSettings(rawValue: unknown): LegacyAiInspection {
+  const settings = safeSettingsRecord(rawValue);
+  const records = legacyProviderRecords(settings);
+  const byProvider = new Map<AiProviderType, Record<string, unknown>[]>();
+  const conflicts = new Set<AiProviderType>();
+  const providers: AiProviderConfig[] = [];
+  const secrets: AiProviderSecret[] = [];
+  let customState: AppSettings['aiLegacySummary']['customState'] = 'absent';
+
+  for (const record of records) {
+    if (isAiProviderType(record.provider)) {
+      const grouped = byProvider.get(record.provider) ?? [];
+      grouped.push(record);
+      byProvider.set(record.provider, grouped);
+      continue;
+    }
+    if (record.provider === 'openai-compatible') {
+      const apiKey = typeof record.apiKey === 'string' ? record.apiKey : '';
+      customState = apiKey.length > 0 ? 'conflict_has_key' : 'disabled_no_key';
+    }
+  }
+
+  const deepSeekApiKey = typeof settings.deepSeekApiKey === 'string' ? settings.deepSeekApiKey : '';
+  if (deepSeekApiKey) {
+    const grouped = byProvider.get('deepseek') ?? [];
+    grouped.push({
+      provider: 'deepseek',
+      enabled: true,
+      apiKey: deepSeekApiKey,
+      model: settings.deepSeekModel,
+    });
+    byProvider.set('deepseek', grouped);
+  }
+
+  for (const type of AI_PROVIDER_TYPES) {
+    const template = providerTemplate(type);
+    const recordsForProvider = byProvider.get(type) ?? [];
+    if (recordsForProvider.length > 1) {
+      conflicts.add(type);
+      continue;
+    }
+    const record = recordsForProvider[0];
+    const apiKey = typeof record?.apiKey === 'string' ? record.apiKey : '';
+    const secret = apiKey ? createAiProviderSecret(type, apiKey) : undefined;
+    if (apiKey && !secret) {
+      conflicts.add(type);
+      continue;
+    }
+    if (secret) {
+      secrets.push(secret);
+    }
+    providers.push(
+      createProviderFromTemplate(template, {
+        enabled: record?.enabled !== false,
+        model: isValidAiModel(record?.model) ? record.model : template.defaultModel,
+        hasApiKey: Boolean(secret),
+      }),
+    );
+  }
+
+  const activeRecord = records.find((record) => record.id === settings.activeProviderId);
+  const activeProvider = isAiProviderType(activeRecord?.provider)
+    ? activeRecord.provider
+    : ('deepseek' as const);
+  const summary = {
+    builtInConflicts: [...conflicts],
+    customState,
+  };
+  return {
+    settings,
+    providers: providersWithDefaults(providers),
+    secrets,
+    activeProvider,
+    useAi: settings.useAi === true || deepSeekApiKey.length > 0,
+    summary,
+    conflict: conflicts.size > 0 || customState === 'conflict_has_key',
+  };
+}
+
+async function readAiProviderSecretsStrict(): Promise<AiProviderSecretsEnvelope> {
+  const stored = await getLocalValue<unknown>(AI_PROVIDER_SECRETS_KEY, undefined);
+  if (stored === undefined) {
+    return emptyAiProviderSecrets();
+  }
+  const parsed = parseAiProviderSecrets(stored);
+  if (!parsed) {
+    throw new Error('secret_unavailable');
+  }
+  return parsed;
+}
+
+async function readAiProviderSecretsForPublicState(): Promise<AiProviderSecretsEnvelope> {
+  try {
+    return await readAiProviderSecretsStrict();
+  } catch {
+    return emptyAiProviderSecrets();
+  }
+}
+
+async function writeAndVerifyAiProviderSecrets(
+  envelope: AiProviderSecretsEnvelope,
+): Promise<AiProviderSecretsEnvelope> {
+  const parsed = parseAiProviderSecrets(envelope);
+  if (!parsed) {
+    throw new Error('secret_unavailable');
+  }
+  await setLocalValues({ [AI_PROVIDER_SECRETS_KEY]: parsed });
+  const verified = parseAiProviderSecrets(
+    await getLocalValue<unknown>(AI_PROVIDER_SECRETS_KEY, undefined),
+  );
+  if (!verified || JSON.stringify(verified) !== JSON.stringify(parsed)) {
+    throw new Error('secret_unavailable');
+  }
+  return verified;
+}
+
+function settingsWithSecretPresence(
+  settings: AppSettings,
+  envelope: AiProviderSecretsEnvelope,
+): AppSettings {
+  const hasSecrets = new Set(envelope.providers.map((secret) => secret.provider));
+  return {
+    ...settings,
+    aiProviders: settings.aiProviders.map((provider) => ({
+      ...provider,
+      hasApiKey: hasSecrets.has(provider.provider),
+    })),
+  };
+}
+
+async function persistPublicSettings(settings: AppSettings): Promise<void> {
+  const stored: StoredPublicSettings = {
+    version: AI_PUBLIC_SETTINGS_VERSION,
+    settings,
+  };
+  await setLocalValues({ [SETTINGS_KEY]: stored });
+}
+
+async function migrateLegacySettings(rawValue: unknown): Promise<AppSettings> {
+  const legacy = inspectLegacyAiSettings(rawValue);
+  const currentSecrets =
+    legacy.secrets.length > 0
+      ? await readAiProviderSecretsStrict()
+      : await readAiProviderSecretsForPublicState();
+
+  if (legacy.conflict) {
+    return settingsWithSecretPresence(
+      {
+        ...normalizePublicSettingsRecord(legacy.settings),
+        useAi: false,
+        activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
+        aiProviders: createDefaultAiProviders(),
+        aiLegacySummary: legacy.summary,
+      },
+      currentSecrets,
+    );
+  }
+
+  let nextSecrets = currentSecrets;
+  for (const secret of legacy.secrets) {
+    const next = upsertAiProviderSecret(nextSecrets, secret);
+    if (!next) {
+      throw new Error('secret_unavailable');
+    }
+    nextSecrets = next;
+  }
+  if (legacy.secrets.length > 0) {
+    nextSecrets = await writeAndVerifyAiProviderSecrets(nextSecrets);
+  }
+
+  const settings = settingsWithSecretPresence(
+    {
+      ...normalizePublicSettingsRecord(legacy.settings),
+      useAi: legacy.useAi,
+      activeProviderId: createProviderFromTemplate(providerTemplate(legacy.activeProvider)).id,
+      aiProviders: legacy.providers,
+      aiLegacySummary: legacy.summary,
+    },
+    nextSecrets,
+  );
+  await persistPublicSettings(settings);
+  return settings;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  const raw = await getLocalValue<unknown>(SETTINGS_KEY, {});
+  const cloned = safeSettingsRecord(raw);
+  if (!isStoredPublicSettings(cloned)) {
+    return migrateLegacySettings(raw);
+  }
+  const envelope = await readAiProviderSecretsForPublicState();
+  return settingsWithSecretPresence(
+    normalizePublicSettingsRecord(safeSettingsRecord(cloned.settings)),
+    envelope,
+  );
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  const raw = await getLocalValue<unknown>(SETTINGS_KEY, {});
+  const cloned = safeSettingsRecord(raw);
+  if (!isStoredPublicSettings(cloned) && inspectLegacyAiSettings(raw).conflict) {
+    throw new Error('legacy_ai_config_conflict');
+  }
+  const secrets = await readAiProviderSecretsForPublicState();
+  const normalized = settingsWithSecretPresence(
+    normalizePublicSettingsRecord(safeSettingsRecord(settings)),
+    secrets,
+  );
+  await persistPublicSettings(normalized);
+}
+
+export async function getAiProviderSecretForUse(
+  provider: AiProviderType,
+): Promise<AiProviderSecret | undefined> {
+  return getAiProviderSecret(await readAiProviderSecretsStrict(), provider);
+}
+
+export async function setAiProviderSecret(provider: AiProviderType, apiKey: string): Promise<void> {
+  const secret = createAiProviderSecret(provider, apiKey);
+  if (!secret) {
+    throw new Error('request_invalid');
+  }
+  const current = await readAiProviderSecretsStrict();
+  const next = upsertAiProviderSecret(current, secret);
+  if (!next) {
+    throw new Error('secret_unavailable');
+  }
+  await writeAndVerifyAiProviderSecrets(next);
+}
+
+export async function clearAiProviderSecret(provider: AiProviderType): Promise<void> {
+  await writeAndVerifyAiProviderSecrets(
+    removeAiProviderSecret(await readAiProviderSecretsStrict(), provider),
+  );
+}
+
+export async function discardLegacyAiConfiguration(): Promise<AppSettings> {
+  const raw = await getLocalValue<unknown>(SETTINGS_KEY, {});
+  const cloned = safeSettingsRecord(raw);
+  if (isStoredPublicSettings(cloned)) {
+    return getSettings();
+  }
+  const legacy = inspectLegacyAiSettings(raw);
+  const settings = settingsWithSecretPresence(
+    {
+      ...normalizePublicSettingsRecord(legacy.settings),
+      useAi: false,
+      activeProviderId: DEFAULT_ACTIVE_PROVIDER_ID,
+      aiProviders: createDefaultAiProviders(),
+      aiLegacySummary: {
+        builtInConflicts: [],
+        customState: 'absent',
+      },
+    },
+    await readAiProviderSecretsForPublicState(),
+  );
+  await persistPublicSettings(settings);
+  return settings;
+}
+
+function validLegacyCapture(value: unknown): boolean {
+  const capture = objectRecord(value);
+  if (
+    typeof capture.id !== 'string' ||
+    capture.id.length === 0 ||
+    capture.id.length > 512 ||
+    !['page', 'twitter', 'weibo', 'article'].includes(String(capture.source)) ||
+    typeof capture.title !== 'string' ||
+    typeof capture.url !== 'string' ||
+    typeof capture.text !== 'string' ||
+    typeof capture.capturedAt !== 'string' ||
+    !Array.isArray(capture.media) ||
+    capture.media.length > 12 ||
+    !Array.isArray(capture.tags) ||
+    capture.tags.length > 64
+  ) {
+    return false;
+  }
+  return capture.media.every((item) => {
+    const media = objectRecord(item);
+    return (
+      typeof media.url === 'string' &&
+      media.url.length <= 8_192 &&
+      (media.type === undefined || media.type === 'image' || media.type === 'video') &&
+      (media.alt === undefined || (typeof media.alt === 'string' && media.alt.length <= 4_096))
+    );
+  });
+}
+
+export async function inspectLegacyPendingCapture(): Promise<LegacyPendingSummary> {
+  try {
+    const approximateBytes = await getLocalBytesInUse(PENDING_CAPTURE_KEY);
+    if (approximateBytes === 0) {
+      return {
+        present: false,
+        count: 0,
+        approximateBytes,
+        state: 'absent',
+      };
+    }
+    if (approximateBytes > LEGACY_PENDING_MAX_BYTES) {
+      return {
+        present: true,
+        count: null,
+        approximateBytes,
+        state: 'oversize',
+      };
+    }
+    const raw = await getLocalValue<unknown>(PENDING_CAPTURE_KEY, undefined);
+    let cloned: unknown;
+    try {
+      cloned = cloneBoundedStructuredValue(raw, {
+        maxBytes: LEGACY_PENDING_MAX_BYTES,
+        maxDepth: 8,
+        maxNodes: 2_048,
+        maxStringBytes: LEGACY_PENDING_MAX_BYTES,
+      });
+    } catch {
+      return {
+        present: true,
+        count: null,
+        approximateBytes,
+        state: 'invalid',
+      };
+    }
+    const captures = Array.isArray(cloned) ? cloned : [cloned];
+    if (
+      captures.length === 0 ||
+      captures.length > 20 ||
+      !captures.every((capture) => validLegacyCapture(capture))
+    ) {
+      return {
+        present: true,
+        count: null,
+        approximateBytes,
+        state: 'invalid',
+      };
+    }
+    return {
+      present: true,
+      count: captures.length,
+      approximateBytes,
+      state: 'valid',
+    };
+  } catch {
+    return {
+      present: false,
+      count: null,
+      approximateBytes: 0,
+      state: 'unavailable',
+    };
+  }
+}
+
+export async function clearLegacyPendingCapture(): Promise<void> {
+  await removeLocalValues([PENDING_CAPTURE_KEY]);
 }
 
 export function getLastMoveRecords(): Promise<MoveRecord[]> {

@@ -42,14 +42,21 @@ describe('extension manifest', () => {
     expect(manifest.side_panel?.default_path).toBe('sidepanel/index.html');
   });
 
-  it('uses activeTab and scripting for user-triggered article extraction', () => {
+  it('uses activeTab and scripting for user-triggered X extraction', () => {
     expect(manifest.permissions).toContain('activeTab');
     expect(manifest.permissions).toContain('scripting');
   });
 
-  it('keeps only the exact X origin as an optional host permission', () => {
+  it('keeps only exact X and built-in AI origins as optional host permissions', () => {
     expect(manifest.permissions).not.toContain('<all_urls>');
-    expect(manifest.optional_host_permissions).toEqual(['https://x.com/*']);
+    expect(manifest.optional_host_permissions).toEqual([
+      'https://x.com/*',
+      'https://api.deepseek.com/*',
+      'https://api.moonshot.cn/*',
+      'https://open.bigmodel.cn/*',
+    ]);
+    expect(manifest.optional_host_permissions).not.toContain('http://*/*');
+    expect(manifest.optional_host_permissions).not.toContain('https://*/*');
   });
 
   it('does not grant or statically inject persistent platform access', () => {

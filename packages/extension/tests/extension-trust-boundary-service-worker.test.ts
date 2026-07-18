@@ -25,6 +25,7 @@ interface HarnessOptions {
   readonly keepOriginsAfterRemove?: boolean;
   readonly missingApi?: 'getAll' | 'remove';
   readonly removeResult?: boolean;
+  readonly storageData?: Record<string, unknown>;
   readonly stalledStage?: BootstrapStage;
 }
 
@@ -43,6 +44,8 @@ interface BootstrapHarness {
   currentOrigins(): string[];
   getConnectListener(): ConnectListener;
   getMessageListener(): MessageListener;
+  getPermissionRemovedListener(): (permissions: chrome.permissions.Permissions) => void;
+  revokeOrigins(origins: string[]): void;
   release(stage: BootstrapStage): void;
 }
 
@@ -60,7 +63,11 @@ function extensionUrl(path: string): string {
 function createHarness(options: HarnessOptions = {}): BootstrapHarness {
   let messageListener: MessageListener | undefined;
   let connectListener: ConnectListener | undefined;
+  let permissionRemovedListener:
+    | ((permissions: chrome.permissions.Permissions) => void)
+    | undefined;
   let origins = [...(options.initialOrigins ?? [])];
+  let storageData = structuredClone(options.storageData ?? {});
   let getAllCount = 0;
   const releases = new Map<BootstrapStage, () => void>();
 
@@ -170,11 +177,13 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     },
     permissions: {
       contains: vi.fn(
-        (_permissions: chrome.permissions.Permissions, callback: (granted: boolean) => void) =>
-          callback(origins.includes('https://x.com/*')),
+        (permissions: chrome.permissions.Permissions, callback: (granted: boolean) => void) =>
+          callback((permissions.origins ?? []).every((origin) => origins.includes(origin))),
       ),
       getAll: options.missingApi === 'getAll' ? undefined : getAll,
-      onRemoved: event(),
+      onRemoved: event<(permissions: chrome.permissions.Permissions) => void>((listener) => {
+        permissionRemovedListener = listener;
+      }),
       remove: options.missingApi === 'remove' ? undefined : removePermission,
     },
     runtime,
@@ -184,9 +193,65 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     sidePanel: {},
     storage: {
       local: {
-        get: vi.fn(),
-        remove: vi.fn(),
-        set: vi.fn(),
+        get: vi.fn(
+          (
+            keys: string | string[] | Record<string, unknown> | null,
+            callback: (items: Record<string, unknown>) => void,
+          ) => {
+            if (typeof keys === 'string') {
+              callback(
+                Object.prototype.hasOwnProperty.call(storageData, keys)
+                  ? { [keys]: structuredClone(storageData[keys]) }
+                  : {},
+              );
+              return;
+            }
+            if (Array.isArray(keys)) {
+              callback(
+                Object.fromEntries(
+                  keys
+                    .filter((key) => Object.prototype.hasOwnProperty.call(storageData, key))
+                    .map((key) => [key, structuredClone(storageData[key])]),
+                ),
+              );
+              return;
+            }
+            if (keys && typeof keys === 'object') {
+              callback(
+                Object.fromEntries(
+                  Object.entries(keys).map(([key, fallback]) => [
+                    key,
+                    Object.prototype.hasOwnProperty.call(storageData, key)
+                      ? structuredClone(storageData[key])
+                      : fallback,
+                  ]),
+                ),
+              );
+              return;
+            }
+            callback(structuredClone(storageData));
+          },
+        ),
+        getBytesInUse: vi.fn((key: string, callback: (bytes: number) => void) => {
+          const value = Object.prototype.hasOwnProperty.call(storageData, key)
+            ? { [key]: storageData[key] }
+            : {};
+          callback(
+            Object.keys(value).length === 0
+              ? 0
+              : new TextEncoder().encode(JSON.stringify(value)).byteLength,
+          );
+        }),
+        remove: vi.fn((keys: string | string[], callback?: () => void) => {
+          for (const key of Array.isArray(keys) ? keys : [keys]) {
+            delete storageData[key];
+          }
+          callback?.();
+        }),
+        set: vi.fn((items: Record<string, unknown>, callback?: () => void) => {
+          storageData = { ...storageData, ...structuredClone(items) };
+          callback?.();
+        }),
         setAccessLevel,
       },
       session: {
@@ -225,6 +290,20 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
       }
       return messageListener;
     },
+    getPermissionRemovedListener: () => {
+      if (!permissionRemovedListener) {
+        throw new Error('permission removed listener missing');
+      }
+      return permissionRemovedListener;
+    },
+    revokeOrigins: (removedOrigins) => {
+      const removed = new Set(removedOrigins);
+      origins = origins.filter((origin) => !removed.has(origin));
+      if (!permissionRemovedListener) {
+        throw new Error('permission removed listener missing');
+      }
+      permissionRemovedListener({ origins: removedOrigins });
+    },
     release: (stage) => {
       const release = releases.get(stage);
       if (!release) {
@@ -242,6 +321,58 @@ function sender(surface: 'popup' | 'sidepanel'): chrome.runtime.MessageSender {
     origin: EXTENSION_ORIGIN,
     url: surface === 'popup' ? POPUP_URL : SIDEPANEL_URL,
   };
+}
+
+function legacyAiStorage(apiKey = 'private-key'): Record<string, unknown> {
+  return {
+    settings: {
+      deepSeekApiKey: apiKey,
+      deepSeekModel: 'deepseek-v4-flash',
+      useAi: true,
+      defaultClassifyMode: 'safe',
+      exportDirectory: 'Bookmarks',
+    },
+  };
+}
+
+function classificationTree(folderCount = 1): chrome.bookmarks.BookmarkTreeNode[] {
+  const folders: chrome.bookmarks.BookmarkTreeNode[] = Array.from(
+    { length: folderCount },
+    (_, index) => ({
+      id: `folder-${index + 1}`,
+      parentId: '1',
+      index: index + 1,
+      title: index === 0 ? 'Research' : `Folder ${index + 1}`,
+      syncing: false,
+      children: [],
+    }),
+  );
+  return [
+    {
+      id: '0',
+      title: '',
+      syncing: false,
+      children: [
+        {
+          id: '1',
+          parentId: '0',
+          title: 'Bookmarks bar',
+          syncing: false,
+          children: [
+            {
+              id: 'bookmark-1',
+              parentId: '1',
+              index: 0,
+              title: 'Bookmark permission revoke',
+              url: 'https://examplepermissionrevoke.com/private-path?token=secret',
+              syncing: false,
+            },
+            ...folders,
+          ],
+        },
+      ],
+    },
+  ];
 }
 
 function extensionPort(messageSender: chrome.runtime.MessageSender, name = 'classify') {
@@ -426,25 +557,20 @@ describe('service worker security bootstrap', () => {
     },
   );
 
-  it('does not expose raw AI provider failures through the legacy response', async () => {
+  it('does not expose raw AI provider failures through the strict connection response', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new Error('secret-token-and-url'))),
     );
-    const harness = await loadServiceWorker();
+    const harness = await loadServiceWorker({
+      initialOrigins: ['https://api.deepseek.com/*'],
+      storageData: legacyAiStorage(),
+    });
 
     await expect(
       send(harness.getMessageListener(), {
         type: 'ai:testConnection',
-        provider: {
-          apiKey: 'private-key',
-          baseUrl: 'https://provider.invalid/v1',
-          enabled: true,
-          id: 'provider-1',
-          model: 'private-model',
-          name: 'Provider',
-          provider: 'openai-compatible',
-        },
+        provider: 'deepseek',
       }),
     ).resolves.toEqual({
       ok: true,
@@ -452,6 +578,227 @@ describe('service worker security bootstrap', () => {
         success: false,
         code: 'network_failed',
         message: 'AI 网络连接失败',
+      },
+    });
+  });
+
+  it('returns a fixed permission result and never fetches when provider access is absent', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      storageData: legacyAiStorage(),
+    });
+
+    await expect(
+      send(harness.getMessageListener(), {
+        type: 'ai:testConnection',
+        provider: 'deepseek',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        success: false,
+        code: 'permission_required',
+        message: '需要先允许访问当前 AI 服务',
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('completes a local-only classification plan without fetching when provider access is absent', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      storageData: legacyAiStorage(),
+    });
+    harness.bookmarks.getTree.mockImplementation(
+      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
+        callback(classificationTree()),
+    );
+    const classification = extensionPort(sender('sidepanel'));
+    harness.getConnectListener()(classification.port);
+
+    classification.sendMessage({
+      type: 'plan:create',
+      requestId: 'classify-permission-denied',
+      mode: 'safe',
+      ai: { provider: 'deepseek', confirmed: true },
+    });
+
+    await vi.waitFor(() =>
+      expect(classification.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'complete',
+          requestId: 'classify-permission-denied',
+          cancelled: false,
+        }),
+      ),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(classification.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' }),
+    );
+  });
+
+  it('keeps the local classification plan when AI folder targets exceed the request limit', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      initialOrigins: ['https://api.deepseek.com/*'],
+      storageData: legacyAiStorage(),
+    });
+    harness.bookmarks.getTree.mockImplementation(
+      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
+        callback(classificationTree(65)),
+    );
+    const classification = extensionPort(sender('sidepanel'));
+    harness.getConnectListener()(classification.port);
+
+    classification.sendMessage({
+      type: 'plan:create',
+      requestId: 'classify-folder-target-overflow',
+      mode: 'safe',
+      ai: { provider: 'deepseek', confirmed: true },
+    });
+
+    await vi.waitFor(() =>
+      expect(classification.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'complete',
+          requestId: 'classify-folder-target-overflow',
+          cancelled: false,
+        }),
+      ),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(classification.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' }),
+    );
+  });
+
+  it('fails a quarantined legacy provider conflict closed without reading a secret or fetching', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      initialOrigins: ['https://api.deepseek.com/*'],
+      storageData: {
+        settings: {
+          useAi: true,
+          aiProviders: [
+            {
+              id: 'legacy-a',
+              name: 'A',
+              provider: 'deepseek',
+              enabled: true,
+              apiKey: 'private-a',
+              model: 'deepseek-v4-flash',
+            },
+            {
+              id: 'legacy-b',
+              name: 'B',
+              provider: 'deepseek',
+              enabled: true,
+              apiKey: 'private-b',
+              model: 'deepseek-v4-flash',
+            },
+          ],
+        },
+      },
+    });
+
+    await expect(
+      send(harness.getMessageListener(), {
+        type: 'ai:testConnection',
+        provider: 'deepseek',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        success: false,
+        code: 'legacy_ai_config_conflict',
+        message: '旧 AI 配置存在冲突，请先在设置中处理',
+      },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts a running Provider request on permission revoke and completes a local-only plan', async () => {
+    const fetchMock = vi.fn(
+      (_input: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('private abort')), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      initialOrigins: ['https://api.deepseek.com/*'],
+      storageData: legacyAiStorage(),
+    });
+    harness.bookmarks.getTree.mockImplementation(
+      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
+        callback(classificationTree()),
+    );
+    const classification = extensionPort(sender('sidepanel'));
+    harness.getConnectListener()(classification.port);
+
+    classification.sendMessage({
+      type: 'plan:create',
+      requestId: 'classify-permission-revoke',
+      mode: 'safe',
+      ai: { provider: 'deepseek', confirmed: true },
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    harness.revokeOrigins(['https://api.deepseek.com/*']);
+
+    await vi.waitFor(() =>
+      expect(classification.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'complete',
+          requestId: 'classify-permission-revoke',
+          cancelled: false,
+        }),
+      ),
+    );
+    expect(classification.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error' }),
+    );
+    expect(JSON.stringify(classification.postMessage.mock.calls)).not.toMatch(
+      /private abort|private-key|api\.deepseek/iu,
+    );
+  });
+
+  it('aborts a running Provider connection test when its permission is revoked', async () => {
+    const fetchMock = vi.fn(
+      (_input: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(new Error('private abort')), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = await loadServiceWorker({
+      initialOrigins: ['https://api.deepseek.com/*'],
+      storageData: legacyAiStorage(),
+    });
+
+    const response = send(harness.getMessageListener(), {
+      type: 'ai:testConnection',
+      provider: 'deepseek',
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    harness.revokeOrigins(['https://api.deepseek.com/*']);
+
+    await expect(response).resolves.toEqual({
+      ok: true,
+      data: {
+        success: false,
+        code: 'aborted',
+        message: 'AI 请求已取消',
       },
     });
   });

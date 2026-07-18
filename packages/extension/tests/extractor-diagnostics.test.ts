@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
+
 import type { SelectorProbe } from '../src/shared/bookmark-types.js';
+import { createXSingleDiagnostic } from '../src/social/x-single-item.js';
 import {
+  EXTRACTOR_DIAGNOSTICS_KEY,
+  MAX_EXTRACTOR_DIAGNOSTICS,
   createDiagnosticReport,
   getExtractorDiagnostics,
   missingRequiredProbeNames,
   saveExtractorDiagnostic,
-  sanitizeDiagnosticUrl,
-  shouldPersistDiagnostic,
-  trimDiagnosticReports,
 } from '../src/utils/extractor-diagnostics.js';
-import { getStorageSnapshot } from './setup.js';
+import { getStorageMocks, getStorageSnapshot, setStorageSnapshot } from './setup.js';
 
 const probes: SelectorProbe[] = [
   { name: 'text', selector: '.text', required: true, description: '正文' },
@@ -17,83 +18,104 @@ const probes: SelectorProbe[] = [
   { name: 'time', selector: 'time', required: false, description: '时间' },
 ];
 
-describe('extractor diagnostics', () => {
-  it('sanitizes diagnostic URLs to host and first two path segments', () => {
-    expect(sanitizeDiagnosticUrl('twitter', 'https://x.com/user/status/123?token=secret')).toBe(
-      'x.com/user/status',
-    );
-  });
+function diagnostic(errorCode: 'content_missing' | 'structure_changed' = 'content_missing') {
+  return createXSingleDiagnostic(errorCode, [
+    { name: 'primary_article', found: true },
+    { name: 'status_permalink', found: true },
+    { name: 'tweet_text', found: false },
+    { name: 'author', found: true },
+    { name: 'timestamp', found: false },
+  ]);
+}
 
-  it('detects missing required probes and creates structured reports', () => {
-    const probeResults = [
-      { name: 'text', selector: '.text', found: true },
-      { name: 'author', selector: '.author', found: false },
-      { name: 'time', selector: 'time', found: false },
-    ];
+describe('extractor diagnostics', () => {
+  it('keeps the unreachable legacy report free of URLs, selectors, and raw errors', () => {
     const report = createDiagnosticReport({
       platform: 'twitter',
-      url: 'https://x.com/user/status/123',
+      url: 'https://x.com/private-user/status/123?token=secret',
       probes,
-      probeResults,
-      fallbacksUsed: ['Twitter 正文: article [lang]'],
-      now: new Date('2026-05-29T00:00:00Z'),
+      probeResults: [
+        { name: 'text', selector: '.private-text', found: false },
+        { name: 'author', selector: '.private-author', found: true },
+      ],
+      error: 'private raw extraction error',
+      now: new Date('2026-05-29T00:00:00.000Z'),
     });
 
-    expect(missingRequiredProbeNames(probes, probeResults)).toEqual(['author']);
-    expect(report.structureValid).toBe(false);
-    expect(report.url).toBe('x.com/user/status');
-    expect(shouldPersistDiagnostic(report)).toBe(true);
+    expect(report.url).toBe('twitter');
+    expect(report.error).toBe('legacy_extractor_failed');
+    expect(JSON.stringify(report)).not.toContain('private-user');
+    expect(JSON.stringify(report)).not.toContain('token=secret');
+    expect(missingRequiredProbeNames(probes, report.probeResults)).toEqual(['text']);
   });
 
-  it('trims diagnostic reports newest first', () => {
-    const reports = Array.from({ length: 25 }, (_, index) =>
-      createDiagnosticReport({
-        platform: 'weibo',
-        url: `https://weibo.com/detail/${index}`,
-        probes,
-        probeResults: probes.map((probe) => ({
-          name: probe.name,
-          selector: probe.selector,
-          found: true,
-        })),
-        error: `error-${index}`,
-        now: new Date(index * 1000),
-      }),
+  it('stores only the strict X diagnostic with a background-generated canonical timestamp', async () => {
+    const entry = await saveExtractorDiagnostic(diagnostic(), new Date('2026-07-18T06:00:00.000Z'));
+
+    expect(entry).toEqual({
+      ...diagnostic(),
+      timestamp: '2026-07-18T06:00:00.000Z',
+    });
+    await expect(getExtractorDiagnostics()).resolves.toEqual([entry]);
+    expect(JSON.stringify(getStorageSnapshot())).not.toMatch(
+      /private|selector|https?:|status\/\d|raw error/iu,
     );
-
-    const trimmed = trimDiagnosticReports(reports);
-
-    expect(trimmed).toHaveLength(20);
-    expect(trimmed[0].error).toBe('error-24');
   });
 
-  it('persists only degraded or failed diagnostic reports', async () => {
-    const healthy = createDiagnosticReport({
-      platform: 'twitter',
-      url: 'https://x.com/user/status/1',
-      probes,
-      probeResults: probes.map((probe) => ({
-        name: probe.name,
-        selector: probe.selector,
-        found: true,
-      })),
-    });
-    const degraded = createDiagnosticReport({
-      platform: 'twitter',
-      url: 'https://x.com/user/status/2',
-      probes,
-      probeResults: probes.map((probe) => ({
-        name: probe.name,
-        selector: probe.selector,
-        found: true,
-      })),
-      fallbacksUsed: ['Twitter 正文: [data-testid="tweetText"]'],
+  it('retains only the newest bounded diagnostic entries', async () => {
+    for (let index = 0; index < MAX_EXTRACTOR_DIAGNOSTICS + 2; index += 1) {
+      await saveExtractorDiagnostic(
+        diagnostic(index % 2 === 0 ? 'content_missing' : 'structure_changed'),
+        new Date(index * 1_000),
+      );
+    }
+
+    const entries = await getExtractorDiagnostics();
+    expect(entries).toHaveLength(MAX_EXTRACTOR_DIAGNOSTICS);
+    expect(entries[0]?.timestamp).toBe(
+      new Date((MAX_EXTRACTOR_DIAGNOSTICS + 1) * 1_000).toISOString(),
+    );
+  });
+
+  it.each([
+    { ...diagnostic(), version: 2 },
+    { ...diagnostic(), routeFamily: 'x/bookmarks' },
+    { ...diagnostic(), errorCode: 'private_error' },
+    {
+      ...diagnostic(),
+      probes: [{ name: 'private_selector', found: true }],
+    },
+    { ...diagnostic(), timestamp: '2026-07-18T06:00:00.000Z' },
+    { ...diagnostic(), privateUrl: 'https://x.com/private/status/1' },
+  ])('rejects untrusted diagnostic shape before storage write', async (input) => {
+    await expect(saveExtractorDiagnostic(input as never)).rejects.toThrow();
+    expect(getStorageMocks().set).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed or non-canonical stored values without rewriting them', async () => {
+    const raw = [
+      {
+        ...diagnostic(),
+        timestamp: '2026-07-18T06:00:00Z',
+      },
+    ];
+    setStorageSnapshot({ [EXTRACTOR_DIAGNOSTICS_KEY]: raw });
+
+    await expect(getExtractorDiagnostics()).rejects.toThrow('extractor_diagnostics_invalid');
+    expect(getStorageSnapshot()).toEqual({ [EXTRACTOR_DIAGNOSTICS_KEY]: raw });
+    expect(getStorageMocks().set).not.toHaveBeenCalled();
+  });
+
+  it('rejects accessor-bearing input without reading or persisting it', async () => {
+    const input = { ...diagnostic() } as Record<string, unknown>;
+    Object.defineProperty(input, 'privateUrl', {
+      enumerable: true,
+      get: () => {
+        throw new Error('private getter executed');
+      },
     });
 
-    await saveExtractorDiagnostic(healthy);
-    await saveExtractorDiagnostic(degraded);
-
-    expect(getStorageSnapshot()).toHaveProperty('extractorDiagnostics');
-    await expect(getExtractorDiagnostics()).resolves.toEqual([degraded]);
+    await expect(saveExtractorDiagnostic(input as never)).rejects.toThrow();
+    expect(getStorageMocks().set).not.toHaveBeenCalled();
   });
 });

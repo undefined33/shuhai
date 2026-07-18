@@ -5,7 +5,7 @@ export type ClassificationMode = 'safe' | 'full';
 export type ExportScope = 'all' | 'plan' | 'selected';
 export type CaptureSource = 'page' | 'twitter' | 'weibo' | 'article';
 export type UrlHealthStatus = 'alive' | 'redirected' | 'dead' | 'error' | 'skipped';
-export type AiProviderType = 'deepseek' | 'kimi' | 'glm' | 'openai-compatible';
+export type AiProviderType = 'deepseek' | 'kimi' | 'glm';
 export type ExtractorPlatform = 'twitter' | 'weibo';
 
 export interface AiProviderConfig {
@@ -13,60 +13,91 @@ export interface AiProviderConfig {
   name: string;
   provider: AiProviderType;
   enabled: boolean;
-  apiKey: string;
-  baseUrl: string;
   model: string;
-  temperature?: number;
-  maxTokens?: number;
+  hasApiKey: boolean;
 }
 
 export interface AiProviderTemplate {
   provider: AiProviderType;
   name: string;
-  baseUrl: string;
+  endpoint: string;
+  origin: string;
+  permission: string;
   defaultModel: string;
   models: string[];
   description: string;
 }
 
+export type AiProviderErrorCode =
+  | 'permission_required'
+  | 'permission_denied'
+  | 'secret_unavailable'
+  | 'legacy_ai_config_conflict'
+  | 'request_invalid'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'rate_limited'
+  | 'provider_unavailable'
+  | 'timeout'
+  | 'aborted'
+  | 'response_too_large'
+  | 'content_type_invalid'
+  | 'response_encoding_invalid'
+  | 'response_invalid'
+  | 'network_failed';
+
 export interface AiProviderTestResult {
   success: boolean;
+  code: 'connection_ok' | AiProviderErrorCode;
   message: string;
-  status?: number;
+}
+
+export interface AiLegacySummary {
+  builtInConflicts: AiProviderType[];
+  customState: 'absent' | 'disabled_no_key' | 'conflict_has_key';
+}
+
+export interface AiProviderSecret {
+  provider: AiProviderType;
+  origin: string;
+  apiKey: string;
+}
+
+export interface AiProviderSecretsEnvelope {
+  version: 1;
+  providers: AiProviderSecret[];
 }
 
 export const PROVIDER_TEMPLATES: AiProviderTemplate[] = [
   {
     provider: 'deepseek',
     name: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-chat',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
+    endpoint: 'https://api.deepseek.com/chat/completions',
+    origin: 'https://api.deepseek.com',
+    permission: 'https://api.deepseek.com/*',
+    defaultModel: 'deepseek-v4-flash',
+    models: ['deepseek-v4-flash'],
     description: '高性价比，适合书签分类',
   },
   {
     provider: 'kimi',
     name: 'Kimi (Moonshot)',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'moonshot-v1-8k',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    endpoint: 'https://api.moonshot.cn/v1/chat/completions',
+    origin: 'https://api.moonshot.cn',
+    permission: 'https://api.moonshot.cn/*',
+    defaultModel: 'kimi-k3',
+    models: ['kimi-k3'],
     description: '月之暗面，支持长上下文',
   },
   {
     provider: 'glm',
     name: '智谱 GLM',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    defaultModel: 'glm-4-flash',
-    models: ['glm-4-flash', 'glm-4-plus', 'glm-4'],
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    origin: 'https://open.bigmodel.cn',
+    permission: 'https://open.bigmodel.cn/*',
+    defaultModel: 'glm-5.2',
+    models: ['glm-5.2'],
     description: '智谱 AI，国产大模型',
-  },
-  {
-    provider: 'openai-compatible',
-    name: '自定义 (OpenAI 兼容)',
-    baseUrl: '',
-    defaultModel: '',
-    models: [],
-    description: '任何兼容 OpenAI /chat/completions 接口的服务',
   },
 ];
 
@@ -1633,6 +1664,7 @@ export interface AppSettings {
   useAi: boolean;
   activeProviderId: string;
   aiProviders: AiProviderConfig[];
+  aiLegacySummary: AiLegacySummary;
   customRules: CustomRule[];
   templates: MarkdownTemplate[];
   activeTemplateIds: Partial<Record<MarkdownTemplateScope, string>>;
@@ -1692,7 +1724,6 @@ export interface ExtensionState {
   folders: FolderItem[];
   backups: BackupRecord[];
   exportManifests: ExportManifest[];
-  pendingCaptures: CapturedContent[];
   urlHealthRecords: UrlHealthRecord[];
   bookmarkOperations: BookmarkOperation[];
   lastMoveRecordCount: number;
@@ -1703,7 +1734,6 @@ export interface ExtensionState {
 export interface StateSummary {
   bookmarkCount: number;
   folderCount: number;
-  pendingCaptureCount: number;
   onboarded: boolean;
   hasVaultHandle: boolean;
   hasAiProvider: boolean;

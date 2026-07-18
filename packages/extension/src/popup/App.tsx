@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
-  BookOpen,
   Loader2,
   PanelRightOpen,
   Settings as SettingsIcon,
@@ -11,6 +10,7 @@ import {
 import type {
   AiProviderConfig,
   AiProviderTestResult,
+  AiProviderType,
   AppSettings,
   BackupRecord,
   BookmarkItem,
@@ -18,7 +18,6 @@ import type {
   BookmarkOperation,
   BookmarkOperationCommand,
   BookmarkOperationCommandResponse,
-  CapturedContent,
   ClassificationMode,
   ClassificationPlan,
   ClassificationProgress,
@@ -30,6 +29,8 @@ import type {
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import { isBookmarkOperation } from '../shared/bookmark-types.js';
+import { inspectAiClassificationCandidates } from '../shared/ai-classifier.js';
+import { providerPermission, providerTemplate } from '../shared/ai-providers.js';
 import {
   parseClassificationPortMessage,
   parseBookmarkOperationMessageResponse,
@@ -37,6 +38,7 @@ import {
   type ClassificationPortMessage,
   type ClassificationPortRequest,
   type ExtensionRequest,
+  type LegacyPendingSummary,
   type LegacySuccessData,
 } from '../shared/extension-messages.js';
 import { Badge } from '../components/ui/badge.js';
@@ -72,6 +74,7 @@ import { toStructuredError, type StructuredError } from '../utils/error-messages
 import { getVaultHandle } from '../utils/vault-writer.js';
 import type { SyncJob } from '../social/sync-schema.js';
 import { openSyncStore } from '../social/sync-store.js';
+import { canonicalizeXStatusUrl } from '../social/x-single-item.js';
 import {
   X_SYNC_BOOKMARKS_URL,
   X_SYNC_PROTOCOL,
@@ -88,7 +91,7 @@ import ActivityPage from './pages/ActivityPage.js';
 import CollectionPage from './pages/CollectionPage.js';
 import HealthPage from './pages/HealthPage.js';
 import HomePage from './pages/HomePage.js';
-import type { CurrentTabInfo, InlineSaveSource } from './pages/InlineSavePanel.js';
+import type { CurrentTabInfo } from './pages/InlineSavePanel.js';
 import { OnboardingChecklist } from './pages/OnboardingChecklist.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
@@ -167,7 +170,6 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
     folders: arrayOrEmpty<FolderItem>(state.folders),
     backups: arrayOrEmpty<BackupRecord>(state.backups),
     exportManifests: arrayOrEmpty<ExportManifest>(state.exportManifests),
-    pendingCaptures: arrayOrEmpty<CapturedContent>(state.pendingCaptures),
     urlHealthRecords: arrayOrEmpty<UrlHealthRecord>(state.urlHealthRecords),
     bookmarkOperations: [],
     lastMoveRecordCount:
@@ -190,11 +192,6 @@ function normalizeStateSummary(value: unknown): StateSummary {
     folderCount:
       typeof summary.folderCount === 'number' && Number.isFinite(summary.folderCount)
         ? summary.folderCount
-        : 0,
-    pendingCaptureCount:
-      typeof summary.pendingCaptureCount === 'number' &&
-      Number.isFinite(summary.pendingCaptureCount)
-        ? summary.pendingCaptureCount
         : 0,
     onboarded: summary.onboarded === true,
     hasVaultHandle: summary.hasVaultHandle === true,
@@ -469,38 +466,6 @@ async function takePreferredPage(): Promise<PageName | undefined> {
   return preferredPage;
 }
 
-function detectInlineSaveSource(url: string): InlineSaveSource | undefined {
-  try {
-    const parsed = new URL(url);
-    if (
-      (parsed.hostname === 'x.com' ||
-        parsed.hostname.endsWith('.x.com') ||
-        parsed.hostname === 'twitter.com' ||
-        parsed.hostname.endsWith('.twitter.com')) &&
-      /\/[^/]+\/status\/\d+/.test(parsed.pathname)
-    ) {
-      return 'twitter';
-    }
-
-    if (
-      (parsed.hostname === 'weibo.com' ||
-        parsed.hostname.endsWith('.weibo.com') ||
-        parsed.hostname === 'm.weibo.cn') &&
-      (/\/detail\/[^/?#]+/.test(parsed.pathname) || /\/status\/[^/?#]+/.test(parsed.pathname))
-    ) {
-      return 'weibo';
-    }
-
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return 'article';
-    }
-  } catch {
-    return undefined;
-  }
-
-  return undefined;
-}
-
 export function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
   if (!chrome.tabs?.query) {
     return Promise.resolve(undefined);
@@ -523,39 +488,95 @@ export function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
       resolve({
         title: tab.title,
         url,
-        source: detectInlineSaveSource(url),
+        canSaveX: Boolean(canonicalizeXStatusUrl(url)),
       });
     });
   });
 }
 
+function requestOptionalOrigin(origin: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.permissions.contains({ origins: [origin] }, (alreadyGranted) => {
+      if (chrome.runtime.lastError) {
+        resolve(false);
+        return;
+      }
+      if (alreadyGranted) {
+        resolve(true);
+        return;
+      }
+      chrome.permissions.request({ origins: [origin] }, (granted) => {
+        resolve(!chrome.runtime.lastError && granted === true);
+      });
+    });
+  });
+}
+
+export async function requestAiClassificationConsent(
+  provider: AiProviderConfig,
+  candidateCount: number,
+  confirmRequest: (message: string) => boolean,
+  requestPermission: (origin: string) => Promise<boolean>,
+): Promise<{
+  ai?: { provider: AiProviderType; confirmed: true };
+  permissionDenied: boolean;
+}> {
+  if (!Number.isSafeInteger(candidateCount) || candidateCount <= 0) {
+    return { permissionDenied: false };
+  }
+  const template = providerTemplate(provider.provider);
+  const confirmed = confirmRequest(
+    [
+      `Provider: ${provider.name} (${template.origin})`,
+      `候选数量: ${candidateCount}`,
+      '发送字段: 受限标题、网站 hostname、已有目标目录标签',
+      '不会发送: 完整 URL、query、正文、书签树、Vault、Cookie/token 或 API Key',
+      '',
+      '是否同意本次使用 AI？取消后仍会使用纯本地规则。',
+    ].join('\n'),
+  );
+  if (!confirmed) {
+    return { permissionDenied: false };
+  }
+  if (!(await requestPermission(providerPermission(provider.provider)))) {
+    return { permissionDenied: true };
+  }
+  return {
+    ai: { provider: provider.provider, confirmed: true },
+    permissionDenied: false,
+  };
+}
+
 interface PopupLauncherProps {
   busy: boolean;
+  currentTab?: CurrentTabInfo;
   onboardingProgress: OnboardingProgress;
   summary?: StateSummary;
   state?: ExtensionState;
   onOpenSidePanel(page: PageName): void;
   onQuickClassify(): void;
   onQuickHealth(): void;
+  onSaveCurrentX(): Promise<void>;
   onSkipOnboarding(): void;
   onUsePopup(page: PageName): void;
 }
 
 function PopupLauncher({
   busy,
+  currentTab,
   onboardingProgress,
   summary,
   state,
   onOpenSidePanel,
   onQuickClassify,
   onQuickHealth,
+  onSaveCurrentX,
   onSkipOnboarding,
   onUsePopup,
 }: PopupLauncherProps) {
   const bookmarkCount = summary?.bookmarkCount ?? state?.bookmarks?.length ?? 0;
   const folderCount = summary?.folderCount ?? state?.folders?.length ?? 0;
-  const pendingCaptureCount = summary?.pendingCaptureCount ?? state?.pendingCaptures?.length ?? 0;
-  const setupReady = Boolean(summary?.hasVaultHandle && summary?.hasAiProvider);
+  const setupReady = Boolean(summary?.hasVaultHandle);
   const lastSavedLabel = summary?.lastExportDate
     ? new Date(summary.lastExportDate).toLocaleDateString()
     : undefined;
@@ -576,9 +597,6 @@ function PopupLauncher({
               </p>
             </div>
           </div>
-          {pendingCaptureCount > 0 ? (
-            <Badge variant="accent">待入库 {pendingCaptureCount}</Badge>
-          ) : null}
         </header>
 
         <Separator />
@@ -590,15 +608,29 @@ function PopupLauncher({
                 <PanelRightOpen className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-base font-semibold">打开 ShuHai 工作区</h2>
+                <h2 className="text-base font-semibold">
+                  {currentTab?.canSaveX ? '保存当前 X 内容' : '打开 ShuHai 工作区'}
+                </h2>
                 <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-                  在侧边栏里整理书签、查看旧链接记录、确认内容入库。
+                  {currentTab?.canSaveX
+                    ? '只读取当前详情页，提取后进入复核，不会直接写入 Vault。'
+                    : '在侧边栏里整理书签、同步 X 收藏，并确认内容写入 Vault。'}
                 </p>
               </div>
             </div>
-            <Button className="h-10 w-full" disabled={busy} onClick={() => onOpenSidePanel('home')}>
-              <PanelRightOpen className="h-4 w-4" />
-              打开工作区
+            <Button
+              className="h-10 w-full"
+              disabled={busy}
+              onClick={() =>
+                currentTab?.canSaveX ? void onSaveCurrentX() : onOpenSidePanel('home')
+              }
+            >
+              {currentTab?.canSaveX ? (
+                <Sparkles className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+              {currentTab?.canSaveX ? '加入安全复核' : '打开工作区'}
             </Button>
           </CardContent>
         </Card>
@@ -633,12 +665,6 @@ function PopupLauncher({
         </div>
 
         <div className="mt-auto grid gap-2">
-          {pendingCaptureCount > 0 ? (
-            <Button disabled={busy} onClick={() => onUsePopup('collection')} variant="secondary">
-              <BookOpen className="h-4 w-4" />
-              处理待入库 {pendingCaptureCount}
-            </Button>
-          ) : null}
           <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
             <button
               className="hover:text-foreground"
@@ -683,7 +709,7 @@ function PopupLauncher({
       {state && !state.onboarded ? (
         <OnboardingChecklist
           compact
-          onOpenCollect={() => onUsePopup('collection')}
+          onOpenCollect={() => onUsePopup('home')}
           onOpenOrganize={() => onUsePopup('organize')}
           onOpenSettings={() => onUsePopup('settings')}
           onSkip={onSkipOnboarding}
@@ -707,11 +733,6 @@ function PopupLauncher({
             <Sparkles className="h-4 w-4" />
             整理书签
           </Button>
-          <Button disabled={busy} onClick={() => onOpenSidePanel('collection')} variant="outline">
-            <BookOpen className="h-4 w-4" />
-            待入库
-            {pendingCaptureCount > 0 ? <Badge variant="accent">{pendingCaptureCount}</Badge> : null}
-          </Button>
           <Button disabled={busy} onClick={() => onOpenSidePanel('settings')} variant="outline">
             <SettingsIcon className="h-4 w-4" />
             设置
@@ -730,7 +751,7 @@ function PopupLauncher({
             variant="secondary"
           >
             <Sparkles className="h-4 w-4" />
-            AI 整理
+            整理书签
           </Button>
           <Button
             disabled={busy || bookmarkCount === 0}
@@ -749,12 +770,6 @@ function PopupLauncher({
             <span className="text-muted-foreground">AI 整理</span>
             <Badge variant={state?.settings?.useAi ? 'success' : 'warning'}>
               {state?.settings?.useAi ? '已启用' : '规则模式'}
-            </Badge>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">待入库</span>
-            <Badge variant={pendingCaptureCount > 0 ? 'accent' : 'outline'}>
-              {pendingCaptureCount}
             </Badge>
           </div>
         </CardContent>
@@ -910,7 +925,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [classificationProgress, setClassificationProgress] = useState<ClassificationProgress>();
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const [currentTabInfo, setCurrentTabInfo] = useState<CurrentTabInfo | undefined>();
-  const [focusedCaptureId, setFocusedCaptureId] = useState('');
   const [lastAppliedMoveCount, setLastAppliedMoveCount] = useState(0);
   const [contextResolved, setContextResolved] = useState(false);
   const [xSyncRoute, setXSyncRoute] = useState(false);
@@ -921,7 +935,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const classificationRequestIdRef = useRef<string | undefined>(undefined);
   const classificationCancelRequestIdRef = useRef<string | undefined>(undefined);
-  const previousPendingCaptureCountRef = useRef<number | undefined>(undefined);
 
   const busy = Boolean(busyAction);
 
@@ -1008,11 +1021,10 @@ function AppContent({ surface = 'popup' }: AppProps) {
       setSummary({
         bookmarkCount: nextState.bookmarks.length,
         folderCount: nextState.folders.length,
-        pendingCaptureCount: nextState.pendingCaptures.length,
         onboarded: nextState.onboarded,
         hasVaultHandle: Boolean(vaultHandle),
         hasAiProvider: nextState.settings.aiProviders.some(
-          (provider) => provider.enabled && provider.apiKey.trim().length > 0,
+          (provider) => provider.enabled && provider.hasApiKey,
         ),
         lastExportDate: nextState.exportManifests[0]?.exportedAt,
       });
@@ -1145,7 +1157,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
         'exportManifests',
         'lastMoveRecords',
         'onboarded',
-        'pendingCapture',
         'settings',
         'urlHealthRecords',
       ]);
@@ -1164,22 +1175,34 @@ function AppContent({ surface = 'popup' }: AppProps) {
     return () => chrome.storage.onChanged.removeListener(listener);
   }, [forcePopupWorkspace, surface, xSyncRoute]);
 
-  useEffect(() => {
-    const pendingCount = state?.pendingCaptures?.length ?? 0;
-    const previousCount = previousPendingCaptureCountRef.current;
-    if (previousCount !== undefined && pendingCount > previousCount) {
-      const latestCapture = [...(state?.pendingCaptures ?? [])].sort(
-        (a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt),
-      )[0];
-      setFocusedCaptureId(latestCapture?.id ?? '');
-      setPage('home');
-      setForcePopupWorkspace(true);
-      toast({ kind: 'success', message: '内容已提取到 ShuHai，确认后写入 Vault。' });
-    }
-    previousPendingCaptureCountRef.current = pendingCount;
-  }, [state?.pendingCaptures?.length, toast]);
-
   const createPlan = async (mode: ClassificationMode) => {
+    let ai: { provider: AiProviderType; confirmed: true } | undefined;
+    const activeProvider = settings.aiProviders.find(
+      (provider) =>
+        provider.id === settings.activeProviderId && provider.enabled && provider.hasApiKey,
+    );
+    if (settings.useAi && activeProvider) {
+      const candidateInspection = inspectAiClassificationCandidates(bookmarks, settings, {
+        mode,
+        folders,
+      });
+      if (candidateInspection.errorCode === 'request_invalid') {
+        toast({
+          kind: 'info',
+          message: 'AI 目标目录超过安全上限，本次改用纯本地规则。',
+        });
+      }
+      const consent = await requestAiClassificationConsent(
+        activeProvider,
+        candidateInspection.count,
+        (message) => window.confirm(message),
+        requestOptionalOrigin,
+      );
+      ai = consent.ai;
+      if (consent.permissionDenied) {
+        toast({ kind: 'info', message: '未获得 AI 服务权限，本次改用纯本地规则。' });
+      }
+    }
     setBusyAction('plan');
     setNotice(undefined);
     setPage('organize');
@@ -1194,7 +1217,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     });
     setStatus(mode === 'full' ? '正在重新审视全部书签...' : '正在生成整理建议...');
     try {
-      const nextPlan = await createPlanWithProgress(mode);
+      const nextPlan = await createPlanWithProgress(mode, ai);
       setPlan(nextPlan);
       setOrganizeMode('plan');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
@@ -1226,10 +1249,16 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
-  const createPlanWithProgress = (mode: ClassificationMode): Promise<ClassificationPlan> =>
+  const createPlanWithProgress = (
+    mode: ClassificationMode,
+    ai?: { provider: AiProviderType; confirmed: true },
+  ): Promise<ClassificationPlan> =>
     new Promise((resolve, reject) => {
       if (!chrome.runtime.connect) {
-        void sendMessage({ type: 'plan:create', mode }).then(resolve, reject);
+        void sendMessage({ type: 'plan:create', mode, ...(ai ? { ai } : {}) }).then(
+          resolve,
+          reject,
+        );
         return;
       }
 
@@ -1327,6 +1356,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
         type: 'plan:create',
         requestId,
         mode,
+        ...(ai ? { ai } : {}),
       } satisfies ClassificationPortRequest);
     });
 
@@ -1490,31 +1520,63 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
-  const testAiProvider = async (provider: AiProviderConfig): Promise<AiProviderTestResult> =>
+  const setAiProviderSecret = async (
+    provider: AiProviderType,
+    apiKey: string,
+  ): Promise<AppSettings> => sendMessage({ type: 'ai:secret:set', provider, apiKey });
+
+  const clearAiProviderSecret = async (provider: AiProviderType): Promise<AppSettings> =>
+    sendMessage({ type: 'ai:secret:clear', provider, confirmed: true });
+
+  const discardLegacyAi = async (): Promise<AppSettings> =>
+    sendMessage({ type: 'ai:legacy:discard', confirmed: true });
+
+  const testAiProvider = async (provider: AiProviderType): Promise<AiProviderTestResult> =>
     sendMessage({ type: 'ai:testConnection', provider });
 
-  const clearPendingCapture = async () => {
-    await sendMessage({ type: 'capture:clearPending' });
-    await loadState();
+  const inspectLegacyPending = async (): Promise<LegacyPendingSummary> =>
+    sendMessage({
+      type: 'legacyPending:inspect',
+      requestId: createOperationRequestId(),
+    });
+
+  const clearLegacyPending = async (): Promise<void> => {
+    await sendMessage({
+      type: 'legacyPending:clear',
+      requestId: createOperationRequestId(),
+      confirmed: true,
+    });
   };
 
-  const captureCurrentContent = async (source: InlineSaveSource) => {
-    const request: ExtensionRequest =
-      source === 'article'
-        ? { type: 'capture:currentArticle' }
-        : { type: 'capture:currentSocial', source };
-    const result = await sendMessage(request);
-    setFocusedCaptureId(result.capture.id);
-    await loadState();
-
-    return result.capture;
-  };
-
-  const captureCurrentSocial = async (source: 'twitter' | 'weibo') => captureCurrentContent(source);
-
-  const removePendingCapture = async (id: string) => {
-    await sendMessage({ type: 'capture:removePending', id });
-    await loadState();
+  const saveCurrentX = async (): Promise<void> => {
+    setBusyAction('operation');
+    setNotice(undefined);
+    try {
+      const result = await sendMessage({
+        type: 'xSingle:start',
+        requestId: createOperationRequestId(),
+      });
+      const [job, windowId] = await Promise.all([
+        readXSyncJob(false).catch(() => undefined),
+        getCurrentWindowId().catch(() => undefined),
+      ]);
+      setXSyncLastJob(job);
+      setXSyncWindowId(windowId);
+      setXSyncRoute(true);
+      setStatus(
+        result.noWriteCandidate
+          ? '这条 X 内容已存在，没有创建写入候选。'
+          : 'X 内容已进入复核，确认后才能写入 Vault。',
+      );
+      toast({
+        kind: result.noWriteCandidate ? 'info' : 'success',
+        message: result.noWriteCandidate ? '内容已存在，没有重复写入。' : '内容已进入安全复核。',
+      });
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusyAction(undefined);
+    }
   };
 
   const clearHealthRecords = async () => {
@@ -1872,10 +1934,12 @@ function AppContent({ surface = 'popup' }: AppProps) {
       <>
         <PopupLauncher
           busy={busy}
+          currentTab={currentTabInfo}
           onboardingProgress={onboardingProgress}
           onOpenSidePanel={handleOpenSidePanel}
           onQuickClassify={quickClassifyFromPopup}
           onQuickHealth={quickHealthFromPopup}
+          onSaveCurrentX={saveCurrentX}
           onSkipOnboarding={completeOnboarding}
           onUsePopup={usePopupWorkspace}
           summary={summary}
@@ -1885,10 +1949,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
     );
   }
 
-  const pendingCaptures = state?.pendingCaptures ?? [];
-  const focusedCapture = focusedCaptureId
-    ? pendingCaptures.find((capture) => capture.id === focusedCaptureId)
-    : undefined;
   const pageTitle: Record<PageName, string> = {
     home: 'ShuHai',
     organize: '整理书签',
@@ -1903,12 +1963,9 @@ function AppContent({ surface = 'popup' }: AppProps) {
         bookmarkCount={bookmarks.length}
         busy={busy}
         currentTab={currentTabInfo}
-        exportManifests={state?.exportManifests ?? []}
         folderCount={folders.length}
-        initialCapture={focusedCapture}
         onboarded={state?.onboarded ?? false}
         onboardingProgress={onboardingProgress}
-        onCapture={captureCurrentContent}
         onCreatePlan={() => void createPlan(classifyMode)}
         onOpenActivity={() => setPage('activity')}
         onOpenCollection={() => setPage('collection')}
@@ -1918,11 +1975,8 @@ function AppContent({ surface = 'popup' }: AppProps) {
           setOrganizeMode('browse');
         }}
         onOpenSettings={() => setPage('settings')}
-        onRefresh={loadState}
-        onRemovePendingCapture={removePendingCapture}
+        onSaveCurrentX={saveCurrentX}
         onSkipOnboarding={completeOnboarding}
-        pendingCaptures={pendingCaptures}
-        settings={settings}
       />
     ) : page === 'organize' ? (
       <OrganizePage
@@ -1968,14 +2022,11 @@ function AppContent({ surface = 'popup' }: AppProps) {
       />
     ) : page === 'collection' ? (
       <CollectionPage
+        busy={busy}
+        currentTab={currentTabInfo}
         exportManifests={state?.exportManifests ?? []}
-        onCaptureCurrentSocial={captureCurrentSocial}
-        onClearPendingCapture={clearPendingCapture}
         onOpenSettings={openSettingsFromOnboarding}
-        onRefresh={loadState}
-        onRemovePendingCapture={removePendingCapture}
-        pendingCaptures={pendingCaptures}
-        settings={settings}
+        onSaveCurrentX={saveCurrentX}
       />
     ) : page === 'activity' ? (
       <ActivityPage onBack={() => setPage('home')} settings={settings} />
@@ -1984,9 +2035,14 @@ function AppContent({ surface = 'popup' }: AppProps) {
         backups={backups}
         busy={busy}
         exportManifests={state?.exportManifests ?? []}
+        onClearLegacyPending={clearLegacyPending}
+        onClearProviderSecret={clearAiProviderSecret}
+        onDiscardLegacyAi={discardLegacyAi}
         onDownloadBackup={downloadBackup}
+        onInspectLegacyPending={inspectLegacyPending}
         onOpenActivity={() => setPage('activity')}
         onSave={saveSettings}
+        onSetProviderSecret={setAiProviderSecret}
         onTestProvider={testAiProvider}
         settings={settings}
       />

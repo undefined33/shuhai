@@ -9,24 +9,32 @@ import {
   summarizeBookmarkOperationItems,
 } from '../src/shared/bookmark-types.js';
 import {
+  AI_PROVIDER_SECRETS_KEY,
+  AI_PUBLIC_SETTINGS_VERSION,
   BOOKMARK_OPERATIONS_KEY,
+  DEFAULT_SETTINGS,
+  LEGACY_PENDING_MAX_BYTES,
+  PENDING_CAPTURE_KEY,
   SETTINGS_KEY,
   URL_HEALTH_RECORDS_KEY,
   BookmarkOperationStorageError,
+  clearLegacyPendingCapture,
+  discardLegacyAiConfiguration,
+  getAiProviderSecretForUse,
   getBookmarkOperationJournal,
   getBookmarkOperationReserveBytes,
   getOnboarded,
-  getPendingCaptures,
   getSettings,
   getUrlHealthRecords,
+  inspectLegacyPendingCapture,
   insertBookmarkOperation,
   pruneBookmarkOperations,
-  removePendingCapture,
+  saveSettings,
   saveBookmarkOperation,
   saveBookmarkOperationJournal,
   saveOnboarded,
-  savePendingCapture,
   saveUrlHealthRecords,
+  setAiProviderSecret,
   setLocalValues,
 } from '../src/utils/storage.js';
 import {
@@ -164,35 +172,6 @@ describe('storage helpers', () => {
     await expect(getOnboarded()).resolves.toBe(true);
   });
 
-  it('stores captured content as a queue and removes one item by id', async () => {
-    await savePendingCapture({
-      id: 'article-1',
-      source: 'article',
-      title: 'Article',
-      url: 'https://example.com/a',
-      text: 'body',
-      media: [],
-      tags: ['article'],
-      capturedAt: new Date(0).toISOString(),
-    });
-    await savePendingCapture({
-      id: 'tweet-1',
-      source: 'twitter',
-      title: 'Tweet',
-      url: 'https://x.com/a/status/1',
-      text: 'tweet',
-      media: [],
-      tags: ['twitter'],
-      capturedAt: new Date(0).toISOString(),
-    });
-
-    await expect(getPendingCaptures()).resolves.toHaveLength(2);
-    await expect(removePendingCapture('article-1')).resolves.toBe(true);
-    await expect(getPendingCaptures()).resolves.toEqual([
-      expect.objectContaining({ id: 'tweet-1' }),
-    ]);
-  });
-
   it('stores URL health records', async () => {
     await saveUrlHealthRecords([
       {
@@ -247,7 +226,7 @@ describe('storage helpers', () => {
     expect(getStorageMocks().remove).not.toHaveBeenCalled();
   });
 
-  it('migrates legacy DeepSeek settings into provider config', async () => {
+  it('migrates one valid legacy DeepSeek key into the isolated secret envelope', async () => {
     await setLocalValues({
       [SETTINGS_KEY]: {
         deepSeekApiKey: 'legacy-key',
@@ -258,22 +237,246 @@ describe('storage helpers', () => {
       },
     });
 
-    await expect(getSettings()).resolves.toMatchObject({
+    const settings = await getSettings();
+    expect(settings).toMatchObject({
       useAi: true,
-      activeProviderId: 'deepseek-migrated',
+      activeProviderId: 'deepseek-default',
       defaultClassifyMode: 'full',
       exportDirectory: 'Knowledge',
       aiProviders: [
         expect.objectContaining({
-          id: 'deepseek-migrated',
+          id: 'deepseek-default',
           provider: 'deepseek',
-          apiKey: 'legacy-key',
+          hasApiKey: true,
           model: 'deepseek-reasoner',
         }),
         expect.objectContaining({ provider: 'kimi' }),
         expect.objectContaining({ provider: 'glm' }),
       ],
     });
+    expect(JSON.stringify(settings)).not.toContain('legacy-key');
+    expect(JSON.stringify(settings)).not.toContain('baseUrl');
+    await expect(getAiProviderSecretForUse('deepseek')).resolves.toEqual({
+      provider: 'deepseek',
+      origin: 'https://api.deepseek.com',
+      apiKey: 'legacy-key',
+    });
+
+    const snapshot = getStorageSnapshot();
+    expect(snapshot[SETTINGS_KEY]).toMatchObject({
+      version: AI_PUBLIC_SETTINGS_VERSION,
+      settings: {
+        activeProviderId: 'deepseek-default',
+      },
+    });
+    expect(JSON.stringify(snapshot[SETTINGS_KEY])).not.toContain('legacy-key');
+    expect(snapshot[AI_PROVIDER_SECRETS_KEY]).toEqual({
+      version: 1,
+      providers: [
+        {
+          provider: 'deepseek',
+          origin: 'https://api.deepseek.com',
+          apiKey: 'legacy-key',
+        },
+      ],
+    });
+  });
+
+  it('quarantines duplicate built-in and custom legacy keys until explicit discard', async () => {
+    const legacy = {
+      useAi: true,
+      exportDirectory: 'Knowledge',
+      aiProviders: [
+        {
+          id: 'legacy-deepseek-a',
+          name: 'DeepSeek A',
+          provider: 'deepseek',
+          enabled: true,
+          apiKey: 'legacy-a',
+          baseUrl: 'https://attacker.invalid',
+          model: 'deepseek-reasoner',
+        },
+        {
+          id: 'legacy-deepseek-b',
+          name: 'DeepSeek B',
+          provider: 'deepseek',
+          enabled: true,
+          apiKey: 'legacy-b',
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-reasoner',
+        },
+        {
+          id: 'legacy-custom',
+          name: 'Custom',
+          provider: 'openai-compatible',
+          enabled: true,
+          apiKey: 'custom-secret',
+          baseUrl: 'https://custom.invalid',
+          model: 'custom-model',
+        },
+      ],
+    };
+    setStorageSnapshot({ [SETTINGS_KEY]: legacy });
+
+    const quarantined = await getSettings();
+    expect(quarantined.useAi).toBe(false);
+    expect(quarantined.aiLegacySummary).toEqual({
+      builtInConflicts: ['deepseek'],
+      customState: 'conflict_has_key',
+    });
+    expect(quarantined.aiProviders.every((provider) => !provider.hasApiKey)).toBe(true);
+    expect(getStorageSnapshot()).toEqual({ [SETTINGS_KEY]: legacy });
+    await expect(saveSettings(quarantined)).rejects.toThrow('legacy_ai_config_conflict');
+    expect(getStorageSnapshot()).toEqual({ [SETTINGS_KEY]: legacy });
+
+    const discarded = await discardLegacyAiConfiguration();
+    expect(discarded.useAi).toBe(false);
+    expect(discarded.exportDirectory).toBe('Knowledge');
+    expect(discarded.aiLegacySummary).toEqual({
+      builtInConflicts: [],
+      customState: 'absent',
+    });
+    const persisted = getStorageSnapshot();
+    expect(JSON.stringify(persisted[SETTINGS_KEY])).not.toMatch(
+      /legacy-a|legacy-b|custom-secret|attacker|custom\.invalid/u,
+    );
+    expect(persisted).not.toHaveProperty(AI_PROVIDER_SECRETS_KEY);
+  });
+
+  it('does not overwrite a corrupt secret envelope through public reads or secret writes', async () => {
+    const corruptSecrets = {
+      version: 1,
+      providers: [
+        {
+          provider: 'deepseek',
+          origin: 'https://attacker.invalid',
+          apiKey: 'private-existing-key',
+        },
+      ],
+    };
+    setStorageSnapshot({
+      [SETTINGS_KEY]: {
+        version: AI_PUBLIC_SETTINGS_VERSION,
+        settings: structuredClone(DEFAULT_SETTINGS),
+      },
+      [AI_PROVIDER_SECRETS_KEY]: corruptSecrets,
+    });
+
+    const settings = await getSettings();
+    expect(settings.aiProviders.every((provider) => !provider.hasApiKey)).toBe(true);
+    expect(JSON.stringify(settings)).not.toContain('private-existing-key');
+    await expect(setAiProviderSecret('deepseek', 'replacement-key')).rejects.toThrow(
+      'secret_unavailable',
+    );
+    expect(getStorageSnapshot()[AI_PROVIDER_SECRETS_KEY]).toEqual(corruptSecrets);
+  });
+
+  it('inspects bounded legacy pending data without exposing its content', async () => {
+    const legacyCapture = {
+      id: 'legacy-1',
+      source: 'article',
+      title: 'private title',
+      url: 'https://private.example/path?token=secret',
+      text: 'private body',
+      media: [],
+      tags: ['private'],
+      capturedAt: new Date(0).toISOString(),
+    };
+
+    await expect(inspectLegacyPendingCapture()).resolves.toEqual({
+      present: false,
+      count: 0,
+      approximateBytes: 0,
+      state: 'absent',
+    });
+
+    setStorageSnapshot({ [PENDING_CAPTURE_KEY]: legacyCapture });
+    const single = await inspectLegacyPendingCapture();
+    expect(single).toMatchObject({ present: true, count: 1, state: 'valid' });
+    expect(JSON.stringify(single)).not.toMatch(/private|https?:|token|body/u);
+
+    setStorageSnapshot({
+      [PENDING_CAPTURE_KEY]: Array.from({ length: 20 }, (_, index) => ({
+        ...legacyCapture,
+        id: `legacy-${index}`,
+      })),
+    });
+    await expect(inspectLegacyPendingCapture()).resolves.toMatchObject({
+      present: true,
+      count: 20,
+      state: 'valid',
+    });
+
+    setStorageSnapshot({
+      [PENDING_CAPTURE_KEY]: Array.from({ length: 21 }, (_, index) => ({
+        ...legacyCapture,
+        id: `legacy-${index}`,
+      })),
+    });
+    await expect(inspectLegacyPendingCapture()).resolves.toMatchObject({
+      present: true,
+      count: null,
+      state: 'invalid',
+    });
+  });
+
+  it('does not read legacy pending content after the byte preflight is over budget', async () => {
+    getStorageMocks().getBytesInUse.mockImplementationOnce(
+      (_key: string, callback: (bytes: number) => void) => callback(LEGACY_PENDING_MAX_BYTES + 1),
+    );
+
+    await expect(inspectLegacyPendingCapture()).resolves.toEqual({
+      present: true,
+      count: null,
+      approximateBytes: LEGACY_PENDING_MAX_BYTES + 1,
+      state: 'oversize',
+    });
+    expect(getStorageMocks().get).not.toHaveBeenCalled();
+  });
+
+  it('treats accessor-bearing legacy pending data as invalid without rewriting it', async () => {
+    const getter = vi.fn(() => 'private title');
+    const capture = {
+      id: 'legacy-accessor',
+      source: 'article',
+      url: 'https://private.example',
+      text: 'private body',
+      media: [],
+      tags: [],
+      capturedAt: new Date(0).toISOString(),
+    };
+    Object.defineProperty(capture, 'title', { enumerable: true, get: getter });
+    getStorageMocks().getBytesInUse.mockImplementationOnce(
+      (_key: string, callback: (bytes: number) => void) => callback(128),
+    );
+    getStorageMocks().get.mockImplementationOnce(
+      (_key: string, callback: (value: Record<string, unknown>) => void) =>
+        callback({ [PENDING_CAPTURE_KEY]: capture }),
+    );
+
+    await expect(inspectLegacyPendingCapture()).resolves.toMatchObject({
+      present: true,
+      count: null,
+      state: 'invalid',
+    });
+    expect(getter).not.toHaveBeenCalled();
+    expect(getStorageMocks().set).not.toHaveBeenCalled();
+    expect(getStorageMocks().remove).not.toHaveBeenCalled();
+  });
+
+  it('clears only the legacy pending key after explicit confirmation at the message boundary', async () => {
+    setStorageSnapshot({
+      [PENDING_CAPTURE_KEY]: { private: 'legacy' },
+      unrelated: 'preserve',
+    });
+
+    await clearLegacyPendingCapture();
+
+    expect(getStorageSnapshot()).toEqual({ unrelated: 'preserve' });
+    expect(getStorageMocks().remove).toHaveBeenCalledWith(
+      [PENDING_CAPTURE_KEY],
+      expect.any(Function),
+    );
   });
 
   it('initializes only a missing bookmark journal key', async () => {

@@ -212,6 +212,7 @@ function resetBookmarkImplementations(): void {
 const storage = {
   local: {
     get: vi.fn(),
+    getBytesInUse: vi.fn(),
     set: vi.fn(),
     remove: vi.fn(),
     setAccessLevel: vi.fn(),
@@ -234,6 +235,16 @@ function resetStorageImplementations(): void {
   storage.local.get.mockImplementation(
     (keys: string | string[] | StorageData | null, callback: (items: StorageData) => void) => {
       callback(getStorageItems(keys));
+    },
+  );
+  storage.local.getBytesInUse.mockImplementation(
+    (keys: string | string[] | null, callback: (bytesInUse: number) => void) => {
+      const items = getStorageItems(keys);
+      callback(
+        Object.keys(items).length === 0
+          ? 0
+          : new TextEncoder().encode(JSON.stringify(items)).byteLength,
+      );
     },
   );
   storage.local.set.mockImplementation((items: StorageData, callback?: () => void) => {

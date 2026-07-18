@@ -6,9 +6,8 @@ import { createProviderFromTemplate, providerTemplate } from '../src/shared/ai-p
 describe('onboarding progress', () => {
   it('requires vault, configured provider, first classify, and first export', () => {
     const provider = createProviderFromTemplate(providerTemplate('deepseek'), {
-      id: 'deepseek-ready',
-      apiKey: 'sk-test',
       enabled: true,
+      hasApiKey: true,
     });
     const progress = computeOnboardingProgress({
       hasVaultHandle: true,

@@ -4,6 +4,7 @@ import {
   getActiveTabInfo,
   loadStateWithIndependentOperations,
   normalizeExtensionState,
+  requestAiClassificationConsent,
 } from '../src/popup/App.js';
 import type { BookmarkOperation } from '../src/shared/bookmark-types.js';
 
@@ -95,7 +96,6 @@ describe('popup state normalization', () => {
     expect(state.bookmarks).toHaveLength(1);
     expect(state.folders).toEqual([]);
     expect(state.exportManifests).toEqual([]);
-    expect(state.pendingCaptures).toEqual([]);
     expect(state.urlHealthRecords).toEqual([]);
     expect(state.bookmarkOperations).toEqual([]);
     expect(state.lastMoveRecordCount).toBe(0);
@@ -116,7 +116,7 @@ describe('popup state normalization', () => {
     expect(state.settings.activeProviderId).toBe('deepseek-default');
     expect(state.settings.aiProviders[0]).toMatchObject({
       provider: 'deepseek',
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
     });
     expect(state.settings.exportDirectory).toBe('Bookmarks');
   });
@@ -153,5 +153,59 @@ describe('popup state normalization', () => {
     });
 
     await expect(getActiveTabInfo()).resolves.toBeUndefined();
+  });
+
+  it('shows the fixed AI disclosure and does not request permission without confirmation', async () => {
+    const provider = {
+      ...normalizeExtensionState({}).settings.aiProviders[0],
+      hasApiKey: true,
+    };
+    const confirmRequest = vi.fn<(message: string) => boolean>(() => false);
+    const requestPermission = vi.fn(async () => true);
+
+    const result = await requestAiClassificationConsent(
+      provider,
+      7,
+      confirmRequest,
+      requestPermission,
+    );
+
+    expect(confirmRequest).toHaveBeenCalledOnce();
+    const disclosure = confirmRequest.mock.calls[0]?.[0] ?? '';
+    expect(disclosure).toContain('https://api.deepseek.com');
+    expect(disclosure).toContain('候选数量: 7');
+    expect(disclosure).toContain('受限标题、网站 hostname、已有目标目录标签');
+    expect(disclosure).toContain('不会发送: 完整 URL');
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(result).toEqual({ permissionDenied: false });
+  });
+
+  it('falls back to a local-only request when provider permission is denied', async () => {
+    const provider = {
+      ...normalizeExtensionState({}).settings.aiProviders[0],
+      hasApiKey: true,
+    };
+    const requestPermission = vi.fn(async () => false);
+
+    const result = await requestAiClassificationConsent(provider, 3, () => true, requestPermission);
+
+    expect(requestPermission).toHaveBeenCalledWith('https://api.deepseek.com/*');
+    expect(result).toEqual({ permissionDenied: true });
+    expect(result).not.toHaveProperty('ai');
+  });
+
+  it('skips both disclosure and permission when local rules find no AI candidates', async () => {
+    const provider = {
+      ...normalizeExtensionState({}).settings.aiProviders[0],
+      hasApiKey: true,
+    };
+    const confirmRequest = vi.fn<(message: string) => boolean>(() => true);
+    const requestPermission = vi.fn(async () => true);
+
+    await expect(
+      requestAiClassificationConsent(provider, 0, confirmRequest, requestPermission),
+    ).resolves.toEqual({ permissionDenied: false });
+    expect(confirmRequest).not.toHaveBeenCalled();
+    expect(requestPermission).not.toHaveBeenCalled();
   });
 });

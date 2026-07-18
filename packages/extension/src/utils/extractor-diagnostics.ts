@@ -1,56 +1,73 @@
+import { z } from 'zod';
+
 import type {
   DiagnosticReport,
   ExtractorPlatform,
   ProbeResult,
   SelectorProbe,
 } from '../shared/bookmark-types.js';
+import { cloneBoundedStructuredValue } from '../shared/extension-messages.js';
+import {
+  X_SINGLE_DIAGNOSTIC_CODES,
+  X_SINGLE_PROBE_NAMES,
+  X_SINGLE_VERSION,
+  parseXSingleDiagnostic,
+  type XSingleDiagnostic,
+} from '../social/x-single-item.js';
+import { getLocalValue, setLocalValues } from './storage.js';
 
 export const EXTRACTOR_DIAGNOSTICS_KEY = 'extractorDiagnostics';
 export const MAX_EXTRACTOR_DIAGNOSTICS = 20;
+export const MAX_EXTRACTOR_DIAGNOSTIC_BYTES = 64 * 1_024;
 
 type QueryableRoot = Pick<ParentNode, 'querySelector'>;
 
-function getLastError(): Error | undefined {
-  const message = chrome.runtime.lastError?.message;
-  return message ? new Error(message) : undefined;
+export interface StoredExtractorDiagnostic extends XSingleDiagnostic {
+  readonly timestamp: string;
 }
 
-function getDiagnosticStorageValue<T>(key: string, fallback: T): Promise<T> {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get(key, (items) => {
-      const error = getLastError();
-      if (error) {
-        reject(error);
-        return;
-      }
+const probeSchema = z.strictObject({
+  name: z.enum(X_SINGLE_PROBE_NAMES),
+  found: z.boolean(),
+});
 
-      resolve((items[key] as T | undefined) ?? fallback);
-    });
+const storedDiagnosticSchema: z.ZodType<StoredExtractorDiagnostic> = z
+  .strictObject({
+    version: z.literal(X_SINGLE_VERSION),
+    platform: z.literal('x'),
+    routeFamily: z.literal('x/status'),
+    timestamp: z
+      .string()
+      .max(35)
+      .refine((value) => {
+        const parsed = Date.parse(value);
+        return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+      }),
+    errorCode: z.enum(X_SINGLE_DIAGNOSTIC_CODES),
+    probes: z.array(probeSchema).max(X_SINGLE_PROBE_NAMES.length),
+    usedFallback: z.boolean(),
+  })
+  .superRefine((value, context) => {
+    const names = value.probes.map((probe) => probe.name);
+    if (new Set(names).size !== names.length) {
+      context.addIssue({ code: 'custom', path: ['probes'], message: 'Duplicate probe' });
+    }
   });
-}
 
-function setDiagnosticStorageValues(values: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.set(values, () => {
-      const error = getLastError();
-      if (error) {
-        reject(error);
-        return;
-      }
+const storedDiagnosticsSchema = z.array(storedDiagnosticSchema).max(MAX_EXTRACTOR_DIAGNOSTICS);
 
-      resolve();
-    });
+function parseStoredDiagnostics(value: unknown): StoredExtractorDiagnostic[] {
+  const clone = cloneBoundedStructuredValue(value, {
+    maxBytes: MAX_EXTRACTOR_DIAGNOSTIC_BYTES,
+    maxDepth: 6,
+    maxNodes: 512,
+    maxStringBytes: 1_024,
   });
-}
-
-export function sanitizeDiagnosticUrl(platform: ExtractorPlatform, url: string): string {
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split('/').filter(Boolean).slice(0, 2);
-    return [parsed.hostname, ...segments].join('/');
-  } catch {
-    return platform;
+  const parsed = storedDiagnosticsSchema.safeParse(clone);
+  if (!parsed.success) {
+    throw new Error('extractor_diagnostics_invalid');
   }
+  return parsed.data;
 }
 
 export function runSelectorProbes(root: QueryableRoot, probes: SelectorProbe[]): ProbeResult[] {
@@ -63,7 +80,6 @@ export function runSelectorProbes(root: QueryableRoot, probes: SelectorProbe[]):
 
 export function hasValidStructure(probes: SelectorProbe[], results: ProbeResult[]): boolean {
   const resultByName = new Map(results.map((result) => [result.name, result]));
-
   return probes.every((probe) => !probe.required || resultByName.get(probe.name)?.found === true);
 }
 
@@ -72,12 +88,14 @@ export function missingRequiredProbeNames(
   results: ProbeResult[],
 ): string[] {
   const resultByName = new Map(results.map((result) => [result.name, result]));
-
   return probes
     .filter((probe) => probe.required && resultByName.get(probe.name)?.found !== true)
     .map((probe) => probe.name);
 }
 
+/**
+ * Kept only for the unreachable legacy Weibo extractor. New X diagnostics never include this shape.
+ */
 export function createDiagnosticReport(options: {
   platform: ExtractorPlatform;
   url: string;
@@ -90,57 +108,43 @@ export function createDiagnosticReport(options: {
   return {
     platform: options.platform,
     timestamp: (options.now ?? new Date()).toISOString(),
-    url: sanitizeDiagnosticUrl(options.platform, options.url),
+    url: options.platform,
     probeResults: options.probeResults,
     structureValid: hasValidStructure(options.probes, options.probeResults),
     fallbacksUsed: [...(options.fallbacksUsed ?? [])],
-    ...(options.error ? { error: options.error } : {}),
+    ...(options.error ? { error: 'legacy_extractor_failed' } : {}),
   };
-}
-
-export function shouldPersistDiagnostic(report: DiagnosticReport): boolean {
-  return !report.structureValid || report.fallbacksUsed.length > 0 || Boolean(report.error);
 }
 
 export function structureErrorMessage(platform: ExtractorPlatform, missingNames: string[]): string {
   const label = platform === 'twitter' ? 'Twitter' : 'Weibo';
-
-  if (missingNames.length >= 2) {
-    return `${label} 页面结构已变化（${missingNames.join('、')} 均未找到）。可能是平台改版，请检查扩展是否有新版本。`;
-  }
-
-  if (missingNames.length === 1) {
-    return `${label} 页面可能未完全加载或结构已变化：未找到 ${missingNames[0]}。请等待内容显示后重试。`;
-  }
-
-  return `${label} 页面可能未完全加载，请等待内容显示后重试。`;
+  return missingNames.length > 0
+    ? `${label} 页面结构已变化，请稍后重试。`
+    : `${label} 页面可能未完全加载，请稍后重试。`;
 }
 
-export function fallbackMessage(platform: ExtractorPlatform, fallbacksUsed: string[]): string {
-  const label = platform === 'twitter' ? 'Twitter' : 'Weibo';
-
-  return `${label} 内容已通过备选选择器提取：${fallbacksUsed.join('、')}`;
+export function fallbackMessage(platform: ExtractorPlatform): string {
+  return `${platform === 'twitter' ? 'Twitter' : 'Weibo'} 内容使用了兼容提取路径。`;
 }
 
-export function trimDiagnosticReports(reports: DiagnosticReport[]): DiagnosticReport[] {
-  return [...reports]
-    .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
-    .slice(0, MAX_EXTRACTOR_DIAGNOSTICS);
+export async function getExtractorDiagnostics(): Promise<StoredExtractorDiagnostic[]> {
+  const raw = await getLocalValue<unknown>(EXTRACTOR_DIAGNOSTICS_KEY, []);
+  return parseStoredDiagnostics(raw);
 }
 
-export async function getExtractorDiagnostics(): Promise<DiagnosticReport[]> {
-  return trimDiagnosticReports(
-    await getDiagnosticStorageValue<DiagnosticReport[]>(EXTRACTOR_DIAGNOSTICS_KEY, []),
-  );
-}
-
-export async function saveExtractorDiagnostic(report: DiagnosticReport): Promise<void> {
-  if (!shouldPersistDiagnostic(report)) {
-    return;
-  }
-
+export async function saveExtractorDiagnostic(
+  diagnosticInput: XSingleDiagnostic,
+  now = new Date(),
+): Promise<StoredExtractorDiagnostic> {
+  const diagnostic = parseXSingleDiagnostic(diagnosticInput);
+  const timestamp = now.toISOString();
+  const entry = storedDiagnosticSchema.parse({ ...diagnostic, timestamp });
   const existing = await getExtractorDiagnostics();
-  await setDiagnosticStorageValues({
-    [EXTRACTOR_DIAGNOSTICS_KEY]: trimDiagnosticReports([report, ...existing]),
-  });
+  const next = parseStoredDiagnostics(
+    [entry, ...existing]
+      .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+      .slice(0, MAX_EXTRACTOR_DIAGNOSTICS),
+  );
+  await setLocalValues({ [EXTRACTOR_DIAGNOSTICS_KEY]: next });
+  return entry;
 }

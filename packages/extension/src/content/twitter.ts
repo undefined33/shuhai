@@ -1,327 +1,381 @@
-import type {
-  CapturedContent,
-  CapturedMedia,
-  DiagnosticReport,
-  SelectorProbe,
-} from '../shared/bookmark-types.js';
+import { StructuredInputError } from '../shared/extension-messages.js';
 import {
-  createDiagnosticReport,
-  missingRequiredProbeNames,
-  runSelectorProbes,
-  structureErrorMessage,
-} from '../utils/extractor-diagnostics.js';
+  X_SINGLE_EXTRACT_PROTOCOL,
+  X_SINGLE_PROTOCOL,
+  X_SINGLE_RESPONSE_PROTOCOL,
+  X_SINGLE_VERSION,
+  canonicalizeXStatusUrl,
+  createXSingleDiagnostic,
+  parseXSingleEnvelope,
+  parseXSingleExtractRequest,
+  parseXSingleExtractResponse,
+  type XSingleDiagnostic,
+  type XSingleDiagnosticCode,
+  type XSingleEnvelope,
+  type XSingleExtractRequest,
+  type XSingleExtractResponse,
+  type XSingleProbeName,
+  type XStatusIdentity,
+} from '../social/x-single-item.js';
 
-type QueryRoot = Pick<ParentNode, 'querySelector' | 'querySelectorAll'> & {
-  textContent?: string | null;
-};
+const textEncoder = new TextEncoder();
+const MAX_TEXT_BYTES = 8 * 1_024;
+const MAX_TITLE_BYTES = 1 * 1_024;
+const MAX_MEDIA = 12;
 
-const TWITTER_DETAIL_ERROR = '请先打开一条推文的详情页（点击推文进入）';
-const TWITTER_STRUCTURE_ERROR = '页面结构可能已更新，提取失败。请反馈此问题。';
-const TWITTER_PROBES: SelectorProbe[] = [
-  {
-    name: 'tweetText',
-    selector: '[data-testid="tweetText"]',
-    required: true,
-    description: '推文正文',
-  },
-  {
-    name: 'User-Name',
-    selector: '[data-testid="User-Name"]',
-    required: true,
-    description: '作者区域',
-  },
-  {
-    name: 'article',
-    selector: 'article',
-    required: true,
-    description: '推文容器',
-  },
-  {
-    name: 'time',
-    selector: 'time[datetime]',
-    required: false,
-    description: '发布时间',
-  },
-  {
-    name: 'videoPlayer',
-    selector: '[data-testid="videoPlayer"]',
-    required: false,
-    description: '视频内容',
-  },
-];
+type QueryRoot = Pick<ParentNode, 'querySelector' | 'querySelectorAll'>;
+
+interface ProbeState {
+  primary_article: boolean;
+  status_permalink: boolean;
+  tweet_text: boolean;
+  author: boolean;
+  timestamp: boolean;
+}
+
+export class XSingleExtractionError extends Error {
+  constructor(
+    readonly diagnostic: XSingleDiagnostic,
+    readonly reason: XSingleDiagnosticCode,
+  ) {
+    super('x_single_extraction_failed');
+    this.name = 'XSingleExtractionError';
+  }
+}
+
+function emptyProbes(): ProbeState {
+  return {
+    primary_article: false,
+    status_permalink: false,
+    tweet_text: false,
+    author: false,
+    timestamp: false,
+  };
+}
+
+function probesFromState(state: ProbeState) {
+  return (Object.entries(state) as Array<[XSingleProbeName, boolean]>).map(([name, found]) => ({
+    name,
+    found,
+  }));
+}
+
+function extractionError(
+  code: XSingleDiagnosticCode,
+  state: ProbeState,
+  usedFallback = false,
+): XSingleExtractionError {
+  return new XSingleExtractionError(
+    createXSingleDiagnostic(code, probesFromState(state), usedFallback),
+    code,
+  );
+}
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? '')
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n\s+/g, '\n')
-    .replace(/[ \t]+/g, ' ')
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[^\S\n]+\n/gu, '\n')
+    .replace(/\n[^\S\n]+/gu, '\n')
+    .replace(/[^\S\n]{2,}/gu, ' ')
     .trim();
 }
 
-function textFromFirst(root: QueryRoot, selectors: string[]): string {
-  return textFromFirstMatch(root, selectors).text;
-}
-
-function textFromFirstMatch(
-  root: QueryRoot,
-  selectors: string[],
-): { text: string; selector: string } {
-  for (const selector of selectors) {
-    const element = root.querySelector(selector);
-    const text = normalizeText(element?.textContent);
-    if (text) {
-      return { text, selector };
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (textEncoder.encode(value).byteLength <= maxBytes) {
+    return value;
+  }
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (textEncoder.encode(value.slice(0, middle)).byteLength <= maxBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
     }
   }
-
-  return { text: '', selector: '' };
+  if (low > 0 && /[\uD800-\uDBFF]/u.test(value.charAt(low - 1))) {
+    low -= 1;
+  }
+  return value.slice(0, low);
 }
 
-function textFromAll(root: QueryRoot, selector: string): string[] {
-  return Array.from(root.querySelectorAll(selector))
-    .map((element) => normalizeText(element.textContent))
-    .filter(Boolean);
-}
-
-function isTwitterStatusUrl(url: string): boolean {
+function safeAbsoluteUrl(value: string | null, baseUrl: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
   try {
-    const parsed = new URL(url);
-    return (
-      (parsed.hostname === 'x.com' ||
-        parsed.hostname.endsWith('.x.com') ||
-        parsed.hostname === 'twitter.com' ||
-        parsed.hostname.endsWith('.twitter.com')) &&
-      /\/[^/]+\/status\/\d+/.test(parsed.pathname)
-    );
+    return new URL(value, baseUrl).href;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-function statusIdFromUrl(url: string): string {
-  const match = url.match(/\/status\/(\d+)/);
-  return match?.[1] ?? crypto.randomUUID();
-}
-
-function handleFromUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.pathname.split('/').filter(Boolean)[0] ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function extractHandle(documentRef: Document, url: string, fallbacksUsed: string[]): string {
-  const handles = textFromAll(documentRef, '[data-testid="User-Name"] a[href^="/"]');
-  const explicitHandle = handles.find((line) => line.startsWith('@'));
-  if (explicitHandle) {
-    return explicitHandle;
-  }
-
-  const href = documentRef
-    .querySelector('[data-testid="User-Name"] a[href^="/"]')
-    ?.getAttribute('href');
-  const pathHandle = href?.split('/').filter(Boolean)[0] ?? handleFromUrl(url);
-  if (pathHandle) {
-    fallbacksUsed.push('Twitter 作者: URL 路径');
-  }
-
-  return pathHandle ? `@${pathHandle}` : '';
-}
-
-function extractDisplayName(documentRef: Document, handle: string): string {
-  const displayName = textFromFirst(documentRef, [
-    '[data-testid="User-Name"] [dir="ltr"] span span',
-    '[data-testid="User-Name"] [dir="ltr"] span',
-    '[data-testid="User-Name"]',
-  ]);
-  const fallback = displayName
-    .split(/\n|(?=@)/)
-    .map((line) => normalizeText(line))
-    .find((line) => line && !line.startsWith('@') && line !== handle);
-
-  return fallback ?? '';
-}
-
-function collectTweetText(documentRef: Document, fallbacksUsed: string[]): string {
-  const match = textFromFirstMatch(documentRef, [
-    'article [data-testid="tweetText"]',
-    '[data-testid="tweetText"]',
-    'article [lang]',
-  ]);
-
-  if (!match.text) {
-    throw new Error(TWITTER_STRUCTURE_ERROR);
-  }
-
-  if (match.selector !== 'article [data-testid="tweetText"]') {
-    fallbacksUsed.push(`Twitter 正文: ${match.selector}`);
-  }
-
-  return match.text;
-}
-
-function appendQuoteTweet(documentRef: Document, text: string): string {
-  const quote = textFromFirst(documentRef, [
-    'article [data-testid="quoteTweet"] [data-testid="tweetText"]',
-    '[data-testid="quoteTweet"] [data-testid="tweetText"]',
-    '[data-testid="quoteTweet"]',
-  ]);
-
-  if (!quote) {
-    return text;
-  }
-
-  return `${text}\n\n---\n引用推文：\n${quote}`;
-}
-
-function numericAttribute(element: Element, name: string): number {
-  const value = Number(element.getAttribute(name) ?? '');
-  return Number.isFinite(value) ? value : 0;
-}
-
-function imageDimension(image: Element, key: 'height' | 'width'): number {
-  const imageElement = image as HTMLImageElement;
-  const natural = key === 'height' ? imageElement.naturalHeight : imageElement.naturalWidth;
-  return natural || numericAttribute(image, key);
-}
-
-function isSmallImage(image: Element): boolean {
-  const width = imageDimension(image, 'width');
-  const height = imageDimension(image, 'height');
-
-  return width > 0 && height > 0 && width < 100 && height < 100;
-}
-
-function collectMedia(documentRef: Document): CapturedMedia[] {
-  const seen = new Set<string>();
-  const media: CapturedMedia[] = [];
-
-  for (const image of Array.from(
-    documentRef.querySelectorAll('article img[src*="twimg.com"], img[src*="twimg.com"]'),
-  )) {
-    const url = image.getAttribute('src') ?? '';
-    if (
-      !url ||
-      seen.has(url) ||
-      url.includes('profile_images') ||
-      url.includes('emoji') ||
-      isSmallImage(image)
-    ) {
+function articleHasIdentity(
+  article: Element,
+  expected: XStatusIdentity,
+): { exact: boolean; hasStatusPermalink: boolean } {
+  let hasStatusPermalink = false;
+  for (const anchor of Array.from(article.querySelectorAll('a[href]'))) {
+    const absolute = safeAbsoluteUrl(anchor.getAttribute('href'), expected.canonicalUrl);
+    const identity = canonicalizeXStatusUrl(absolute);
+    if (!identity) {
       continue;
     }
-
-    seen.add(url);
-    media.push({
-      type: 'image',
-      url,
-      alt: image.getAttribute('alt') ?? undefined,
-    });
+    hasStatusPermalink = true;
+    if (
+      identity.sourceItemId === expected.sourceItemId &&
+      identity.canonicalUrl === expected.canonicalUrl
+    ) {
+      return { exact: true, hasStatusPermalink: true };
+    }
   }
-
-  if (documentRef.querySelector('[data-testid="videoPlayer"]')) {
-    media.push({
-      type: 'video',
-      url: '(视频无法直接提取)',
-      alt: '视频无法直接提取',
-    });
-  }
-
-  return media.slice(0, 12);
+  return { exact: false, hasStatusPermalink };
 }
 
-export function extractTwitterContent(documentRef: Document, url: string): CapturedContent {
-  return extractTwitterContentWithDiagnostics(documentRef, url).capture;
-}
-
-export function extractTwitterContentWithDiagnostics(
+function findPrimaryArticle(
   documentRef: Document,
-  url: string,
-): { capture: CapturedContent; diagnostic: DiagnosticReport } {
-  if (!isTwitterStatusUrl(url)) {
-    throw new Error(TWITTER_DETAIL_ERROR);
+  expected: XStatusIdentity,
+  probes: ProbeState,
+): Element {
+  const articles = Array.from(documentRef.querySelectorAll('article'));
+  const exactMatches: Element[] = [];
+  for (const article of articles) {
+    const match = articleHasIdentity(article, expected);
+    probes.status_permalink ||= match.hasStatusPermalink;
+    if (match.exact) {
+      exactMatches.push(article);
+    }
   }
-
-  const probeResults = runSelectorProbes(documentRef, TWITTER_PROBES);
-  const missingNames = missingRequiredProbeNames(TWITTER_PROBES, probeResults);
-  if (missingNames.length > 0) {
-    const message = structureErrorMessage('twitter', missingNames);
-    const error = new Error(message) as Error & { diagnostic?: DiagnosticReport };
-    error.diagnostic = createDiagnosticReport({
-      platform: 'twitter',
-      url,
-      probes: TWITTER_PROBES,
-      probeResults,
-      error: message,
-    });
-    throw error;
+  if (exactMatches.length === 0) {
+    throw extractionError(
+      probes.status_permalink ? 'permalink_mismatch' : 'article_not_found',
+      probes,
+    );
   }
+  if (exactMatches.length !== 1) {
+    throw extractionError('article_ambiguous', probes);
+  }
+  probes.primary_article = true;
+  probes.status_permalink = true;
+  return exactMatches[0]!;
+}
 
-  const fallbacksUsed: string[] = [];
-  const handle = extractHandle(documentRef, url, fallbacksUsed);
-  const author = extractDisplayName(documentRef, handle) || handle;
-  const created = documentRef.querySelector('time')?.getAttribute('datetime') ?? undefined;
-  const text = appendQuoteTweet(documentRef, collectTweetText(documentRef, fallbacksUsed));
-  const titleAuthor = author || handle;
-  const title = titleAuthor
-    ? `${titleAuthor} - ${text.slice(0, 40) || 'Tweet'}`
-    : documentRef.title;
+function extractText(article: Element, probes: ProbeState): string {
+  if (
+    article.querySelector(
+      [
+        '[data-testid="tweet-text-show-more-link"]',
+        '[data-testid="tweet-text-show-more"]',
+        'button[data-testid="tweet-text-show-more"]',
+      ].join(','),
+    )
+  ) {
+    throw extractionError('expansion_uncertain', probes);
+  }
+  const textNodes = Array.from(article.querySelectorAll('[data-testid="tweetText"]'));
+  const text = normalizeText(textNodes[0]?.textContent);
+  if (!text) {
+    throw extractionError('content_missing', probes);
+  }
+  probes.tweet_text = true;
+  if (textEncoder.encode(text).byteLength > MAX_TEXT_BYTES) {
+    throw extractionError('payload_oversize', probes);
+  }
+  return text;
+}
 
+function extractAuthor(
+  article: Element,
+  expected: XStatusIdentity,
+  probes: ProbeState,
+): XSingleEnvelope['author'] {
+  const root = article.querySelector('[data-testid="User-Name"]');
+  if (!root) {
+    return { handle: expected.handle };
+  }
+  const expectedPath = `/${expected.handle.toLowerCase()}`;
+  const hasBoundProfileLink = Array.from(root.querySelectorAll('a[href]')).some((anchor) => {
+    const absolute = safeAbsoluteUrl(anchor.getAttribute('href'), expected.canonicalUrl);
+    if (!absolute) {
+      return false;
+    }
+    try {
+      const parsed = new URL(absolute);
+      return (
+        parsed.origin === 'https://x.com' &&
+        parsed.pathname.toLowerCase() === expectedPath &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.port
+      );
+    } catch {
+      return false;
+    }
+  });
+  const displayName = normalizeText(
+    root.querySelector('[dir="ltr"] span')?.textContent ?? root.querySelector('span')?.textContent,
+  );
+  probes.author = hasBoundProfileLink;
   return {
-    capture: {
-      id: `twitter-${statusIdFromUrl(url)}`,
-      source: 'twitter',
-      title,
-      url,
-      author,
-      handle,
-      created,
-      text,
-      media: collectMedia(documentRef),
-      tags: ['twitter'],
-      capturedAt: new Date().toISOString(),
-    },
-    diagnostic: createDiagnosticReport({
-      platform: 'twitter',
-      url,
-      probes: TWITTER_PROBES,
-      probeResults,
-      fallbacksUsed,
-    }),
+    ...(displayName && !displayName.startsWith('@') ? { displayName } : {}),
+    handle: expected.handle,
   };
+}
+
+function extractPublishedAt(article: Element, probes: ProbeState): string | undefined {
+  const raw = article.querySelector('time[datetime]')?.getAttribute('datetime');
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const value = new Date(raw).toISOString();
+    probes.timestamp = true;
+    return value;
+  } catch {
+    throw extractionError('structure_changed', probes);
+  }
+}
+
+function collectMedia(article: QueryRoot, baseUrl: string, probes: ProbeState) {
+  const values: Array<{ type: 'image' | 'video'; url: string; alt?: string }> = [];
+  const seen = new Set<string>();
+
+  const add = (type: 'image' | 'video', rawUrl: string | null, rawAlt?: string | null) => {
+    const absolute = safeAbsoluteUrl(rawUrl, baseUrl);
+    if (!absolute || seen.has(`${type}\u0000${absolute}`)) {
+      return;
+    }
+    seen.add(`${type}\u0000${absolute}`);
+    const alt = normalizeText(rawAlt);
+    values.push({
+      type,
+      url: absolute,
+      ...(alt ? { alt } : {}),
+    });
+  };
+
+  for (const image of Array.from(
+    article.querySelectorAll(
+      'img[src*="pbs.twimg.com/media"], img[src*="pbs.twimg.com/amplify_video_thumb"]',
+    ),
+  )) {
+    add('image', image.getAttribute('src'), image.getAttribute('alt'));
+  }
+  for (const video of Array.from(article.querySelectorAll('video'))) {
+    add('video', video.getAttribute('src') ?? video.getAttribute('poster'), '视频');
+  }
+
+  if (values.length > MAX_MEDIA) {
+    throw extractionError('payload_oversize', probes);
+  }
+  return values;
+}
+
+function diagnosticForUnknownError(probes: ProbeState, error: unknown): XSingleDiagnostic {
+  if (error instanceof XSingleExtractionError) {
+    return error.diagnostic;
+  }
+  if (
+    error instanceof StructuredInputError &&
+    (error.code === 'message_too_large' || error.code === 'string_too_large')
+  ) {
+    return createXSingleDiagnostic('payload_oversize', probesFromState(probes));
+  }
+  return createXSingleDiagnostic('payload_invalid', probesFromState(probes));
+}
+
+export function extractXSingleEnvelope(documentRef: Document, pageUrl: string): XSingleEnvelope {
+  const probes = emptyProbes();
+  const expected = canonicalizeXStatusUrl(pageUrl);
+  if (!expected) {
+    throw extractionError('route_invalid', probes);
+  }
+  const article = findPrimaryArticle(documentRef, expected, probes);
+  const text = extractText(article, probes);
+  const author = extractAuthor(article, expected, probes);
+  const publishedAt = extractPublishedAt(article, probes);
+  const titlePrefix = author.displayName ?? `@${expected.handle}`;
+  const title = truncateUtf8(`${titlePrefix} - ${text}`, MAX_TITLE_BYTES);
+
+  try {
+    return parseXSingleEnvelope({
+      protocol: X_SINGLE_PROTOCOL,
+      version: X_SINGLE_VERSION,
+      routeFamily: 'x/status',
+      sourceItemId: expected.sourceItemId,
+      canonicalUrl: expected.canonicalUrl,
+      title,
+      text,
+      author,
+      ...(publishedAt ? { publishedAt } : {}),
+      media: collectMedia(article, expected.canonicalUrl, probes),
+      contentKind: 'post',
+    });
+  } catch (error) {
+    const diagnostic = diagnosticForUnknownError(probes, error);
+    throw new XSingleExtractionError(diagnostic, diagnostic.errorCode);
+  }
+}
+
+export function handleXSingleExtractRequest(
+  documentRef: Document,
+  pageUrl: string,
+  requestInput: unknown,
+): XSingleExtractResponse {
+  const request = parseXSingleExtractRequest(requestInput);
+  const current = canonicalizeXStatusUrl(pageUrl);
+  if (
+    !current ||
+    current.canonicalUrl !== request.canonicalUrl ||
+    current.sourceItemId !== request.sourceItemId
+  ) {
+    return parseXSingleExtractResponse({
+      protocol: X_SINGLE_RESPONSE_PROTOCOL,
+      version: X_SINGLE_VERSION,
+      requestId: request.requestId,
+      ok: false,
+      diagnostic: createXSingleDiagnostic('route_invalid', probesFromState(emptyProbes())),
+    });
+  }
+
+  try {
+    return parseXSingleExtractResponse({
+      protocol: X_SINGLE_RESPONSE_PROTOCOL,
+      version: X_SINGLE_VERSION,
+      requestId: request.requestId,
+      ok: true,
+      item: extractXSingleEnvelope(documentRef, pageUrl),
+    });
+  } catch (error) {
+    return parseXSingleExtractResponse({
+      protocol: X_SINGLE_RESPONSE_PROTOCOL,
+      version: X_SINGLE_VERSION,
+      requestId: request.requestId,
+      ok: false,
+      diagnostic: diagnosticForUnknownError(emptyProbes(), error),
+    });
+  }
 }
 
 const twitterWindow =
   typeof window === 'undefined'
     ? undefined
-    : (window as Window & { __shuhaiTwitterExtractorInstalled?: boolean });
+    : (window as Window & { __shuhaiXSingleExtractorInstalled?: boolean });
 
-if (twitterWindow && !twitterWindow.__shuhaiTwitterExtractorInstalled) {
-  twitterWindow.__shuhaiTwitterExtractorInstalled = true;
+if (twitterWindow && !twitterWindow.__shuhaiXSingleExtractorInstalled) {
+  twitterWindow.__shuhaiXSingleExtractorInstalled = true;
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== 'social:extract') {
+    let request: XSingleExtractRequest;
+    try {
+      request = parseXSingleExtractRequest(message);
+    } catch {
       return false;
     }
-
-    try {
-      const result = extractTwitterContentWithDiagnostics(document, location.href);
-      sendResponse({
-        ok: true,
-        data: result.capture,
-        diagnostic: result.diagnostic,
-      });
-    } catch (error) {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : TWITTER_STRUCTURE_ERROR,
-        diagnostic:
-          error instanceof Error && 'diagnostic' in error
-            ? (error as Error & { diagnostic?: DiagnosticReport }).diagnostic
-            : undefined,
-      });
+    if (request.protocol !== X_SINGLE_EXTRACT_PROTOCOL || request.type !== 'xSingle:extract') {
+      return false;
     }
-
+    sendResponse(handleXSingleExtractRequest(document, location.href, request));
     return true;
   });
 }
