@@ -309,6 +309,7 @@ const runtimeErrorCodeSchema = z.enum([
   'tab_changed',
   'permission_revoked',
   'storage_corrupt',
+  'security_bootstrap_failed',
   'internal_error',
 ]);
 const runtimePhaseSchema = z.enum(['launch', 'scanning', 'review', 'writing']);

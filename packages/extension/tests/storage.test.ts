@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BookmarkOperation } from '../src/shared/bookmark-types.js';
 import {
   BOOKMARK_OPERATION_MAX_BYTES,
@@ -11,6 +11,7 @@ import {
 import {
   BOOKMARK_OPERATIONS_KEY,
   SETTINGS_KEY,
+  URL_HEALTH_RECORDS_KEY,
   BookmarkOperationStorageError,
   getBookmarkOperationJournal,
   getBookmarkOperationReserveBytes,
@@ -209,6 +210,41 @@ describe('storage helpers', () => {
     await expect(getUrlHealthRecords()).resolves.toEqual([
       expect.objectContaining({ bookmarkId: '1', status: 'dead' }),
     ]);
+  });
+
+  it('omits malformed historical health records without rewriting trusted storage', async () => {
+    const validRecord = {
+      bookmarkId: 'valid-1',
+      bookmarkTitle: 'Valid old result',
+      bookmarkUrl: 'https://example.com/valid',
+      checkedAt: new Date(0).toISOString(),
+      durationMs: 12,
+      httpStatus: 404,
+      parentPath: 'Bookmarks Bar',
+      status: 'dead',
+    };
+    const rawRecords = [
+      validRecord,
+      { ...validRecord, bookmarkId: 'invalid-status', status: 'unknown' },
+      {
+        ...validRecord,
+        bookmarkId: 'invalid-url',
+        bookmarkUrl: 'javascript:alert(1)',
+      },
+    ];
+    setStorageSnapshot({ [URL_HEALTH_RECORDS_KEY]: rawRecords });
+    const before = getStorageSnapshot();
+
+    await expect(getUrlHealthRecords()).resolves.toEqual([
+      validRecord,
+      expect.objectContaining({
+        bookmarkId: 'invalid-url',
+        bookmarkUrl: 'javascript:alert(1)',
+      }),
+    ]);
+    expect(getStorageSnapshot()).toEqual(before);
+    expect(getStorageMocks().set).not.toHaveBeenCalled();
+    expect(getStorageMocks().remove).not.toHaveBeenCalled();
   });
 
   it('migrates legacy DeepSeek settings into provider config', async () => {
@@ -685,5 +721,134 @@ describe('storage helpers', () => {
       }),
     );
     expect(getStorageSnapshot()[BOOKMARK_OPERATIONS_KEY]).toBeUndefined();
+  });
+});
+
+describe('trusted local storage access', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('shares one initialization across ten concurrent callers', async () => {
+    const mocks = getStorageMocks();
+    let release: (() => void) | undefined;
+    mocks.setAccessLevel.mockImplementation((_options: unknown, callback: () => void) => {
+      release = callback;
+    });
+    const { ensureTrustedLocalStorageAccess } = await import('../src/utils/storage.js');
+
+    const pending = Array.from({ length: 10 }, () => ensureTrustedLocalStorageAccess());
+    expect(mocks.setAccessLevel).toHaveBeenCalledTimes(1);
+    expect(mocks.setAccessLevel).toHaveBeenCalledWith(
+      { accessLevel: 'TRUSTED_CONTEXTS' },
+      expect.any(Function),
+    );
+
+    release?.();
+    await expect(Promise.all(pending)).resolves.toEqual(
+      Array.from({ length: 10 }, () => undefined),
+    );
+  });
+
+  it('fails closed when setAccessLevel is unavailable', async () => {
+    const mocks = getStorageMocks();
+    const original = chrome.storage.local.setAccessLevel;
+    Object.defineProperty(chrome.storage.local, 'setAccessLevel', {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      const { getLocalValue } = await import('../src/utils/storage.js');
+      await expect(getLocalValue('secret', 'fallback')).rejects.toThrow(
+        'trusted_storage_access_unavailable',
+      );
+      expect(mocks.get).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(chrome.storage.local, 'setAccessLevel', {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
+  it('fails closed when setAccessLevel rejects', async () => {
+    const mocks = getStorageMocks();
+    mocks.setAccessLevel.mockImplementation(() => Promise.reject(new Error('private detail')));
+    const { getLocalValue, removeLocalValues, setLocalValues } = await import(
+      '../src/utils/storage.js'
+    );
+
+    await expect(getLocalValue('secret', 'fallback')).rejects.toThrow(
+      'trusted_storage_access_unavailable',
+    );
+    await expect(setLocalValues({ secret: true })).rejects.toThrow(
+      'trusted_storage_access_unavailable',
+    );
+    await expect(removeLocalValues(['secret'])).rejects.toThrow(
+      'trusted_storage_access_unavailable',
+    );
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null])(
+    'fails closed when setAccessLevel rejects with a falsy reason: %s',
+    async (reason) => {
+      const mocks = getStorageMocks();
+      mocks.setAccessLevel.mockImplementation(() => Promise.reject(reason));
+      const { ensureTrustedLocalStorageAccess } = await import('../src/utils/storage.js');
+
+      await expect(ensureTrustedLocalStorageAccess()).rejects.toThrow(
+        'trusted_storage_access_unavailable',
+      );
+    },
+  );
+
+  it('fails closed on callback runtime errors', async () => {
+    const mocks = getStorageMocks();
+    mocks.setAccessLevel.mockImplementation((_options: unknown, callback: () => void) => {
+      setRuntimeLastError('private runtime detail');
+      callback();
+      setRuntimeLastError(undefined);
+    });
+    const { ensureTrustedLocalStorageAccess } = await import('../src/utils/storage.js');
+
+    await expect(ensureTrustedLocalStorageAccess()).rejects.toThrow(
+      'trusted_storage_access_unavailable',
+    );
+  });
+
+  it('fails closed on callback runtime errors with an empty message', async () => {
+    const mocks = getStorageMocks();
+    mocks.setAccessLevel.mockImplementation((_options: unknown, callback: () => void) => {
+      setRuntimeLastError('');
+      callback();
+      setRuntimeLastError(undefined);
+    });
+    const { ensureTrustedLocalStorageAccess } = await import('../src/utils/storage.js');
+
+    await expect(ensureTrustedLocalStorageAccess()).rejects.toThrow(
+      'trusted_storage_access_unavailable',
+    );
+  });
+
+  it('does not touch stored data when initialization fails', async () => {
+    const mocks = getStorageMocks();
+    setStorageSnapshot({ secret: 'unchanged' });
+    mocks.setAccessLevel.mockImplementation(() => {
+      throw new Error('private detail');
+    });
+    const { getLocalValue, removeLocalValues, setLocalValues } = await import(
+      '../src/utils/storage.js'
+    );
+
+    await expect(getLocalValue('secret', 'fallback')).rejects.toThrow();
+    await expect(setLocalValues({ secret: 'changed' })).rejects.toThrow();
+    await expect(removeLocalValues(['secret'])).rejects.toThrow();
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
   });
 });

@@ -15,11 +15,14 @@ type MessageListener = (
   sendResponse: (response: unknown) => void,
 ) => boolean | void;
 
+type ConnectListener = (port: chrome.runtime.Port) => void;
+
 interface ChromeHarness {
   readonly chrome: typeof chrome;
   readonly session: Record<string, unknown>;
   readonly executeScript: ReturnType<typeof vi.fn>;
   readonly queries: chrome.tabs.QueryInfo[];
+  getConnectListener(): ConnectListener;
   getMessageListener(): MessageListener;
   emitPermissionRemoved(): void;
   setActiveTab(overrides: Partial<chrome.tabs.Tab>): void;
@@ -31,6 +34,40 @@ function event<T extends (...args: never[]) => unknown>() {
   return {
     addListener: vi.fn((_listener: T) => undefined),
     removeListener: vi.fn((_listener: T) => undefined),
+  };
+}
+
+function sidePanelPort() {
+  let disconnectListener: (() => void) | undefined;
+  let messageListener: ((message: unknown) => void) | undefined;
+  const posted: unknown[] = [];
+  const port = {
+    name: X_SYNC_PROTOCOL,
+    sender: sender('sidepanel'),
+    onDisconnect: {
+      addListener: vi.fn((listener: () => void) => {
+        disconnectListener = listener;
+      }),
+      removeListener: vi.fn(),
+    },
+    onMessage: {
+      addListener: vi.fn((listener: (message: unknown) => void) => {
+        messageListener = listener;
+      }),
+      removeListener: vi.fn(),
+    },
+    postMessage: vi.fn((message: unknown) => {
+      posted.push(message);
+    }),
+    disconnect: vi.fn(() => {
+      disconnectListener?.();
+    }),
+  } as unknown as chrome.runtime.Port;
+
+  return {
+    port,
+    posted,
+    emitMessage: (message: unknown) => messageListener?.(message),
   };
 }
 
@@ -54,6 +91,7 @@ function xBookmarksTab(overrides: Partial<chrome.tabs.Tab> = {}): chrome.tabs.Ta
 }
 
 function createChromeHarness(): ChromeHarness {
+  let connectListener: ConnectListener | undefined;
   let messageListener: MessageListener | undefined;
   let permissionRemovedListener:
     | ((permissions: chrome.permissions.Permissions) => void)
@@ -70,7 +108,12 @@ function createChromeHarness(): ChromeHarness {
     lastError: undefined,
     getURL: (path: string) => `chrome-extension://${EXTENSION_ID}${path}`,
     onInstalled: event(),
-    onConnect: event(),
+    onConnect: {
+      addListener: vi.fn((listener: ConnectListener) => {
+        connectListener = listener;
+      }),
+      removeListener: vi.fn(),
+    },
     onMessage: {
       addListener: vi.fn((listener: MessageListener) => {
         messageListener = listener;
@@ -81,6 +124,14 @@ function createChromeHarness(): ChromeHarness {
   const chromeMock = {
     runtime,
     storage: {
+      local: {
+        get: vi.fn(),
+        remove: vi.fn(),
+        set: vi.fn(),
+        setAccessLevel: vi.fn(
+          (_options: { accessLevel: 'TRUSTED_CONTEXTS' }, callback: () => void) => callback(),
+        ),
+      },
       session: {
         get: (key: string, callback: (items: Record<string, unknown>) => void) => {
           callback(
@@ -124,6 +175,15 @@ function createChromeHarness(): ChromeHarness {
       getAll: (callback: (permissions: chrome.permissions.Permissions) => void) => {
         callback({ origins: [...permissionOrigins] });
       },
+      remove: (
+        permissions: chrome.permissions.Permissions,
+        callback: (removed: boolean) => void,
+      ) => {
+        const requested = new Set(permissions.origins ?? []);
+        const before = permissionOrigins.length;
+        permissionOrigins = permissionOrigins.filter((origin) => !requested.has(origin));
+        callback(permissionOrigins.length !== before);
+      },
       onRemoved: {
         addListener: vi.fn((listener: (permissions: chrome.permissions.Permissions) => void) => {
           permissionRemovedListener = listener;
@@ -146,6 +206,12 @@ function createChromeHarness(): ChromeHarness {
     queries,
     emitPermissionRemoved: () => {
       permissionRemovedListener?.({ origins: ['https://x.com/*'] });
+    },
+    getConnectListener: () => {
+      if (!connectListener) {
+        throw new Error('service worker connect listener was not installed');
+      }
+      return connectListener;
     },
     getMessageListener: () => {
       if (!messageListener) {
@@ -227,6 +293,59 @@ describe('X sync service worker route', () => {
       protocol: X_SYNC_PROTOCOL,
       ok: false,
       error: { code: 'invalid_message' },
+    });
+  });
+
+  it('broadcasts persisted task changes to a newly opened Side Panel before its first command', async () => {
+    const store = await openSyncStore();
+    const job = await store.createJob({
+      id: 'zero-command-port-job',
+      source: 'x',
+      adapterVersion: 1,
+      budgets: {
+        maxItems: 10,
+        maxPages: 5,
+        maxDurationMs: 60_000,
+        maxItemBytes: 65_536,
+        maxMediaPerItem: 12,
+      },
+      createdAt: '2026-07-17T00:00:00.000Z',
+    });
+    store.close();
+
+    const harness = createChromeHarness();
+    harness.setPermission(true);
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+    const connected = sidePanelPort();
+    harness.getConnectListener()(connected.port);
+
+    const response = await send(
+      harness.getMessageListener(),
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'cancel',
+        requestId: 'cancel-zero-command-port',
+        jobId: job.id,
+        expectedScanRevision: job.scanRevision,
+        expectedReviewRevision: job.reviewRevision,
+      },
+      sender('sidepanel'),
+    );
+
+    expect(response).toMatchObject({ ok: true, result: { kind: 'accepted' } });
+    await vi.waitFor(() => {
+      expect(connected.posted).toContainEqual({
+        protocol: X_SYNC_PROTOCOL,
+        type: 'runtime-event',
+        event: {
+          kind: 'state',
+          jobId: job.id,
+          status: 'cancelled',
+          scanRevision: job.scanRevision,
+          reviewRevision: job.reviewRevision,
+        },
+      });
     });
   });
 
@@ -476,8 +595,7 @@ describe('X sync service worker route', () => {
   it.each([
     ['broad HTTP', ['http://*/*']],
     ['broad HTTPS', ['https://*/*']],
-    ['exact X plus broad HTTPS', ['https://x.com/*', 'https://*/*']],
-  ])('rejects %s instead of treating it as exact X permission', async (_label, origins) => {
+  ])('removes %s and still requires exact X permission', async (_label, origins) => {
     const harness = createChromeHarness();
     harness.setPermissionOrigins(origins);
     vi.stubGlobal('chrome', harness.chrome);
@@ -513,6 +631,40 @@ describe('X sync service worker route', () => {
     } finally {
       store.close();
     }
+  });
+
+  it('removes a broad grant while preserving an existing exact X grant', async () => {
+    const harness = createChromeHarness();
+    harness.setPermissionOrigins(['https://x.com/*', 'https://*/*']);
+    vi.stubGlobal('chrome', harness.chrome);
+    await import('../src/background/service-worker.js');
+    const listener = harness.getMessageListener();
+
+    const launched = (await send(
+      listener,
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'launch',
+        requestId: 'launch-exact-plus-broad',
+      },
+      sender('popup'),
+    )) as { result: { nonce: string } };
+    const response = await send(
+      listener,
+      {
+        protocol: X_SYNC_PROTOCOL,
+        type: 'start',
+        requestId: 'start-exact-plus-broad',
+        launchNonce: launched.result.nonce,
+        mode: 'incremental',
+      },
+      sender('sidepanel'),
+    );
+
+    expect(response).toMatchObject({ ok: true, result: { kind: 'accepted' } });
+    expect(harness.executeScript).toHaveBeenCalledTimes(1);
+    harness.setPermission(false);
+    harness.emitPermissionRemoved();
   });
 
   it('keeps the bounded first-run probe after a cancelled prior job', async () => {

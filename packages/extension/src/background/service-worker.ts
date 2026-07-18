@@ -1,24 +1,15 @@
 import { AI_BATCH_SIZE } from '@shuhai/shared';
 import { classifyAllWithAi, testAiProviderConnection } from '../shared/ai-classifier.js';
 import type {
-  BookmarkItem,
   BookmarkOperation,
   BookmarkOperationCommand,
   BookmarkOperationCommandResponse,
   CapturedContent,
-  ClassificationPortMessage,
-  ClassificationPortRequest,
   ClassificationProgress,
   ClassificationMode,
   DiagnosticReport,
-  ExtensionRequest,
-  ExtensionResponse,
   ExtensionState,
   StateSummary,
-  UrlHealthPortMessage,
-  UrlHealthPortRequest,
-  UrlHealthProgress,
-  UrlHealthRecord,
 } from '../shared/bookmark-types.js';
 import {
   parseBookmarkOperationCommand,
@@ -47,16 +38,31 @@ import {
   getSettings,
   normalizeSettings,
   getOnboarded,
+  getBookmarkOperations,
   getUrlHealthRecords,
+  ensureTrustedLocalStorageAccess,
   removePendingCapture,
   savePendingCapture,
   saveOnboarded,
   saveSettings,
-  saveUrlHealthRecords,
 } from '../utils/storage.js';
-import { checkBookmarkUrl, checkBookmarkUrls } from '../utils/url-health.js';
+import type {
+  ClassificationPortMessage,
+  ClassificationPortRequest,
+  ExtensionRequest,
+  LegacyResponse,
+  SafeAiProviderTestResult,
+} from '../shared/extension-messages.js';
+import {
+  AI_PROVIDER_CONNECTION_RESULTS,
+  makeLegacyError,
+  parseClassificationPortMessage,
+  parseClassificationPortRequest,
+  parseExtensionRequest,
+  parseLegacyResponse,
+  validateExtensionUiSender,
+} from '../shared/extension-messages.js';
 import { addActivityEntry } from '../utils/activity-log.js';
-import { inferErrorCode } from '../utils/error-messages.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
 import {
@@ -116,14 +122,181 @@ interface SocialExtractResponse {
   diagnostic?: DiagnosticReport;
 }
 
-let activeClassification: AbortController | undefined;
-let activeHealthCheck: AbortController | undefined;
-
 const X_SYNC_CONTENT_FILE = 'content/x-bookmarks.js';
 const X_SYNC_ORIGIN = 'https://x.com/*';
 const X_SYNC_LEGACY_BROAD_ORIGINS = ['http://*/*', 'https://*/*'] as const;
 const X_SYNC_INITIAL_CANDIDATE_LIMIT = 10;
 const X_SYNC_INITIAL_SCROLL_LIMIT = 5;
+export const SECURITY_BOOTSTRAP_TIMEOUT_MS = 5_000;
+
+interface SecurityBootstrapSuccess {
+  readonly ok: true;
+  readonly xPermission: 'granted' | 'not_granted';
+}
+
+interface SecurityBootstrapFailure {
+  readonly ok: false;
+}
+
+type SecurityBootstrapResult = SecurityBootstrapSuccess | SecurityBootstrapFailure;
+
+let securityBootstrapExpired = false;
+
+function assertSecurityBootstrapActive(): void {
+  if (securityBootstrapExpired) {
+    throw new Error('security_bootstrap_expired');
+  }
+}
+
+function permissionGetAll(): Promise<chrome.permissions.Permissions> {
+  assertSecurityBootstrapActive();
+  const getAll = chrome.permissions?.getAll;
+  if (typeof getAll !== 'function') {
+    return Promise.reject(new Error('security_bootstrap_failed'));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (value?: chrome.permissions.Permissions, error?: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (securityBootstrapExpired || error || !value) {
+        reject(new Error('security_bootstrap_failed'));
+        return;
+      }
+      resolve(value);
+    };
+
+    try {
+      const result = getAll.call(chrome.permissions, (permissions) => {
+        finish(permissions, chrome.runtime.lastError);
+      }) as unknown;
+      if (
+        result &&
+        (typeof result === 'object' || typeof result === 'function') &&
+        'then' in result &&
+        typeof (result as PromiseLike<chrome.permissions.Permissions>).then === 'function'
+      ) {
+        void Promise.resolve(result).then(
+          (permissions) => finish(permissions as chrome.permissions.Permissions),
+          (error: unknown) => finish(undefined, error),
+        );
+      }
+    } catch (error) {
+      finish(undefined, error);
+    }
+  });
+}
+
+function permissionRemove(permissions: chrome.permissions.Permissions): Promise<boolean> {
+  assertSecurityBootstrapActive();
+  const remove = chrome.permissions?.remove;
+  if (typeof remove !== 'function') {
+    return Promise.reject(new Error('security_bootstrap_failed'));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (removed?: boolean, error?: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (securityBootstrapExpired || error || typeof removed !== 'boolean') {
+        reject(new Error('security_bootstrap_failed'));
+        return;
+      }
+      resolve(removed);
+    };
+
+    try {
+      const result = remove.call(chrome.permissions, permissions, (removed) => {
+        finish(removed, chrome.runtime.lastError);
+      }) as unknown;
+      if (
+        result &&
+        (typeof result === 'object' || typeof result === 'function') &&
+        'then' in result &&
+        typeof (result as PromiseLike<boolean>).then === 'function'
+      ) {
+        void Promise.resolve(result).then(
+          (removed) => finish(removed as unknown as boolean),
+          (error: unknown) => finish(undefined, error),
+        );
+      }
+    } catch (error) {
+      finish(undefined, error);
+    }
+  });
+}
+
+async function runSecurityBootstrap(): Promise<SecurityBootstrapSuccess> {
+  await ensureTrustedLocalStorageAccess();
+  assertSecurityBootstrapActive();
+
+  const before = await permissionGetAll();
+  assertSecurityBootstrapActive();
+  const beforeOrigins = before.origins ?? [];
+  const exactWasGranted = beforeOrigins.includes(X_SYNC_ORIGIN);
+  const broadOrigins = X_SYNC_LEGACY_BROAD_ORIGINS.filter((origin) =>
+    beforeOrigins.includes(origin),
+  );
+
+  if (broadOrigins.length > 0) {
+    await permissionRemove({ origins: [...broadOrigins] });
+    assertSecurityBootstrapActive();
+  }
+
+  const after = await permissionGetAll();
+  assertSecurityBootstrapActive();
+  const afterOrigins = after.origins ?? [];
+  if (X_SYNC_LEGACY_BROAD_ORIGINS.some((origin) => afterOrigins.includes(origin))) {
+    throw new Error('security_bootstrap_failed');
+  }
+  if (exactWasGranted && !afterOrigins.includes(X_SYNC_ORIGIN)) {
+    throw new Error('security_bootstrap_failed');
+  }
+
+  return {
+    ok: true,
+    xPermission: afterOrigins.includes(X_SYNC_ORIGIN) ? 'granted' : 'not_granted',
+  };
+}
+
+function startSecurityBootstrap(): Promise<SecurityBootstrapResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: SecurityBootstrapResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = globalThis.setTimeout(() => {
+      securityBootstrapExpired = true;
+      finish({ ok: false });
+    }, SECURITY_BOOTSTRAP_TIMEOUT_MS);
+
+    void runSecurityBootstrap().then(
+      (result) => {
+        if (!securityBootstrapExpired) {
+          finish(result);
+        }
+      },
+      () => {
+        if (!securityBootstrapExpired) {
+          finish({ ok: false });
+        }
+      },
+    );
+  });
+}
+
+const securityBootstrap = startSecurityBootstrap();
 const xSyncRuntime = new XSyncRuntime();
 const xSyncPorts = new Set<chrome.runtime.Port>();
 
@@ -1083,7 +1256,15 @@ function handleXSyncUiMessage(
     );
   }
   return runXSyncCommandExclusive(async () => {
-    const recovery = await xSyncRecovery;
+    const bootstrap = await securityBootstrap;
+    if (!bootstrap.ok) {
+      return xSyncFailure(
+        request.requestId,
+        'security_bootstrap_failed',
+        xSyncPhaseForRequest(request),
+      );
+    }
+    const recovery = await ensureXSyncRecovery();
     if (!recovery.ok) {
       return xSyncFailure(request.requestId, 'storage_corrupt', xSyncPhaseForRequest(request));
     }
@@ -1104,30 +1285,56 @@ function handleXSyncPort(port: chrome.runtime.Port): void {
     port.disconnect();
     return;
   }
-  xSyncPorts.add(port);
+  let disconnected = false;
   port.onDisconnect.addListener(() => {
+    disconnected = true;
     xSyncPorts.delete(port);
   });
+  void securityBootstrap.then((bootstrap) => {
+    if (disconnected) {
+      return;
+    }
+    if (!bootstrap.ok) {
+      port.disconnect();
+      return;
+    }
+    xSyncPorts.add(port);
+  });
   port.onMessage.addListener((message: unknown) => {
-    void handleXSyncUiMessage(message, port.sender!).then((response) => {
-      postXSyncPortValue(port, response);
+    void securityBootstrap.then((bootstrap) => {
+      if (bootstrap.ok && !disconnected) {
+        xSyncPorts.add(port);
+      }
+      return handleXSyncUiMessage(message, port.sender!).then((response) => {
+        if (disconnected) {
+          return;
+        }
+        postXSyncPortValue(port, response);
+        if (!bootstrap.ok) {
+          port.disconnect();
+        }
+      });
     });
   });
 }
 
-const xSyncRecovery = openSyncStore()
-  .then(async (store) => {
-    try {
-      await store.recoverInterruptedScanningJobs();
-      return { ok: true } as const;
-    } finally {
-      store.close();
-    }
-  })
-  .catch(() => ({ ok: false }) as const);
+let xSyncRecovery: Promise<{ readonly ok: boolean }> | undefined;
+
+function ensureXSyncRecovery(): Promise<{ readonly ok: boolean }> {
+  xSyncRecovery ??= openSyncStore()
+    .then(async (store) => {
+      try {
+        await store.recoverInterruptedScanningJobs();
+        return { ok: true } as const;
+      } finally {
+        store.close();
+      }
+    })
+    .catch(() => ({ ok: false }) as const);
+  return xSyncRecovery;
+}
 
 async function getState(): Promise<ExtensionState> {
-  const bookmarkOperations = await reconcileInterruptedBookmarkOperations();
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
   const backups = await listBackups();
@@ -1146,7 +1353,7 @@ async function getState(): Promise<ExtensionState> {
     exportManifests,
     pendingCaptures,
     urlHealthRecords,
-    bookmarkOperations,
+    bookmarkOperations: [],
     lastMoveRecordCount: lastMoveRecords.length,
     onboarded,
     settings,
@@ -1225,111 +1432,6 @@ async function createPlan(
   }
 
   return plan;
-}
-
-function localDateKey(value: string | Date): string {
-  const date = typeof value === 'string' ? new Date(value) : value;
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-function getReusableTodayHealthRecords(
-  records: UrlHealthRecord[],
-  bookmarks: BookmarkItem[],
-): UrlHealthRecord[] {
-  const today = localDateKey(new Date());
-  const bookmarkById = new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark]));
-  const recordById = new Map<string, UrlHealthRecord>();
-
-  for (const record of records) {
-    const bookmark = bookmarkById.get(record.bookmarkId);
-    if (!bookmark) {
-      continue;
-    }
-
-    if (localDateKey(record.checkedAt) === today && record.bookmarkUrl === bookmark.url) {
-      recordById.set(record.bookmarkId, record);
-    }
-  }
-
-  return bookmarks.flatMap((bookmark) => {
-    const record = recordById.get(bookmark.id);
-    return record ? [record] : [];
-  });
-}
-
-async function checkBookmarkHealth(
-  options: {
-    bookmarkIds?: string[];
-    signal?: AbortSignal;
-    onProgress?: (progress: UrlHealthProgress, records: UrlHealthRecord[]) => void;
-  } = {},
-): Promise<{ records: UrlHealthRecord[]; progress: UrlHealthProgress }> {
-  const tree = await getFullTree();
-  const summary = flattenBookmarkTree(tree);
-  const selectedIds = options.bookmarkIds ? new Set(options.bookmarkIds) : undefined;
-  const bookmarks = selectedIds
-    ? summary.bookmarks.filter((bookmark) => selectedIds.has(bookmark.id))
-    : summary.bookmarks;
-  const reusableRecords = getReusableTodayHealthRecords(await getUrlHealthRecords(), bookmarks);
-  const reusableIds = new Set(reusableRecords.map((record) => record.bookmarkId));
-  const uncheckedBookmarks = bookmarks.filter((bookmark) => !reusableIds.has(bookmark.id));
-  const { records, progress } = await checkBookmarkUrls(uncheckedBookmarks, {
-    initialRecords: reusableRecords,
-    signal: options.signal,
-    onProgress: options.onProgress,
-    totalCount: bookmarks.length,
-  });
-
-  await saveUrlHealthRecords(records);
-
-  return { records, progress };
-}
-
-function replaceUrlHealthRecord(
-  records: UrlHealthRecord[],
-  nextRecord: UrlHealthRecord,
-): UrlHealthRecord[] {
-  const nextRecords: UrlHealthRecord[] = [];
-  let inserted = false;
-
-  for (const record of records) {
-    if (record.bookmarkId === nextRecord.bookmarkId) {
-      if (!inserted) {
-        nextRecords.push(nextRecord);
-        inserted = true;
-      }
-      continue;
-    }
-
-    nextRecords.push(record);
-  }
-
-  if (!inserted) {
-    nextRecords.push(nextRecord);
-  }
-
-  return nextRecords;
-}
-
-async function retryBookmarkHealth(
-  bookmarkId: string,
-): Promise<{ record: UrlHealthRecord; records: UrlHealthRecord[] }> {
-  const tree = await getFullTree();
-  const summary = flattenBookmarkTree(tree);
-  const bookmark = summary.bookmarks.find((item) => item.id === bookmarkId);
-
-  if (!bookmark) {
-    throw new Error('书签不存在，可能已经被删除');
-  }
-
-  const record = await checkBookmarkUrl(bookmark);
-  const records = replaceUrlHealthRecord(await getUrlHealthRecords(), record);
-  await saveUrlHealthRecords(records);
-
-  return { record, records };
 }
 
 function openSidePanelForTab(tab: chrome.tabs.Tab | undefined): Promise<void | undefined> {
@@ -1588,76 +1690,138 @@ function requestArticleCapture(tab: chrome.tabs.Tab | undefined): void {
     .catch(() => undefined);
 }
 
-async function handleRequest(request: ExtensionRequest): Promise<ExtensionResponse> {
-  try {
-    switch (request.type) {
-      case 'state:get':
-        return { ok: true, data: await getState() };
-      case 'state:summary':
-        return { ok: true, data: await getStateSummary() };
-      case 'plan:create':
-        return { ok: true, data: await createPlan(request.mode) };
-      case 'settings:get':
-        return { ok: true, data: await getSettings() };
-      case 'settings:set': {
-        const settings = normalizeSettings(request.settings);
-        await saveSettings(settings);
-        return { ok: true, data: settings };
-      }
-      case 'ai:testConnection':
-        return { ok: true, data: await testAiProviderConnection(request.provider) };
-      case 'onboarding:getProgress':
-        return {
-          ok: true,
-          data: (await getOnboardingProgress()) ?? {
-            vaultConfigured: false,
-            providerConfigured: false,
-            firstClassifyDone: false,
-            firstExportDone: false,
-          },
-        };
-      case 'onboarding:set':
-        await saveOnboarded(request.onboarded);
-        return { ok: true, data: { onboarded: request.onboarded } };
-      case 'capture:getPending':
-        return { ok: true, data: await getPendingCaptures() };
-      case 'capture:currentSocial':
-        return { ok: true, data: await captureCurrentSocial(request.source) };
-      case 'capture:currentArticle': {
-        const tab = await getActiveTab();
-        if (typeof tab?.id !== 'number') {
-          throw new Error('无法识别当前页面');
-        }
+function sanitizeAiProviderTestResult(
+  result: Awaited<ReturnType<typeof testAiProviderConnection>>,
+): SafeAiProviderTestResult {
+  if (result.success) {
+    return AI_PROVIDER_CONNECTION_RESULTS.connection_ok;
+  }
 
-        const capture = await executeArticleExtractor(tab.id);
-        const stored = await storeCapture(capture, tab);
-        if (!stored) {
-          throw new Error('无法保存提取结果');
-        }
+  if (result.message === '请先填写 API Key') {
+    return AI_PROVIDER_CONNECTION_RESULTS.api_key_required;
+  }
+  if (result.message === '请先填写 API 地址') {
+    return AI_PROVIDER_CONNECTION_RESULTS.base_url_required;
+  }
+  if (result.message === '请先填写模型名称') {
+    return AI_PROVIDER_CONNECTION_RESULTS.model_required;
+  }
+  if (result.status === 401) {
+    return AI_PROVIDER_CONNECTION_RESULTS.unauthorized;
+  }
+  if (result.status === 404) {
+    return AI_PROVIDER_CONNECTION_RESULTS.not_found;
+  }
+  if (result.status !== undefined) {
+    return AI_PROVIDER_CONNECTION_RESULTS.request_failed;
+  }
+  return AI_PROVIDER_CONNECTION_RESULTS.network_failed;
+}
 
-        return { ok: true, data: { capture: stored } };
-      }
-      case 'capture:removePending':
-        return { ok: true, data: { removed: await removePendingCapture(request.id) } };
-      case 'capture:clearPending':
-        await clearPendingCapture();
-        return { ok: true, data: { cleared: true } };
-      case 'health:clearRecords':
-        await clearUrlHealthRecords();
-        return { ok: true, data: { cleared: true } };
-      case 'health:retryOne':
-        return { ok: true, data: await retryBookmarkHealth(request.bookmarkId) };
-      case 'backups:list':
-        return { ok: true, data: await listBackups() };
-      default:
-        return { ok: false, error: 'Unsupported request' };
+async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown> {
+  switch (request.type) {
+    case 'security:getBootstrapStatus':
+      return { ok: true, data: { ready: true } };
+    case 'state:get':
+      return { ok: true, data: await getState() };
+    case 'state:summary':
+      return { ok: true, data: await getStateSummary() };
+    case 'operations:getRecent':
+      return { ok: true, data: { operations: await getBookmarkOperations() } };
+    case 'plan:create':
+      return { ok: true, data: await createPlan(request.mode) };
+    case 'settings:get':
+      return { ok: true, data: await getSettings() };
+    case 'settings:set': {
+      const settings = normalizeSettings(request.settings);
+      await saveSettings(settings);
+      return { ok: true, data: settings };
     }
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-      errorCode: inferErrorCode(error),
-    };
+    case 'ai:testConnection':
+      return {
+        ok: true,
+        data: sanitizeAiProviderTestResult(await testAiProviderConnection(request.provider)),
+      };
+    case 'onboarding:getProgress':
+      return {
+        ok: true,
+        data: (await getOnboardingProgress()) ?? {
+          vaultConfigured: false,
+          providerConfigured: false,
+          firstClassifyDone: false,
+          firstExportDone: false,
+        },
+      };
+    case 'onboarding:set':
+      await saveOnboarded(request.onboarded);
+      return { ok: true, data: { onboarded: request.onboarded } };
+    case 'capture:getPending':
+      return { ok: true, data: await getPendingCaptures() };
+    case 'capture:currentSocial':
+      return { ok: true, data: await captureCurrentSocial(request.source) };
+    case 'capture:currentArticle': {
+      const tab = await getActiveTab();
+      if (typeof tab?.id !== 'number') {
+        throw new Error('capture_failed');
+      }
+
+      const capture = await executeArticleExtractor(tab.id);
+      const stored = await storeCapture(capture, tab);
+      if (!stored) {
+        throw new Error('capture_failed');
+      }
+
+      return { ok: true, data: { capture: stored } };
+    }
+    case 'capture:removePending':
+      return { ok: true, data: { removed: await removePendingCapture(request.id) } };
+    case 'capture:clearPending':
+      await clearPendingCapture();
+      return { ok: true, data: { cleared: true } };
+    case 'health:clearRecords':
+      await clearUrlHealthRecords();
+      return { ok: true, data: { cleared: true } };
+    case 'backups:list':
+      return { ok: true, data: await listBackups() };
+  }
+}
+
+function validatedLegacyResponse(
+  request: ExtensionRequest,
+  response: unknown,
+): LegacyResponse<ExtensionRequest> {
+  try {
+    return parseLegacyResponse(request, response);
+  } catch {
+    return makeLegacyError('response_invalid');
+  }
+}
+
+async function handleLegacyMessage(
+  message: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<LegacyResponse<ExtensionRequest>> {
+  if (!validateExtensionUiSender(sender)) {
+    return makeLegacyError('forbidden_sender');
+  }
+  let request: ExtensionRequest;
+  try {
+    request = parseExtensionRequest(message);
+  } catch {
+    return makeLegacyError('invalid_request');
+  }
+
+  const bootstrap = await securityBootstrap;
+  if (!bootstrap.ok) {
+    return request.type === 'security:getBootstrapStatus'
+      ? makeLegacyError('security_bootstrap_failed')
+      : makeLegacyError('storage_unavailable');
+  }
+
+  try {
+    return validatedLegacyResponse(request, await executeLegacyRequest(request));
+  } catch {
+    return makeLegacyError('operation_failed');
   }
 }
 
@@ -1674,23 +1838,18 @@ function hasBookmarkOperationTypePrefix(value: unknown): boolean {
     return false;
   }
   try {
-    const type = Reflect.get(value, 'type');
-    return typeof type === 'string' && type.startsWith('bookmarkOperations:');
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'type');
+    if (!descriptor) {
+      return false;
+    }
+    if (!('value' in descriptor)) {
+      return true;
+    }
+    return (
+      typeof descriptor.value === 'string' && descriptor.value.startsWith('bookmarkOperations:')
+    );
   } catch {
     return true;
-  }
-}
-
-function isBookmarkOperationSender(sender: chrome.runtime.MessageSender): boolean {
-  if (sender.id !== chrome.runtime.id || sender.tab !== undefined) {
-    return false;
-  }
-  try {
-    const popupUrl = chrome.runtime.getURL('popup/index.html');
-    const sidePanelUrl = chrome.runtime.getURL('sidepanel/index.html');
-    return sender.url === popupUrl || sender.url === sidePanelUrl;
-  } catch {
-    return false;
   }
 }
 
@@ -1730,7 +1889,7 @@ async function handleBookmarkOperationMessage(
   message: unknown,
   sender: chrome.runtime.MessageSender,
 ): Promise<BookmarkOperationMessageResponse> {
-  if (!isBookmarkOperationSender(sender)) {
+  if (!validateExtensionUiSender(sender)) {
     return bookmarkOperationFailure('forbidden_sender');
   }
 
@@ -1739,6 +1898,11 @@ async function handleBookmarkOperationMessage(
     command = parseBookmarkOperationCommand(message);
   } catch {
     return bookmarkOperationFailure('invalid_request');
+  }
+
+  const bootstrap = await securityBootstrap;
+  if (!bootstrap.ok) {
+    return bookmarkOperationFailure('storage_read_failed');
   }
 
   try {
@@ -1792,14 +1956,37 @@ function postClassificationMessage(
   message: ClassificationPortMessage,
 ): void {
   try {
-    port.postMessage(message);
+    port.postMessage(parseClassificationPortMessage(message));
   } catch {
-    activeClassification?.abort();
+    port.disconnect();
+  }
+}
+
+function classificationRequestId(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'requestId');
+    return descriptor &&
+      'value' in descriptor &&
+      typeof descriptor.value === 'string' &&
+      /^[A-Za-z0-9:_-]{8,128}$/u.test(descriptor.value)
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
 function handleClassificationPort(port: chrome.runtime.Port): void {
+  if (!validateExtensionUiSender(port.sender)) {
+    port.disconnect();
+    return;
+  }
+
   let controller: AbortController | undefined;
+  let activeRequestId: string | undefined;
   let lastProgress: ClassificationProgress = {
     done: 0,
     total: 0,
@@ -1810,149 +1997,166 @@ function handleClassificationPort(port: chrome.runtime.Port): void {
 
   port.onDisconnect.addListener(() => {
     controller?.abort();
-    if (activeClassification === controller) {
-      activeClassification = undefined;
-    }
+    controller = undefined;
+    activeRequestId = undefined;
   });
 
-  port.onMessage.addListener((message: ClassificationPortRequest) => {
-    if (message.type === 'cancel') {
-      controller?.abort();
-      return;
-    }
-
-    if (message.type !== 'plan:create') {
-      return;
-    }
-
-    controller?.abort();
-    controller = new AbortController();
-    activeClassification = controller;
-
-    void createPlan(message.mode, {
-      signal: controller.signal,
-      onProgress: (progress) => {
-        lastProgress = progress;
-        postClassificationMessage(port, { type: 'progress', progress });
-      },
-    })
-      .then((plan) => {
+  port.onMessage.addListener((message: unknown) => {
+    let request: ClassificationPortRequest;
+    try {
+      request = parseClassificationPortRequest(message);
+    } catch {
+      const requestId = classificationRequestId(message);
+      if (requestId) {
         postClassificationMessage(port, {
-          type: 'complete',
-          plan,
-          progress: {
-            ...lastProgress,
-            cancelled: controller?.signal.aborted,
+          type: 'error',
+          requestId,
+          error: 'Classification request failed',
+          errorCode: 'invalid_request',
+        });
+      }
+      port.disconnect();
+      return;
+    }
+
+    if (request.type === 'cancel') {
+      if (!activeRequestId || request.targetRequestId !== activeRequestId) {
+        postClassificationMessage(port, {
+          type: 'error',
+          requestId: request.requestId,
+          error: 'Classification request failed',
+          errorCode: 'operation_failed',
+        });
+        port.disconnect();
+        return;
+      }
+      controller?.abort();
+      controller = undefined;
+      activeRequestId = undefined;
+      postClassificationMessage(port, {
+        type: 'cancelled',
+        requestId: request.requestId,
+        targetRequestId: request.targetRequestId,
+      });
+      port.disconnect();
+      return;
+    }
+
+    if (activeRequestId) {
+      postClassificationMessage(port, {
+        type: 'error',
+        requestId: request.requestId,
+        error: 'Classification request failed',
+        errorCode: 'classification_in_progress',
+      });
+      port.disconnect();
+      return;
+    }
+    activeRequestId = request.requestId;
+
+    void securityBootstrap.then(async (bootstrap) => {
+      if (activeRequestId !== request.requestId) {
+        return;
+      }
+      if (!bootstrap.ok) {
+        activeRequestId = undefined;
+        postClassificationMessage(port, {
+          type: 'error',
+          requestId: request.requestId,
+          error: 'Classification request failed',
+          errorCode: 'storage_unavailable',
+        });
+        port.disconnect();
+        return;
+      }
+
+      controller = new AbortController();
+      const requestController = controller;
+      try {
+        const plan = await createPlan(request.mode, {
+          signal: requestController.signal,
+          onProgress: (progress) => {
+            if (activeRequestId !== request.requestId) {
+              return;
+            }
+            lastProgress = progress;
+            postClassificationMessage(port, {
+              type: 'progress',
+              requestId: request.requestId,
+              progress,
+            });
           },
-          cancelled: Boolean(controller?.signal.aborted),
         });
-      })
-      .catch((error) => {
-        postClassificationMessage(port, {
-          type: 'error',
-          error: error instanceof Error ? error.message : String(error),
-          errorCode: inferErrorCode(error),
-        });
-      })
-      .finally(() => {
-        if (activeClassification === controller) {
-          activeClassification = undefined;
+        if (activeRequestId === request.requestId) {
+          postClassificationMessage(port, {
+            type: 'complete',
+            requestId: request.requestId,
+            plan,
+            progress: {
+              ...lastProgress,
+              cancelled: requestController.signal.aborted,
+            },
+            cancelled: requestController.signal.aborted,
+          });
         }
-      });
-  });
-}
-
-function postHealthMessage(port: chrome.runtime.Port, message: UrlHealthPortMessage): void {
-  try {
-    port.postMessage(message);
-  } catch {
-    activeHealthCheck?.abort();
-  }
-}
-
-function handleHealthPort(port: chrome.runtime.Port): void {
-  let controller: AbortController | undefined;
-
-  port.onDisconnect.addListener(() => {
-    controller?.abort();
-    if (activeHealthCheck === controller) {
-      activeHealthCheck = undefined;
-    }
-  });
-
-  port.onMessage.addListener((message: UrlHealthPortRequest) => {
-    if (message.type === 'cancel' || message.type === 'pause') {
-      controller?.abort();
-      return;
-    }
-
-    if (message.type !== 'health:check') {
-      return;
-    }
-
-    controller?.abort();
-    controller = new AbortController();
-    activeHealthCheck = controller;
-
-    void checkBookmarkHealth({
-      bookmarkIds: message.bookmarkIds,
-      signal: controller.signal,
-      onProgress: (progress, records) => {
-        postHealthMessage(port, { type: 'progress', progress, records });
-      },
-    })
-      .then(({ records, progress }) => {
-        postHealthMessage(port, {
-          type: 'complete',
-          progress,
-          records,
-          cancelled: Boolean(controller?.signal.aborted),
-        });
-      })
-      .catch((error) => {
-        postHealthMessage(port, {
-          type: 'error',
-          error: error instanceof Error ? error.message : String(error),
-          errorCode: inferErrorCode(error),
-        });
-      })
-      .finally(() => {
-        if (activeHealthCheck === controller) {
-          activeHealthCheck = undefined;
+      } catch {
+        if (activeRequestId === request.requestId) {
+          postClassificationMessage(port, {
+            type: 'error',
+            requestId: request.requestId,
+            error: 'Classification request failed',
+            errorCode: 'operation_failed',
+          });
         }
-      });
+      } finally {
+        if (activeRequestId === request.requestId) {
+          activeRequestId = undefined;
+        }
+        if (controller === requestController) {
+          controller = undefined;
+        }
+      }
+    });
   });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  if (chrome.sidePanel?.setPanelBehavior) {
-    void chrome.sidePanel
-      .setPanelBehavior({ openPanelOnActionClick: false })
-      .catch(() => undefined);
-  }
+  void securityBootstrap.then((bootstrap) => {
+    if (!bootstrap.ok) {
+      return;
+    }
+    if (chrome.sidePanel?.setPanelBehavior) {
+      void chrome.sidePanel
+        .setPanelBehavior({ openPanelOnActionClick: false })
+        .catch(() => undefined);
+    }
 
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'shuhai-open',
-      title: '打开 ShuHai 侧边栏',
-      contexts: ['action'],
-    });
-    chrome.contextMenus.create({
-      id: 'shuhai-save-article',
-      title: '提取文章正文到 ShuHai',
-      contexts: ['page', 'selection'],
-    });
-    chrome.contextMenus.create({
-      id: 'shuhai-save-tweet',
-      title: '提取推文正文到 ShuHai',
-      contexts: ['page'],
-      documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
-    });
-    chrome.contextMenus.create({
-      id: 'shuhai-save-weibo',
-      title: '提取微博正文到 ShuHai',
-      contexts: ['page'],
-      documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
+    chrome.contextMenus.removeAll(() => {
+      if (chrome.runtime.lastError) {
+        return;
+      }
+      chrome.contextMenus.create({
+        id: 'shuhai-open',
+        title: '打开 ShuHai 侧边栏',
+        contexts: ['action'],
+      });
+      chrome.contextMenus.create({
+        id: 'shuhai-save-article',
+        title: '提取文章正文到 ShuHai',
+        contexts: ['page', 'selection'],
+      });
+      chrome.contextMenus.create({
+        id: 'shuhai-save-tweet',
+        title: '提取推文正文到 ShuHai',
+        contexts: ['page'],
+        documentUrlPatterns: ['https://x.com/*', 'https://twitter.com/*'],
+      });
+      chrome.contextMenus.create({
+        id: 'shuhai-save-weibo',
+        title: '提取微博正文到 ShuHai',
+        contexts: ['page'],
+        documentUrlPatterns: ['https://weibo.com/*', 'https://m.weibo.cn/*'],
+      });
     });
   });
 });
@@ -1966,7 +2170,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     void handleBookmarkOperationMessage(message, sender).then(sendResponse);
     return true;
   }
-  void handleRequest(message as ExtensionRequest).then(sendResponse);
+  void handleLegacyMessage(message, sender).then(sendResponse);
   return true;
 });
 
@@ -1981,9 +2185,7 @@ chrome.runtime.onConnect.addListener((port) => {
     return;
   }
 
-  if (port.name === 'health') {
-    handleHealthPort(port);
-  }
+  port.disconnect();
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -2018,25 +2220,31 @@ chrome.permissions.onRemoved.addListener((permissions) => {
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'shuhai-open') {
-    const windowId = tab?.windowId;
-    if (typeof windowId === 'number' && chrome.sidePanel?.open) {
-      void chrome.sidePanel.open({ windowId }).catch(() => undefined);
+  void securityBootstrap.then((bootstrap) => {
+    if (!bootstrap.ok) {
+      return;
     }
-    return;
-  }
 
-  if (info.menuItemId === 'shuhai-save-tweet') {
-    requestCapture(tab, 'twitter');
-    return;
-  }
+    if (info.menuItemId === 'shuhai-open') {
+      const windowId = tab?.windowId;
+      if (typeof windowId === 'number' && chrome.sidePanel?.open) {
+        void chrome.sidePanel.open({ windowId }).catch(() => undefined);
+      }
+      return;
+    }
 
-  if (info.menuItemId === 'shuhai-save-weibo') {
-    requestCapture(tab, 'weibo');
-    return;
-  }
+    if (info.menuItemId === 'shuhai-save-tweet') {
+      requestCapture(tab, 'twitter');
+      return;
+    }
 
-  if (info.menuItemId === 'shuhai-save-article') {
-    requestArticleCapture(tab);
-  }
+    if (info.menuItemId === 'shuhai-save-weibo') {
+      requestCapture(tab, 'weibo');
+      return;
+    }
+
+    if (info.menuItemId === 'shuhai-save-article') {
+      requestArticleCapture(tab);
+    }
+  });
 });

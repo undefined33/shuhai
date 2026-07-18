@@ -212,15 +212,6 @@ export interface UrlHealthRecord {
   error?: string;
 }
 
-export interface UrlHealthProgress {
-  done: number;
-  total: number;
-  elapsedMs: number;
-  remainingMs?: number;
-  currentUrl?: string;
-  summary: UrlHealthSummary;
-}
-
 export const BOOKMARK_OPERATION_SCHEMA_VERSION = 1 as const;
 export const BOOKMARK_OPERATION_BATCH_LIMIT = 250;
 export const BOOKMARK_OPERATION_COMMAND_LIMIT = 64;
@@ -1610,35 +1601,6 @@ export function parseBookmarkOperationCommand(value: unknown): BookmarkOperation
   return parsed.data;
 }
 
-export type UrlHealthPortRequest =
-  | { type: 'health:check'; bookmarkIds?: string[] }
-  | { type: 'pause' }
-  | { type: 'cancel' };
-
-export type UrlHealthPortMessage =
-  | { type: 'progress'; progress: UrlHealthProgress; records: UrlHealthRecord[] }
-  | {
-      type: 'complete';
-      progress: UrlHealthProgress;
-      records: UrlHealthRecord[];
-      cancelled: boolean;
-    }
-  | { type: 'error'; error: string; errorCode?: string };
-
-export type ClassificationPortRequest =
-  | { type: 'plan:create'; mode: ClassificationMode }
-  | { type: 'cancel' };
-
-export type ClassificationPortMessage =
-  | { type: 'progress'; progress: ClassificationProgress }
-  | {
-      type: 'complete';
-      plan: ClassificationPlan;
-      progress: ClassificationProgress;
-      cancelled: boolean;
-    }
-  | { type: 'error'; error: string; errorCode?: string };
-
 export interface MoveRecord {
   bookmarkId: string;
   bookmarkTitle: string;
@@ -1754,37 +1716,3 @@ export interface OnboardingProgressState {
   firstClassifyDone: boolean;
   firstExportDone: boolean;
 }
-
-export type ExtensionRequest =
-  | { type: 'state:get' }
-  | { type: 'state:summary' }
-  | { type: 'plan:create'; mode: ClassificationMode }
-  | { type: 'settings:get' }
-  | { type: 'settings:set'; settings: AppSettings }
-  | { type: 'ai:testConnection'; provider: AiProviderConfig }
-  | { type: 'onboarding:getProgress' }
-  | { type: 'onboarding:set'; onboarded: boolean }
-  | { type: 'capture:getPending' }
-  | { type: 'capture:removePending'; id: string }
-  | { type: 'capture:clearPending' }
-  | { type: 'capture:currentSocial'; source: 'twitter' | 'weibo' }
-  | { type: 'capture:currentArticle' }
-  | { type: 'health:clearRecords' }
-  | { type: 'health:retryOne'; bookmarkId: string }
-  | { type: 'backups:list' };
-
-export type ExtensionResponse =
-  | { ok: true; data: ExtensionState }
-  | { ok: true; data: StateSummary }
-  | { ok: true; data: ClassificationPlan }
-  | { ok: true; data: BackupRecord[] }
-  | { ok: true; data: AppSettings }
-  | { ok: true; data: AiProviderTestResult }
-  | { ok: true; data: OnboardingProgressState }
-  | { ok: true; data: { onboarded: boolean } }
-  | { ok: true; data: CapturedContent[] }
-  | { ok: true; data: { capture: CapturedContent } }
-  | { ok: true; data: { removed: boolean } }
-  | { ok: true; data: { cleared: boolean } }
-  | { ok: true; data: { record: UrlHealthRecord; records: UrlHealthRecord[] } }
-  | { ok: false; error: string; errorCode?: string };

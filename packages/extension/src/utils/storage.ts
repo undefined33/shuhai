@@ -29,6 +29,7 @@ import {
   bookmarkOperationItemNeedsRestore,
   normalizeBookmarkTargetPath,
 } from '../shared/bookmark-types.js';
+import { UrlHealthRecordSchema } from '../shared/extension-messages.js';
 import type { OnboardingProgress } from './onboarding.js';
 import {
   DEFAULT_ACTIVE_PROVIDER_ID,
@@ -54,6 +55,7 @@ export const ONBOARDING_PROGRESS_KEY = 'onboardingProgress';
 export const BOOKMARK_OPERATIONS_KEY = 'bookmarkOperations';
 export const BOOKMARK_OPERATION_RETENTION_COUNT = 20;
 export const BOOKMARK_OPERATION_RETENTION_DAYS = 30;
+export const TRUSTED_STORAGE_ACCESS_TIMEOUT_MS = 5_000;
 
 export class BookmarkOperationStorageError extends Error {
   constructor(readonly code: BookmarkOperationStorageErrorCode) {
@@ -79,11 +81,66 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 function getLastError(): Error | undefined {
-  const message = chrome.runtime.lastError?.message;
-  return message ? new Error(message) : undefined;
+  const lastError = chrome.runtime.lastError;
+  return lastError === undefined
+    ? undefined
+    : new Error(lastError.message || 'chrome_runtime_error');
 }
 
-export function getLocalValue<T>(key: string, fallback: T): Promise<T> {
+let trustedLocalStorageAccess: Promise<void> | undefined;
+
+function initializeTrustedLocalStorageAccess(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const storageArea = chrome.storage?.local;
+    const setAccessLevel = storageArea?.setAccessLevel;
+    if (typeof setAccessLevel !== 'function') {
+      reject(new Error('trusted_storage_access_unavailable'));
+      return;
+    }
+
+    let settled = false;
+    const finish = (succeeded: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      globalThis.clearTimeout(timer);
+      if (!succeeded) {
+        reject(new Error('trusted_storage_access_unavailable'));
+        return;
+      }
+      resolve();
+    };
+    const timer = globalThis.setTimeout(() => finish(false), TRUSTED_STORAGE_ACCESS_TIMEOUT_MS);
+
+    try {
+      const result = setAccessLevel.call(storageArea, { accessLevel: 'TRUSTED_CONTEXTS' }, () =>
+        finish(getLastError() === undefined),
+      ) as unknown;
+      if (
+        result &&
+        (typeof result === 'object' || typeof result === 'function') &&
+        'then' in result &&
+        typeof (result as PromiseLike<void>).then === 'function'
+      ) {
+        void Promise.resolve(result).then(
+          () => finish(getLastError() === undefined),
+          () => finish(false),
+        );
+      }
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+export function ensureTrustedLocalStorageAccess(): Promise<void> {
+  trustedLocalStorageAccess ??= initializeTrustedLocalStorageAccess();
+  return trustedLocalStorageAccess;
+}
+
+export async function getLocalValue<T>(key: string, fallback: T): Promise<T> {
+  await ensureTrustedLocalStorageAccess();
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(key, (items) => {
       const error = getLastError();
@@ -97,7 +154,8 @@ export function getLocalValue<T>(key: string, fallback: T): Promise<T> {
   });
 }
 
-export function setLocalValues(values: Record<string, unknown>): Promise<void> {
+export async function setLocalValues(values: Record<string, unknown>): Promise<void> {
+  await ensureTrustedLocalStorageAccess();
   return new Promise((resolve, reject) => {
     chrome.storage.local.set(values, () => {
       const error = getLastError();
@@ -111,7 +169,8 @@ export function setLocalValues(values: Record<string, unknown>): Promise<void> {
   });
 }
 
-export function removeLocalValues(keys: string[]): Promise<void> {
+export async function removeLocalValues(keys: string[]): Promise<void> {
+  await ensureTrustedLocalStorageAccess();
   return new Promise((resolve, reject) => {
     chrome.storage.local.remove(keys, () => {
       const error = getLastError();
@@ -320,8 +379,20 @@ export function clearPendingCapture(): Promise<void> {
   return removeLocalValues([PENDING_CAPTURE_KEY]);
 }
 
-export function getUrlHealthRecords(): Promise<UrlHealthRecord[]> {
-  return getLocalValue<UrlHealthRecord[]>(URL_HEALTH_RECORDS_KEY, []);
+export async function getUrlHealthRecords(): Promise<UrlHealthRecord[]> {
+  const stored = await getLocalValue<unknown>(URL_HEALTH_RECORDS_KEY, []);
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+
+  const records: UrlHealthRecord[] = [];
+  for (const candidate of stored.slice(0, 10_000)) {
+    const parsed = UrlHealthRecordSchema.safeParse(candidate);
+    if (parsed.success) {
+      records.push(parsed.data);
+    }
+  }
+  return records;
 }
 
 export function saveUrlHealthRecords(records: UrlHealthRecord[]): Promise<void> {
@@ -748,7 +819,15 @@ function assertEnvelopeSize(envelope: BookmarkOperationJournalEnvelope): void {
   }
 }
 
-function getRawBookmarkOperationJournal(): Promise<{ present: boolean; value?: unknown }> {
+async function getRawBookmarkOperationJournal(): Promise<{
+  present: boolean;
+  value?: unknown;
+}> {
+  try {
+    await ensureTrustedLocalStorageAccess();
+  } catch {
+    throw new BookmarkOperationStorageError('storage_read_failed');
+  }
   return new Promise((resolve, reject) => {
     try {
       chrome.storage.local.get(BOOKMARK_OPERATIONS_KEY, (items) => {
@@ -774,7 +853,14 @@ function getRawBookmarkOperationJournal(): Promise<{ present: boolean; value?: u
   });
 }
 
-function setRawBookmarkOperationJournal(envelope: BookmarkOperationJournalEnvelope): Promise<void> {
+async function setRawBookmarkOperationJournal(
+  envelope: BookmarkOperationJournalEnvelope,
+): Promise<void> {
+  try {
+    await ensureTrustedLocalStorageAccess();
+  } catch {
+    throw new BookmarkOperationStorageError('storage_write_failed');
+  }
   return new Promise((resolve, reject) => {
     try {
       chrome.storage.local.set({ [BOOKMARK_OPERATIONS_KEY]: envelope }, () => {

@@ -1,9 +1,9 @@
 # ShuHai Goal 状态索引
 
-> 最后更新：2026-07-17
-> 当前状态：Goal 041/042/043/045A 均已 `DONE/PASS`；Goal 045B 正在进入合同准备
+> 最后更新：2026-07-18
+> 当前状态：Goal 041/042/043/045A/045B 均已 `DONE/PASS`；Goal 045C 为下一合同候选，尚未进入实施
 > 执行规则：按 045A -> 045B -> 045C 串行修复 P0/P1；只有前一子 Goal 独立 `PASS` 后才能推进下一项。
-> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；045A 数据安全门已通过，但生产主壳仍等待 045B/045C 的 P1 收口。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；045A/045B 安全门已通过，但生产主壳仍等待 045C 的 P1 收口。
 
 ## 当前编排状态
 
@@ -14,8 +14,8 @@
 | Goal 042  | `DONE`                      | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
 | Goal 043  | `DONE`                      | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
 | Goal 045A | `DONE`                      | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
-| Goal 045B | `PLANNED`                   | 消息、URL 健康和权限安全                 | 045A 独立 PASS                  |
-| Goal 045C | `PLANNED`                   | 内容保存与 AI 隐私收口                   | 045B 独立 PASS                  |
+| Goal 045B | `DONE`                      | 消息边界、storage 隔离和 URL 体检退役    | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045C | `PLANNED`                   | 内容保存与 AI 隐私收口                   | 写合同并完成独立预审            |
 | 044/046   | `PLANNED`                   | 微博研究门禁、UI 与 dogfood              | 不与当前安全 writer 并行        |
 | Goal 047  | `RESEARCH_GATE`             | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
 | workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 串行修复审计确认的 P0/P1                 | 当前 Goal 独立验收后自动推进    |
@@ -30,8 +30,8 @@
 | [043](./goal-043-x-bookmarks-incremental-sync.md)      | `DONE`                    | X 收藏增量同步 MVP                        | 独立 review 与真实 QA PASS     |
 | 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | 新研究门禁改变当前微博 `NO_GO` |
 | [045A](./goal-045a-bookmark-mutation-safety.md)        | `DONE`                    | 删除、URL 更新和分类移动 journal          | mock-only + 独立 review PASS   |
-| 045B                                                   | `PLANNED`                 | 通用消息、URL 健康和权限生命周期          | 045A PASS                      |
-| 045C                                                   | `PLANNED`                 | 内容保存链路和 AI 隐私边界                | 045B PASS                      |
+| [045B](./goal-045b-extension-trust-boundary.md)        | `DONE`                    | 消息、storage、权限与 URL 体检退役        | mock-only + 独立 review PASS   |
+| 045C                                                   | `PLANNED`                 | 内容保存链路和 AI 隐私边界                | 写合同并完成独立预审           |
 | 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收         |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据               |
 

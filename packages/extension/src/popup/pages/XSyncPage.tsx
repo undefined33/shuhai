@@ -4,8 +4,9 @@ import { ArrowLeft, Ban, CheckCircle2, Pause, Play, RefreshCw, ShieldCheck } fro
 import { Button } from '../../components/ui/button.js';
 import { Checkbox } from '../../components/ui/checkbox.js';
 import { Progress } from '../../components/ui/progress.js';
+import { parseLegacyResponse, type ExtensionRequest } from '../../shared/extension-messages.js';
 import { createVaultSyncEngine } from '../../social/sync-engine.js';
-import type { SyncJobItem, SyncScanMode } from '../../social/sync-schema.js';
+import type { SyncJob, SyncJobItem, SyncScanMode } from '../../social/sync-schema.js';
 import { openSyncStore, type SyncStore } from '../../social/sync-store.js';
 import {
   X_SYNC_LAUNCH_INTENT_KEY,
@@ -30,8 +31,10 @@ import {
 import {
   acceptFreshXSyncLaunchIntent,
   classifyXHostPermissionOrigins,
+  describeXSyncRuntimeError,
   deriveXSyncUiModel,
   prepareNextXSyncBatch,
+  X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
   type XHostPermissionState,
   type XSyncLaunchState,
   type XSyncTaskSnapshot,
@@ -39,9 +42,11 @@ import {
 } from './x-sync-ui-model.js';
 
 const X_ORIGIN = 'https://x.com/*';
-const LEGACY_BROAD_ORIGINS = ['http://*/*', 'https://*/*'] as const;
 const VAULT_PREFIX = 'ShuHai';
 const COMMAND_TIMEOUT_MS = 30_000;
+const SECURITY_BOOTSTRAP_REQUEST = {
+  type: 'security:getBootstrapStatus',
+} as const satisfies ExtensionRequest;
 
 interface PendingCommand {
   resolve(response: XSyncUiResponse): void;
@@ -50,6 +55,129 @@ interface PendingCommand {
 }
 
 const EMPTY_SNAPSHOT: XSyncTaskSnapshot = { items: [], pendingIntentCount: 0 };
+
+export type XSyncBootstrapStatusSender = (
+  request: typeof SECURITY_BOOTSTRAP_REQUEST,
+  callback: (response: unknown) => void,
+) => void;
+
+export function requestXSyncSecurityBootstrap(
+  sendMessage: XSyncBootstrapStatusSender = (request, callback) => {
+    chrome.runtime.sendMessage(request, callback);
+  },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      sendMessage(SECURITY_BOOTSTRAP_REQUEST, (rawResponse) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE));
+          return;
+        }
+        try {
+          const response = parseLegacyResponse(SECURITY_BOOTSTRAP_REQUEST, rawResponse);
+          if (!response.ok) {
+            throw new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE);
+          }
+          resolve();
+        } catch {
+          reject(new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE));
+        }
+      });
+    } catch {
+      reject(new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE));
+    }
+  });
+}
+
+type XSyncVaultHandle = NonNullable<Awaited<ReturnType<typeof getVaultHandle>>>;
+
+export interface XSyncProtectedResourceDependencies {
+  requestBootstrapStatus(): Promise<void>;
+  connectPort(): chrome.runtime.Port;
+  openStore(): Promise<SyncStore>;
+  inspectPermission(): Promise<XHostPermissionState>;
+  readVaultHandle(): ReturnType<typeof getVaultHandle>;
+  queryVaultPermission(handle: XSyncVaultHandle): Promise<boolean>;
+  readLaunchIntent(): Promise<XSyncLaunchIntent | undefined>;
+}
+
+export type XSyncProtectedResourceInitialization =
+  | {
+      readonly ok: true;
+      readonly port: chrome.runtime.Port;
+      readonly store: SyncStore;
+      readonly xPermission: XHostPermissionState;
+      readonly vaultPermission: XVaultPermissionState;
+      readonly activeJob: SyncJob | undefined;
+      readonly launchIntent: XSyncLaunchIntent | undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: 'security_bootstrap_failed' | 'resource_unavailable';
+    };
+
+export async function initializeXSyncPageProtectedResources(
+  dependencies: XSyncProtectedResourceDependencies = {
+    requestBootstrapStatus: requestXSyncSecurityBootstrap,
+    connectPort: () => chrome.runtime.connect({ name: X_SYNC_PROTOCOL }),
+    openStore: openSyncStore,
+    inspectPermission: inspectXPermission,
+    readVaultHandle: getVaultHandle,
+    queryVaultPermission,
+    readLaunchIntent: waitForLaunchIntent,
+  },
+): Promise<XSyncProtectedResourceInitialization> {
+  try {
+    await dependencies.requestBootstrapStatus();
+  } catch {
+    return { ok: false, reason: 'security_bootstrap_failed' };
+  }
+
+  let port: chrome.runtime.Port | undefined;
+  let store: SyncStore | undefined;
+  try {
+    store = await dependencies.openStore();
+    const [xPermission, handle, activeJob] = await Promise.all([
+      dependencies.inspectPermission(),
+      dependencies.readVaultHandle().catch(() => null),
+      store.getActiveJob('x'),
+    ]);
+    const vaultPermission: XVaultPermissionState = handle
+      ? (await dependencies.queryVaultPermission(handle).catch(() => false))
+        ? 'granted'
+        : 'prompt'
+      : 'missing';
+    const launchIntent = activeJob
+      ? undefined
+      : await dependencies.readLaunchIntent().catch(() => undefined);
+    port = dependencies.connectPort();
+
+    return {
+      ok: true,
+      port,
+      store,
+      xPermission,
+      vaultPermission,
+      activeJob,
+      launchIntent,
+    };
+  } catch {
+    port?.disconnect();
+    store?.close();
+    return { ok: false, reason: 'resource_unavailable' };
+  }
+}
+
+export function XSyncSecurityBootstrapFailureNotice() {
+  return (
+    <div
+      className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive"
+      role="alert"
+    >
+      {X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE}
+    </div>
+  );
+}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -124,14 +252,6 @@ function removeXPermission(): Promise<XHostPermissionState> {
   });
 }
 
-function removeLegacyBroadPermissions(): Promise<XHostPermissionState> {
-  return new Promise((resolve) => {
-    chrome.permissions.remove({ origins: [...LEGACY_BROAD_ORIGINS] }, () => {
-      void inspectXPermission().then(resolve);
-    });
-  });
-}
-
 function newRequestId(): string {
   const id = globalThis.crypto?.randomUUID?.();
   if (!id) {
@@ -141,20 +261,7 @@ function newRequestId(): string {
 }
 
 function commandError(response: Extract<XSyncUiResponse, { ok: false }>): Error {
-  const copy: Record<string, string> = {
-    forbidden_sender: '当前页面无权控制 X 同步任务',
-    launch_expired: '启动已过期，请重新点击扩展按钮',
-    launch_missing: '没有找到本次启动请求，请重新点击扩展按钮',
-    source_conflict: '已有一个 X 同步任务正在进行',
-    stale_revision: '任务状态已经变化，已重新载入最新进度',
-    invalid_state: '当前任务阶段不允许执行这个操作',
-    tab_changed: 'X 收藏页已经切换，任务没有读取其它页面',
-    permission_revoked: 'X 页面访问权限尚未授予或已被撤销',
-    storage_corrupt: '同步状态无法安全读取，任务已停止',
-    invalid_message: '同步请求未通过安全校验',
-    internal_error: '同步任务暂时无法继续',
-  };
-  return new Error(copy[response.error.code] ?? '同步任务暂时无法继续');
+  return new Error(describeXSyncRuntimeError(response.error.code));
 }
 
 function permissionLabel(state: XHostPermissionState): string {
@@ -189,6 +296,9 @@ function classificationLabel(classification: SyncJobItem['classification']): str
 }
 
 export default function XSyncPage() {
+  const [securityBootstrapState, setSecurityBootstrapState] = useState<
+    'pending' | 'ready' | 'failed'
+  >('pending');
   const [snapshot, setSnapshot] = useState<XSyncTaskSnapshot>(EMPTY_SNAPSHOT);
   const [mode, setMode] = useState<SyncScanMode>('incremental');
   const [xPermission, setXPermission] = useState<XHostPermissionState>('unavailable');
@@ -278,75 +388,115 @@ export default function XSyncPage() {
 
   useEffect(() => {
     let disposed = false;
-    const port = chrome.runtime.connect({ name: X_SYNC_PROTOCOL });
-    portRef.current = port;
+    let port: chrome.runtime.Port | undefined;
+    let onMessage: ((value: unknown) => void) | undefined;
+    let onDisconnect: (() => void) | undefined;
+    let onStorageChanged:
+      | ((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void)
+      | undefined;
+    let onPermissionRemoved: (() => void) | undefined;
 
-    const onMessage = (value: unknown) => {
-      try {
-        const response = parseXSyncUiResponse(value);
-        const pending = pendingCommandsRef.current.get(response.requestId);
-        if (pending) {
-          window.clearTimeout(pending.timeoutId);
-          pendingCommandsRef.current.delete(response.requestId);
-          pending.resolve(response);
+    void initializeXSyncPageProtectedResources().then(async (initialization) => {
+      if (!initialization.ok) {
+        if (!disposed) {
+          if (initialization.reason === 'security_bootstrap_failed') {
+            setSecurityBootstrapState('failed');
+          } else {
+            setSecurityBootstrapState('ready');
+            setLaunchState('unavailable');
+            setErrorMessage('无法安全读取同步状态');
+          }
         }
         return;
-      } catch {
-        // Runtime events use a separate strict schema below.
       }
-      try {
-        const message = parseXSyncPortMessage(value);
-        if ('jobId' in message.event && message.event.jobId) {
-          jobIdRef.current = message.event.jobId;
-          void refreshRef.current?.(message.event.jobId);
-        }
-      } catch {
-        setErrorMessage('收到无法验证的同步状态，界面已停止自动更新');
+      if (disposed) {
+        initialization.port.disconnect();
+        initialization.store.close();
+        return;
       }
-    };
-    const onDisconnect = () => {
-      portRef.current = undefined;
-      for (const pending of pendingCommandsRef.current.values()) {
-        window.clearTimeout(pending.timeoutId);
-        pending.reject(new Error('同步通道已断开，持久化进度仍然保留'));
-      }
-      pendingCommandsRef.current.clear();
-    };
-    port.onMessage.addListener(onMessage);
-    port.onDisconnect.addListener(onDisconnect);
 
-    void (async () => {
+      setSecurityBootstrapState('ready');
       try {
-        const store = await openSyncStore();
-        if (disposed) {
-          store.close();
-          return;
-        }
-        storeRef.current = store;
-        const [permissionState, handle, activeJob] = await Promise.all([
-          inspectXPermission(),
-          getVaultHandle().catch(() => null),
-          store.getActiveJob('x'),
-        ]);
-        setXPermission(permissionState);
-        if (handle) {
-          const granted = await queryVaultPermission(handle).catch(() => false);
-          setVaultPermission(granted ? 'granted' : 'prompt');
-        } else {
-          setVaultPermission('missing');
-        }
+        port = initialization.port;
+        portRef.current = initialization.port;
 
-        if (activeJob) {
-          jobIdRef.current = activeJob.id;
-          setMode(activeJob.scanMode);
+        onMessage = (value: unknown) => {
+          try {
+            const response = parseXSyncUiResponse(value);
+            const pending = pendingCommandsRef.current.get(response.requestId);
+            if (pending) {
+              window.clearTimeout(pending.timeoutId);
+              pendingCommandsRef.current.delete(response.requestId);
+              pending.resolve(response);
+            }
+            return;
+          } catch {
+            // Runtime events use a separate strict schema below.
+          }
+          try {
+            const message = parseXSyncPortMessage(value);
+            if ('jobId' in message.event && message.event.jobId) {
+              jobIdRef.current = message.event.jobId;
+              void refreshRef.current?.(message.event.jobId);
+            }
+          } catch {
+            setErrorMessage('收到无法验证的同步状态，界面已停止自动更新');
+          }
+        };
+        onDisconnect = () => {
+          portRef.current = undefined;
+          for (const pending of pendingCommandsRef.current.values()) {
+            window.clearTimeout(pending.timeoutId);
+            pending.reject(new Error('同步通道已断开，持久化进度仍然保留'));
+          }
+          pendingCommandsRef.current.clear();
+        };
+        port.onMessage.addListener(onMessage);
+        port.onDisconnect.addListener(onDisconnect);
+
+        onStorageChanged = (
+          changes: Record<string, chrome.storage.StorageChange>,
+          areaName: string,
+        ) => {
+          const raw = changes[X_SYNC_LAUNCH_INTENT_KEY]?.newValue;
+          if (areaName !== 'session' || raw === undefined) return;
+          try {
+            const intent = parseXSyncLaunchIntent(raw);
+            const now = Date.now();
+            if (now >= intent.expiresAtMs) return;
+            launchIntentRef.current = intent;
+            jobIdRef.current = undefined;
+            defaultReviewRef.current = '';
+            setLaunchState('ready');
+            setSnapshot((current) => {
+              const transition = acceptFreshXSyncLaunchIntent(current, intent, now);
+              return transition?.snapshot ?? current;
+            });
+          } catch {
+            setLaunchState('unavailable');
+          }
+        };
+        chrome.storage.onChanged.addListener(onStorageChanged);
+
+        onPermissionRemoved = () => {
+          void inspectXPermission().then(setXPermission);
+        };
+        chrome.permissions.onRemoved.addListener(onPermissionRemoved);
+
+        storeRef.current = initialization.store;
+        setXPermission(initialization.xPermission);
+        setVaultPermission(initialization.vaultPermission);
+
+        if (initialization.activeJob) {
+          jobIdRef.current = initialization.activeJob.id;
+          setMode(initialization.activeJob.scanMode);
           setLaunchState('ready');
-          await refresh(activeJob.id);
+          await refresh(initialization.activeJob.id);
           return;
         }
 
-        const intent = await waitForLaunchIntent().catch(() => undefined);
-        if (intent) {
-          launchIntentRef.current = intent;
+        if (initialization.launchIntent) {
+          launchIntentRef.current = initialization.launchIntent;
           setLaunchState('ready');
           await refresh(undefined, true);
         } else {
@@ -357,44 +507,23 @@ export default function XSyncPage() {
         setLaunchState('unavailable');
         setErrorMessage('无法安全读取同步状态');
       }
-    })();
-
-    const onStorageChanged = (
-      changes: Record<string, chrome.storage.StorageChange>,
-      areaName: string,
-    ) => {
-      const raw = changes[X_SYNC_LAUNCH_INTENT_KEY]?.newValue;
-      if (areaName !== 'session' || raw === undefined) return;
-      try {
-        const intent = parseXSyncLaunchIntent(raw);
-        const now = Date.now();
-        if (now >= intent.expiresAtMs) return;
-        launchIntentRef.current = intent;
-        jobIdRef.current = undefined;
-        defaultReviewRef.current = '';
-        setLaunchState('ready');
-        setSnapshot((current) => {
-          const transition = acceptFreshXSyncLaunchIntent(current, intent, now);
-          return transition?.snapshot ?? current;
-        });
-      } catch {
-        setLaunchState('unavailable');
-      }
-    };
-    chrome.storage.onChanged.addListener(onStorageChanged);
-
-    const onPermissionRemoved = () => {
-      void inspectXPermission().then(setXPermission);
-    };
-    chrome.permissions.onRemoved.addListener(onPermissionRemoved);
+    });
 
     return () => {
       disposed = true;
-      chrome.storage.onChanged.removeListener(onStorageChanged);
-      chrome.permissions.onRemoved.removeListener(onPermissionRemoved);
-      port.onMessage.removeListener(onMessage);
-      port.onDisconnect.removeListener(onDisconnect);
-      port.disconnect();
+      if (onStorageChanged) {
+        chrome.storage.onChanged.removeListener(onStorageChanged);
+      }
+      if (onPermissionRemoved) {
+        chrome.permissions.onRemoved.removeListener(onPermissionRemoved);
+      }
+      if (port && onMessage) {
+        port.onMessage.removeListener(onMessage);
+      }
+      if (port && onDisconnect) {
+        port.onDisconnect.removeListener(onDisconnect);
+      }
+      port?.disconnect();
       for (const pending of pendingCommandsRef.current.values()) {
         window.clearTimeout(pending.timeoutId);
         pending.reject(new Error('同步页面已关闭'));
@@ -464,15 +593,6 @@ export default function XSyncPage() {
       const permissionState = await removeXPermission();
       setXPermission(permissionState);
       if (permissionState !== 'not_granted') throw new Error('X 页面权限未被完整撤销');
-    });
-
-  const handleRemoveLegacyBroadPermissions = () =>
-    runAction(async () => {
-      const permissionState = await removeLegacyBroadPermissions();
-      setXPermission(permissionState);
-      if (permissionState === 'overbroad') {
-        throw new Error('旧的全网站权限仍未撤销');
-      }
     });
 
   const handleStart = () =>
@@ -653,6 +773,18 @@ export default function XSyncPage() {
       await writeAuthorizedItems(handle, job.id);
     });
 
+  if (securityBootstrapState === 'failed') {
+    return <XSyncSecurityBootstrapFailureNotice />;
+  }
+
+  if (securityBootstrapState === 'pending') {
+    return (
+      <div className="rounded-md border border-border bg-muted/40 p-3 text-[13px]" role="status">
+        正在确认 ShuHai 安全初始化状态…
+      </div>
+    );
+  }
+
   const toneClass =
     model.tone === 'success'
       ? 'border-primary/25 bg-primary/10'
@@ -684,24 +816,6 @@ export default function XSyncPage() {
       {errorMessage ? (
         <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-[13px] text-destructive">
           {errorMessage}
-        </div>
-      ) : null}
-
-      {xPermission === 'overbroad' ? (
-        <div className="mt-3 space-y-2 rounded-md border border-border bg-muted/40 p-3 text-[13px]">
-          <p>
-            旧版链接体检曾申请全网站访问。为确保 X
-            权限可单独撤销，请先收回该权限；这不会删除书签或已保存内容。
-          </p>
-          <Button
-            className="w-full"
-            disabled={busy}
-            onClick={handleRemoveLegacyBroadPermissions}
-            variant="outline"
-          >
-            <Ban className="h-4 w-4" />
-            撤销旧的全网站权限
-          </Button>
         </div>
       ) : null}
 

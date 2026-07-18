@@ -214,6 +214,7 @@ const storage = {
     get: vi.fn(),
     set: vi.fn(),
     remove: vi.fn(),
+    setAccessLevel: vi.fn(),
   },
   onChanged: {
     addListener: vi.fn(),
@@ -222,6 +223,14 @@ const storage = {
 };
 
 function resetStorageImplementations(): void {
+  storage.local.setAccessLevel.mockImplementation(
+    (
+      _options: { accessLevel: 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS' },
+      callback?: () => void,
+    ) => {
+      callback?.();
+    },
+  );
   storage.local.get.mockImplementation(
     (keys: string | string[] | StorageData | null, callback: (items: StorageData) => void) => {
       callback(getStorageItems(keys));
@@ -283,7 +292,7 @@ export function getStorageMocks() {
 }
 
 export function setRuntimeLastError(message: string | undefined): void {
-  runtime.lastError = message ? { message } : undefined;
+  runtime.lastError = message === undefined ? undefined : { message };
 }
 
 beforeEach(() => {

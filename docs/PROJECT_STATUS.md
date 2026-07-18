@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
-> 最后更新：2026-07-17
-> 状态：Goal 041/042/043/045A 均已 `DONE/PASS`；下一实施候选为 Goal 045B，尚待精确合同与独立预审
+> 最后更新：2026-07-18
+> 状态：Goal 041/042/043/045A/045B 均已 `DONE/PASS`；Goal 045C 为下一合同候选
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -17,13 +17,13 @@
 
 Goal 043 已完成最终真实 Chrome 门禁。用户在唯一获准的日常 `https://x.com/i/bookmarks` 标签启动新的受界 no-Vault 任务并于 `5/10` 候选、3 条 catalog-existing observations 时暂停；继续后至少完成一批处理，existing observations 增至 6。用户随后只在同一标签离开收藏页，Side Panel 以 `tab_changed` 显示“收藏页已切换”并保持暂停，没有读取新页面；用户最终取消任务。全程未触碰其它标签、Cookie、token、私有 API、真实 Vault 或平台收藏数据。worktree disposable Vault 在前后核对中始终为 5 个文件、总计 5002 bytes、单文件 865-1200 bytes，没有新增写入。独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 给出 `PASS`，P0/P1/P2 均为 0，因此 Goal 041/042/043 正式完成。X 结论仍严格限定为 `LIMITED_GO/batch-only`：没有稳定 feed end marker，不能宣称同步全部历史收藏。Goal 044 仍为 `PLANNED`，且微博当前为 `NO_GO`，不得自动进入生产实施。disposable 测试 Vault 内现有 5 个文件不删除、不修改；v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
-用户于 2026-07-17 授权进入自动编排并优先修复审计确认的 P0/P1。实施从干净的 `573512c` v4 基线创建 `codex/p0-p1-security-hardening` 和独立 `security-hardening-v4` worktree；主工作区 Goal 032 候选 diff 只读审计，不覆盖、不 reset、不直接合并。[Goal 045A](./goals/goal-045a-bookmark-mutation-safety.md) 已在 mock 环境完成删除、URL 更新和分类移动 journal，566 项测试与扩展 build 通过，独立 review 为 `PASS` 且 P0/P1/P2 均为 0；没有操作真实 Chrome、X、Vault 或用户书签。下一项 045B 必须先形成精确合同并通过独立预审。
+用户于 2026-07-17 授权进入自动编排并优先修复审计确认的 P0/P1。实施从干净的 `573512c` v4 基线创建 `codex/p0-p1-security-hardening` 和独立 `security-hardening-v4` worktree；主工作区 Goal 032 候选 diff 只读审计，不覆盖、不 reset、不直接合并。[Goal 045A](./goals/goal-045a-bookmark-mutation-safety.md) 已在 mock 环境完成删除、URL 更新和分类移动 journal，566 项测试与扩展 build 通过，独立 review 为 `PASS` 且 P0/P1/P2 均为 0；没有操作真实 Chrome、X、Vault 或用户书签。[Goal 045B](./goals/goal-045b-extension-trust-boundary.md) 已停用任意 URL 网络体检、撤销 broad host permission、移除静态平台注入，并收紧 message、Port、storage 和历史健康结果的 fail-closed 边界；Goal 定向测试 303/303、全仓测试 702/702 与完整门禁通过，Carver (`019f729b-c43c-7301-afcc-792b82910307`) 独立复审为 `PASS`，P0/P1/P2 均为 0。全程没有操作真实 Chrome、X、Vault、网络或用户书签。Goal 045C 现为下一合同候选，必须先完成精确范围和独立预审，不能直接进入代码实施。
 
 ## 2. 当前产品定义
 
 ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 
-1. **整理 Chrome 书签**：分析分类、重复项和失效候选；用户复核后应用，结果可解释、可恢复。
+1. **整理 Chrome 书签**：分析分类和重复项；用户复核后应用，结果可解释、可恢复。
 2. **同步社交平台收藏**：用户在支持平台收藏页点击启动，增量比较本地目录，只把新增内容安全写入 Obsidian。
 
 普通网页或单条帖子保存是同步能力的单项模式，不再独立扩张为通用剪藏产品。AI 是可选建议器，不是使用前提。
@@ -42,7 +42,7 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 
 已实现但需要重新验收：
 
-- Chrome 书签读取、分类建议、健康检测、批量操作和基础恢复。
+- Chrome 书签读取、分类建议、可恢复批量操作，以及只读展示旧链接检查历史。
 - X/微博单条详情页 DOM 提取。
 - 普通文章提取、待保存队列和 Markdown 生成。
 - File System Access API Vault 目录授权和写入。
@@ -86,12 +86,12 @@ Goal 045A 已通过当前门禁的模块：
 |    3 | Goal 043  | `DONE`                    | X 增量同步 MVP；`LIMITED_GO/batch-only`  |
 |    4 | Goal 044  | `PLANNED`                 | 微博收藏增量同步 MVP                     |
 |    5 | Goal 045A | `DONE`                    | 删除、URL 更新和分类移动 journal 安全门  |
-|    6 | Goal 045B | `PLANNED`                 | 消息边界、URL 健康与权限生命周期         |
+|    6 | Goal 045B | `DONE`                    | 消息、storage、权限与 URL 体检退役       |
 |    7 | Goal 045C | `PLANNED`                 | 内容保存链路与 AI 隐私收口               |
 |    8 | Goal 046  | `PLANNED`                 | 极简界面、E2E 和两周 dogfood             |
 |    9 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042/043/045A 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；当前没有生产 implementation writer，045B 只有在合同与独立预审完成后才能转 `IN_PROGRESS`，045C 继续等待 045B 独立 PASS。Goal 044 仍受微博 `NO_GO` 阻塞。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
+用户已确认 v4；041/042/043/045A/045B 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；045B 的 message、storage、权限和 URL 体检收口也已通过 mock-only 完整门禁与独立复审。045C 只进入合同编写和预审，不得跳过门禁直接实施。Goal 044 仍受微博 `NO_GO` 阻塞。032-040 的旧队列继续停止自动编排；其中有价值的安全工作只通过新 Goal 显式继承。
 
 ## 7. 平台判断
 
@@ -120,7 +120,7 @@ Goal 045A 已通过当前门禁的模块：
 3. 第一轮 disposable Vault 因用户误保留全部选择而实际创建 5 个文件；Side Panel 与文件数量/大小一致，作为首次写入功能证据通过，同时记录 1-3 条 QA 范围偏差，不删除、不修改。
 4. 修复版第二次 incremental 已固定 `maxCandidates=10 + maxScrollActions=5`，在 `6/10` 候选与 7 条 existing observations 时因安全预算暂停；复核页确认 7 条 existing 未进入可写候选、5 条 incomplete 未选、只有 1 条 new 默认选中，测试 Vault 仍保持 5 个文件且大小不变，没有再次保存。
 5. 最终真实门禁已通过：任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6；同一标签切离 `/i/bookmarks` 后以 `tab_changed` 暂停，随后由用户取消，Vault 聚合保持不变。
-6. Goal 045A 已完成并通过独立审查。下一步只允许先准备和预审 Goal 045B 合同；Goal 044 在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举，Goal 046 也不得与安全收口并行写代码。
+6. Goal 045A/045B 已完成并通过独立审查。下一步只编写并预审 Goal 045C 合同；在合同成为唯一 `READY`/`IN_PROGRESS` Goal 前不得实施。Goal 044 在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举，Goal 046 也不得与安全收口并行写代码。
 
 ## 10. 当前文档
 
@@ -130,6 +130,7 @@ Goal 045A 已通过当前门禁的模块：
 - [社交收藏增量同步调研](./research/2026-07-13-social-favorites-sync-feasibility.md)
 - [Goal 041 执行合同](./goals/goal-041-social-sync-feasibility-spike.md)
 - [Goal 045A 执行合同](./goals/goal-045a-bookmark-mutation-safety.md)
+- [Goal 045B 执行合同](./goals/goal-045b-extension-trust-boundary.md)
 - [Goal 状态索引](./goals/README.md)
 - [产品路线图 v3（历史）](./product-roadmap-v3.md)
 - [全方位审计（历史决策依据）](./audits/2026-07-12-comprehensive-product-security-ui-audit.md)

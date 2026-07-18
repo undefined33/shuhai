@@ -19,27 +19,26 @@ import type {
   BookmarkOperationCommand,
   BookmarkOperationCommandResponse,
   CapturedContent,
-  ClassificationPortMessage,
-  ClassificationPortRequest,
   ClassificationMode,
   ClassificationPlan,
   ClassificationProgress,
   ExportManifest,
-  ExtensionRequest,
-  ExtensionResponse,
   ExtensionState,
   FolderItem,
   MovePlan,
   StateSummary,
-  UrlHealthPortMessage,
-  UrlHealthPortRequest,
-  UrlHealthProgress,
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
+import { isBookmarkOperation } from '../shared/bookmark-types.js';
 import {
-  isBookmarkOperation,
-  parseBookmarkOperationCommandResponse,
-} from '../shared/bookmark-types.js';
+  parseClassificationPortMessage,
+  parseBookmarkOperationMessageResponse,
+  parseLegacyResponse,
+  type ClassificationPortMessage,
+  type ClassificationPortRequest,
+  type ExtensionRequest,
+  type LegacySuccessData,
+} from '../shared/extension-messages.js';
 import { Badge } from '../components/ui/badge.js';
 import { Button } from '../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
@@ -56,7 +55,14 @@ import { Alert } from '../components/ui/alert.js';
 import { Separator } from '../components/ui/separator.js';
 import { ToastProvider, useToast } from '../components/ui/toast.js';
 import { ErrorRecovery } from '../components/ErrorRecovery.js';
-import { DEFAULT_SETTINGS, normalizeSettings, saveOnboardingProgress } from '../utils/storage.js';
+import {
+  DEFAULT_SETTINGS,
+  getLocalValue,
+  normalizeSettings,
+  removeLocalValues,
+  saveOnboardingProgress,
+  setLocalValues,
+} from '../utils/storage.js';
 import {
   computeOnboardingProgress,
   onboardingComplete,
@@ -77,8 +83,6 @@ import {
   addActivityEntry,
   summarizeClassifyApply,
   summarizeClassifyUndo,
-  summarizeHealthDelete,
-  summarizeHealthUpdate,
 } from '../utils/activity-log.js';
 import ActivityPage from './pages/ActivityPage.js';
 import CollectionPage from './pages/CollectionPage.js';
@@ -88,12 +92,15 @@ import type { CurrentTabInfo, InlineSaveSource } from './pages/InlineSavePanel.j
 import { OnboardingChecklist } from './pages/OnboardingChecklist.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
-import XSyncPage from './pages/XSyncPage.js';
-import { formatXSyncShortStatus } from './pages/x-sync-ui-model.js';
+import XSyncPage, { requestXSyncSecurityBootstrap } from './pages/XSyncPage.js';
+import {
+  formatXSyncShortStatus,
+  X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
+} from './pages/x-sync-ui-model.js';
 
 type Surface = 'popup' | 'sidepanel';
 type PageName = 'home' | 'organize' | 'health' | 'collection' | 'activity' | 'settings';
-type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'health' | undefined;
+type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'operation' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
 const PREFERRED_VIEW_KEY = 'shuhaiPreferredView';
@@ -162,7 +169,7 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
     exportManifests: arrayOrEmpty<ExportManifest>(state.exportManifests),
     pendingCaptures: arrayOrEmpty<CapturedContent>(state.pendingCaptures),
     urlHealthRecords: arrayOrEmpty<UrlHealthRecord>(state.urlHealthRecords),
-    bookmarkOperations: arrayOrEmpty<unknown>(state.bookmarkOperations).filter(isBookmarkOperation),
+    bookmarkOperations: [],
     lastMoveRecordCount:
       typeof state.lastMoveRecordCount === 'number' && Number.isFinite(state.lastMoveRecordCount)
         ? state.lastMoveRecordCount
@@ -196,30 +203,33 @@ function normalizeStateSummary(value: unknown): StateSummary {
   };
 }
 
-function sendMessage<T>(request: ExtensionRequest | BookmarkOperationCommand): Promise<T> {
+function sendRawRuntimeMessage(request: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(request, (response: ExtensionResponse | undefined) => {
+    chrome.runtime.sendMessage(request, (response: unknown) => {
       const error = chrome.runtime.lastError?.message;
       if (error) {
         reject(new Error(error));
         return;
       }
 
-      if (!response) {
+      if (response === undefined) {
         reject(new Error('扩展后台没有响应'));
         return;
       }
 
-      if (!response.ok) {
-        const responseError = new Error(response.error) as Error & { errorCode?: string };
-        responseError.errorCode = response.errorCode;
-        reject(responseError);
-        return;
-      }
-
-      resolve(response.data as T);
+      resolve(response);
     });
   });
+}
+
+async function sendMessage<R extends ExtensionRequest>(request: R): Promise<LegacySuccessData<R>> {
+  const response = parseLegacyResponse(request, await sendRawRuntimeMessage(request));
+  if (!response.ok) {
+    const responseError = new Error(response.error) as Error & { errorCode?: string };
+    responseError.errorCode = response.errorCode;
+    throw responseError;
+  }
+  return response.data;
 }
 
 function createOperationRequestId(): string {
@@ -233,13 +243,54 @@ function createOperationRequestId(): string {
 async function sendBookmarkOperation(
   request: BookmarkOperationCommand,
 ): Promise<BookmarkOperationCommandResponse> {
-  const response = parseBookmarkOperationCommandResponse(await sendMessage<unknown>(request));
+  const envelope = parseBookmarkOperationMessageResponse(
+    await sendRawRuntimeMessage(request),
+    request.requestId,
+  );
+  if (!envelope.ok) {
+    const responseError = new Error(envelope.error) as Error & { errorCode?: string };
+    responseError.errorCode = envelope.errorCode;
+    throw responseError;
+  }
+  const response = envelope.data;
   if (!response.receipt.result.ok) {
     const error = new Error('书签操作未执行') as Error & { errorCode?: string };
     error.errorCode = response.receipt.result.errorCode;
     throw error;
   }
   return response;
+}
+
+export function classificationMessageDisposition(
+  message: ClassificationPortMessage,
+  planRequestId: string,
+  cancelRequestId?: string,
+): 'accept' | 'cancelled' | 'invalid' {
+  if (message.type === 'cancelled') {
+    return message.targetRequestId === planRequestId &&
+      cancelRequestId !== undefined &&
+      message.requestId === cancelRequestId
+      ? 'cancelled'
+      : 'invalid';
+  }
+  if (cancelRequestId !== undefined) {
+    return 'cancelled';
+  }
+  return message.requestId === planRequestId ? 'accept' : 'invalid';
+}
+
+export async function loadStateWithIndependentOperations(
+  loadStateRequest: () => Promise<unknown>,
+  loadOperationsRequest: () => Promise<BookmarkOperation[]>,
+): Promise<{
+  state: PromiseSettledResult<unknown>;
+  operations: PromiseSettledResult<BookmarkOperation[]>;
+}> {
+  const [state, operations] = await Promise.allSettled([
+    loadStateRequest(),
+    loadOperationsRequest(),
+  ]);
+  return { state, operations };
 }
 
 function selectedMoveIds(plan: ClassificationPlan): string[] {
@@ -295,21 +346,6 @@ function formatDuration(ms: number | undefined): string {
   }
 
   return `${Math.ceil(seconds / 60)} 分钟`;
-}
-
-function healthStatusLabel(status: UrlHealthRecord['status']): string {
-  switch (status) {
-    case 'alive':
-      return '正常';
-    case 'redirected':
-      return '重定向';
-    case 'dead':
-      return '死链';
-    case 'error':
-      return '检查失败';
-    case 'skipped':
-      return '已跳过';
-  }
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -400,21 +436,6 @@ function sendXSyncPopupMessage(request: XSyncUiRequest): Promise<XSyncUiResponse
   });
 }
 
-function requestHealthCheckPermission(): Promise<boolean> {
-  if (!chrome.permissions?.request) {
-    return Promise.resolve(true);
-  }
-
-  return new Promise((resolve) => {
-    chrome.permissions.request(
-      {
-        origins: ['http://*/*', 'https://*/*'],
-      },
-      (granted) => resolve(Boolean(granted)),
-    );
-  });
-}
-
 function normalizePreferredPage(value: unknown): PageName | undefined {
   if (value === 'collect') {
     return 'collection';
@@ -435,32 +456,17 @@ function normalizePreferredPage(value: unknown): PageName | undefined {
 }
 
 function storePreferredPage(page: PageName): Promise<void> {
-  if (!chrome.storage?.local) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    chrome.storage.local.set({ [PREFERRED_VIEW_KEY]: page }, () => resolve());
-  });
+  return setLocalValues({ [PREFERRED_VIEW_KEY]: page });
 }
 
-function takePreferredPage(): Promise<PageName | undefined> {
-  if (!chrome.storage?.local) {
-    return Promise.resolve(undefined);
+async function takePreferredPage(): Promise<PageName | undefined> {
+  const preferredPage = normalizePreferredPage(
+    await getLocalValue<unknown>(PREFERRED_VIEW_KEY, undefined),
+  );
+  if (preferredPage) {
+    await removeLocalValues([PREFERRED_VIEW_KEY]);
   }
-
-  return new Promise((resolve) => {
-    chrome.storage.local.get(PREFERRED_VIEW_KEY, (items) => {
-      const preferredPage = normalizePreferredPage(items[PREFERRED_VIEW_KEY]);
-      if (preferredPage) {
-        void chrome.storage.local.remove(PREFERRED_VIEW_KEY);
-        resolve(preferredPage);
-        return;
-      }
-
-      resolve(undefined);
-    });
-  });
+  return preferredPage;
 }
 
 function detectInlineSaveSource(url: string): InlineSaveSource | undefined {
@@ -586,7 +592,7 @@ function PopupLauncher({
               <div>
                 <h2 className="text-base font-semibold">打开 ShuHai 工作区</h2>
                 <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-                  在侧边栏里整理书签、检查失效链接、确认内容入库。
+                  在侧边栏里整理书签、查看旧链接记录、确认内容入库。
                 </p>
               </div>
             </div>
@@ -608,7 +614,7 @@ function PopupLauncher({
           </Button>
           <Button disabled={busy || bookmarkCount === 0} onClick={onQuickHealth} variant="outline">
             <Activity className="h-4 w-4" />
-            找出坏链接
+            查看链接历史
           </Button>
         </div>
 
@@ -732,7 +738,7 @@ function PopupLauncher({
             variant="secondary"
           >
             <Activity className="h-4 w-4" />
-            检查链接
+            链接历史
           </Button>
         </CardContent>
       </Card>
@@ -772,6 +778,7 @@ interface XSyncPopupLauncherProps {
   lastJob?: SyncJob;
   opening: boolean;
   ready: boolean;
+  securityFailed: boolean;
   onOpen(): void;
   onOpenSettings(): void;
 }
@@ -780,6 +787,7 @@ function XSyncPopupLauncher({
   lastJob,
   opening,
   ready,
+  securityFailed,
   onOpen,
   onOpenSettings,
 }: XSyncPopupLauncherProps) {
@@ -811,6 +819,9 @@ function XSyncPopupLauncher({
       <Separator className="my-4" />
 
       <div className="space-y-3">
+        {securityFailed ? (
+          <Alert variant="destructive">{X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE}</Alert>
+        ) : null}
         <div>
           <h2 className="text-base font-semibold">
             {continuing ? '继续上次 X 同步任务' : '同步新增收藏'}
@@ -825,7 +836,12 @@ function XSyncPopupLauncher({
           <p className="mt-1 font-medium">{formatXSyncShortStatus(lastJob)}</p>
         </div>
 
-        <Button className="h-10 w-full" disabled={!ready} loading={opening} onClick={onOpen}>
+        <Button
+          className="h-10 w-full"
+          disabled={!ready || securityFailed}
+          loading={opening}
+          onClick={onOpen}
+        >
           <PanelRightOpen className="h-4 w-4" />
           {continuing ? '打开同步任务' : '同步新增收藏'}
         </Button>
@@ -879,6 +895,8 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [page, setPage] = useState<PageName>('home');
   const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('browse');
   const [state, setState] = useState<ExtensionState | undefined>();
+  const [stateReadFailed, setStateReadFailed] = useState(false);
+  const [bookmarkOperations, setBookmarkOperations] = useState<BookmarkOperation[]>([]);
   const [summary, setSummary] = useState<StateSummary | undefined>();
   const [onboardingProgress, setOnboardingProgress] =
     useState<OnboardingProgress>(EMPTY_ONBOARDING_PROGRESS);
@@ -890,8 +908,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [recoveryError, setRecoveryError] = useState<StructuredError | undefined>();
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
   const [classificationProgress, setClassificationProgress] = useState<ClassificationProgress>();
-  const [urlHealthProgress, setUrlHealthProgress] = useState<UrlHealthProgress>();
-  const [healthChecking, setHealthChecking] = useState(false);
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const [currentTabInfo, setCurrentTabInfo] = useState<CurrentTabInfo | undefined>();
   const [focusedCaptureId, setFocusedCaptureId] = useState('');
@@ -901,11 +917,13 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [xSyncWindowId, setXSyncWindowId] = useState<number>();
   const [xSyncLastJob, setXSyncLastJob] = useState<SyncJob>();
   const [xSyncOpening, setXSyncOpening] = useState(false);
+  const [xSyncSecurityFailed, setXSyncSecurityFailed] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
-  const healthPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
+  const classificationRequestIdRef = useRef<string | undefined>(undefined);
+  const classificationCancelRequestIdRef = useRef<string | undefined>(undefined);
   const previousPendingCaptureCountRef = useRef<number | undefined>(undefined);
 
-  const busy = Boolean(busyAction) || healthChecking;
+  const busy = Boolean(busyAction);
 
   useEffect(() => {
     const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
@@ -920,17 +938,10 @@ function AppContent({ surface = 'popup' }: AppProps) {
       }
       const operation = event.operation;
 
-      setState((current) =>
-        current
-          ? {
-              ...current,
-              bookmarkOperations: [
-                operation,
-                ...current.bookmarkOperations.filter((candidate) => candidate.id !== operation.id),
-              ],
-            }
-          : current,
-      );
+      setBookmarkOperations((current) => [
+        operation,
+        ...current.filter((candidate) => candidate.id !== operation.id),
+      ]);
     };
 
     chrome.runtime.onMessage.addListener(listener);
@@ -959,15 +970,25 @@ function AppContent({ surface = 'popup' }: AppProps) {
     });
   };
 
-  const setHealthRecords = (records: UrlHealthRecord[]) => {
-    setState((current) => (current ? { ...current, urlHealthRecords: records } : current));
+  const loadOperations = async (): Promise<BookmarkOperation[]> => {
+    const result = await sendMessage({ type: 'operations:getRecent' });
+    setBookmarkOperations(result.operations);
+    return result.operations;
   };
 
   const loadState = async () => {
     setBusyAction('load');
     setNotice(undefined);
+    const loadResult = await loadStateWithIndependentOperations(
+      () => sendMessage({ type: 'state:get' }),
+      loadOperations,
+    );
+    let stateLoaded = false;
     try {
-      let nextState = normalizeExtensionState(await sendMessage<unknown>({ type: 'state:get' }));
+      if (loadResult.state.status === 'rejected') {
+        throw loadResult.state.reason;
+      }
+      let nextState = normalizeExtensionState(loadResult.state.value);
       const vaultHandle = await getVaultHandle().catch(() => null);
       const progress = computeOnboardingProgress({
         hasVaultHandle: Boolean(vaultHandle),
@@ -978,10 +999,12 @@ function AppContent({ surface = 'popup' }: AppProps) {
       setOnboardingProgress(progress);
       await saveOnboardingProgress(progress).catch(() => undefined);
       if (!nextState.onboarded && onboardingComplete(progress)) {
-        await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+        await sendMessage({ type: 'onboarding:set', onboarded: true });
         nextState = { ...nextState, onboarded: true };
       }
       setState(nextState);
+      setStateReadFailed(false);
+      stateLoaded = true;
       setSummary({
         bookmarkCount: nextState.bookmarks.length,
         folderCount: nextState.folders.length,
@@ -997,8 +1020,17 @@ function AppContent({ surface = 'popup' }: AppProps) {
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
       setRecoveryError(undefined);
     } catch (loadError) {
+      setState(undefined);
+      setStateReadFailed(true);
+      if (loadResult.operations.status === 'fulfilled' && loadResult.operations.value.length > 0) {
+        setPage('health');
+        setStatus('书签数据读取失败，仅显示可恢复操作');
+      }
       showError(loadError);
     } finally {
+      if (stateLoaded && loadResult.operations.status === 'rejected') {
+        showError(loadResult.operations.reason);
+      }
       setBusyAction(undefined);
     }
   };
@@ -1007,9 +1039,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     setBusyAction('load');
     setNotice(undefined);
     try {
-      const nextSummary = normalizeStateSummary(
-        await sendMessage<unknown>({ type: 'state:summary' }),
-      );
+      const nextSummary = normalizeStateSummary(await sendMessage({ type: 'state:summary' }));
       setSummary(nextSummary);
       setOnboardingProgress({
         vaultConfigured: nextSummary.hasVaultHandle,
@@ -1035,6 +1065,16 @@ function AppContent({ surface = 'popup' }: AppProps) {
       const exactXBookmarks = isExactXBookmarksPage(tab);
 
       if (surface === 'popup' && exactXBookmarks) {
+        try {
+          await requestXSyncSecurityBootstrap();
+        } catch {
+          if (disposed) return;
+          setXSyncSecurityFailed(true);
+          setXSyncRoute(true);
+          setBusyAction(undefined);
+          setContextResolved(true);
+          return;
+        }
         const [windowId, lastJob] = await Promise.all([
           getCurrentWindowId().catch(() => undefined),
           readXSyncJob(false).catch(() => undefined),
@@ -1049,6 +1089,19 @@ function AppContent({ surface = 'popup' }: AppProps) {
       }
 
       if (surface === 'sidepanel') {
+        try {
+          await requestXSyncSecurityBootstrap();
+        } catch {
+          if (disposed) return;
+          if (exactXBookmarks) {
+            setXSyncSecurityFailed(true);
+            setXSyncRoute(true);
+            setBusyAction(undefined);
+            setContextResolved(true);
+            return;
+          }
+          throw new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE);
+        }
         const activeJob = await readXSyncJob(true).catch(() => undefined);
         if (disposed) return;
         if (activeJob || exactXBookmarks) {
@@ -1153,10 +1206,21 @@ function AppContent({ surface = 'popup' }: AppProps) {
             : '没有生成移动建议，可以切换整理模式后重试。',
       });
     } catch (planError) {
-      showError(planError);
+      if (
+        planError &&
+        typeof planError === 'object' &&
+        (planError as { errorCode?: string }).errorCode === 'classification_cancelled'
+      ) {
+        setNotice({ kind: 'warning', message: '已取消本次书签分析，未生成或应用整理建议。' });
+        setStatus('已取消书签分析');
+      } else {
+        showError(planError);
+      }
     } finally {
       classificationPortRef.current?.disconnect();
       classificationPortRef.current = undefined;
+      classificationRequestIdRef.current = undefined;
+      classificationCancelRequestIdRef.current = undefined;
       setClassificationProgress(undefined);
       setBusyAction(undefined);
     }
@@ -1165,15 +1229,63 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const createPlanWithProgress = (mode: ClassificationMode): Promise<ClassificationPlan> =>
     new Promise((resolve, reject) => {
       if (!chrome.runtime.connect) {
-        void sendMessage<ClassificationPlan>({ type: 'plan:create', mode }).then(resolve, reject);
+        void sendMessage({ type: 'plan:create', mode }).then(resolve, reject);
         return;
       }
 
+      const randomId = globalThis.crypto?.randomUUID?.();
+      if (!randomId) {
+        reject(new Error('无法创建安全的分类请求'));
+        return;
+      }
       const port = chrome.runtime.connect({ name: 'classify' });
+      const requestId = `classify:${randomId}`;
       let settled = false;
       classificationPortRef.current = port;
+      classificationRequestIdRef.current = requestId;
 
-      port.onMessage.addListener((message: ClassificationPortMessage) => {
+      const rejectInvalidOutput = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        port.disconnect();
+        const error = new Error('分类任务返回了无法验证的响应') as Error & {
+          errorCode?: string;
+        };
+        error.errorCode = 'response_invalid';
+        reject(error);
+      };
+
+      port.onMessage.addListener((rawMessage: unknown) => {
+        let message;
+        try {
+          message = parseClassificationPortMessage(rawMessage);
+        } catch {
+          rejectInvalidOutput();
+          return;
+        }
+
+        const disposition = classificationMessageDisposition(
+          message,
+          requestId,
+          classificationCancelRequestIdRef.current,
+        );
+        if (disposition === 'invalid') {
+          rejectInvalidOutput();
+          return;
+        }
+        if (disposition === 'cancelled') {
+          settled = true;
+          port.disconnect();
+          const error = new Error('Classification cancelled') as Error & {
+            errorCode?: string;
+          };
+          error.errorCode = 'classification_cancelled';
+          reject(error);
+          return;
+        }
+
         if (message.type === 'progress') {
           setClassificationProgress(message.progress);
           setStatus(
@@ -1185,10 +1297,12 @@ function AppContent({ surface = 'popup' }: AppProps) {
         if (message.type === 'complete') {
           settled = true;
           if (message.cancelled) {
-            setNotice({
-              kind: 'warning',
-              message: `已取消，基于已分析的 ${message.progress.done} 个书签生成部分建议。`,
-            });
+            const error = new Error('Classification cancelled') as Error & {
+              errorCode?: string;
+            };
+            error.errorCode = 'classification_cancelled';
+            reject(error);
+            return;
           }
           resolve(message.plan);
           return;
@@ -1203,102 +1317,34 @@ function AppContent({ surface = 'popup' }: AppProps) {
       });
 
       port.onDisconnect.addListener(() => {
-        if (!settled && chrome.runtime.lastError?.message) {
-          reject(new Error(chrome.runtime.lastError.message));
+        if (!settled) {
+          settled = true;
+          reject(new Error(chrome.runtime.lastError?.message ?? '分类任务连接意外中断'));
         }
       });
 
-      port.postMessage({ type: 'plan:create', mode } satisfies ClassificationPortRequest);
+      port.postMessage({
+        type: 'plan:create',
+        requestId,
+        mode,
+      } satisfies ClassificationPortRequest);
     });
 
   const cancelClassification = () => {
-    classificationPortRef.current?.postMessage({
-      type: 'cancel',
-    } satisfies ClassificationPortRequest);
-    setStatus('正在取消，本批次结束后会生成部分建议...');
-  };
-
-  const startHealthCheck = async () => {
-    setNotice(undefined);
-    setUrlHealthProgress(undefined);
-    setPage('health');
-
-    try {
-      const granted = await requestHealthCheckPermission();
-      if (!granted) {
-        setNotice({
-          kind: 'warning',
-          message: '检查失效链接需要临时访问书签中的 http/https 地址，未授权时不会发起检测。',
-        });
-        return;
-      }
-
-      if (!chrome.runtime.connect) {
-        throw new Error('当前扩展环境不支持长任务连接');
-      }
-
-      healthPortRef.current?.disconnect();
-      const port = chrome.runtime.connect({ name: 'health' });
-      let settled = false;
-      healthPortRef.current = port;
-      setHealthChecking(true);
-      setStatus('正在检查链接...');
-
-      port.onMessage.addListener((message: UrlHealthPortMessage) => {
-        if (message.type === 'progress') {
-          setUrlHealthProgress(message.progress);
-          setHealthRecords(message.records);
-          setStatus(`链接检查 ${message.progress.done}/${message.progress.total}`);
-          return;
-        }
-
-        if (message.type === 'complete') {
-          settled = true;
-          setUrlHealthProgress(message.progress);
-          setHealthRecords(message.records);
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-          void loadState();
-          setNotice({
-            kind:
-              message.progress.summary.dead + message.progress.summary.error > 0
-                ? 'warning'
-                : 'success',
-            message: message.cancelled
-              ? `已暂停：本次已保留 ${message.progress.done} 条检查结果。`
-              : `检查完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
-          });
-          setStatus(message.cancelled ? '链接检查已暂停' : '链接检查完成');
-          return;
-        }
-
-        if (message.type === 'error') {
-          settled = true;
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-          const error = new Error(message.error) as Error & { errorCode?: string };
-          error.errorCode = message.errorCode;
-          showError(error);
-        }
-      });
-
-      port.onDisconnect.addListener(() => {
-        if (!settled) {
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-        }
-      });
-
-      port.postMessage({ type: 'health:check' } satisfies UrlHealthPortRequest);
-    } catch (healthError) {
-      setHealthChecking(false);
-      showError(healthError);
+    const port = classificationPortRef.current;
+    const targetRequestId = classificationRequestIdRef.current;
+    const randomId = globalThis.crypto?.randomUUID?.();
+    if (!port || !targetRequestId || !randomId) {
+      return;
     }
-  };
-
-  const cancelHealthCheck = () => {
-    healthPortRef.current?.postMessage({ type: 'pause' } satisfies UrlHealthPortRequest);
-    setStatus('正在暂停链接检查，已完成结果会保留...');
+    const requestId = `cancel:${randomId}`;
+    classificationCancelRequestIdRef.current = requestId;
+    port.postMessage({
+      type: 'cancel',
+      requestId,
+      targetRequestId,
+    } satisfies ClassificationPortRequest);
+    setStatus('正在安全取消本次书签分析...');
   };
 
   const applyPlan = async () => {
@@ -1370,7 +1416,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   const undoLast = async () => {
-    const operation = state?.bookmarkOperations.find(
+    const operation = bookmarkOperations.find(
       (candidate) =>
         candidate.type === 'move_bookmarks' &&
         (candidate.status === 'complete' ||
@@ -1425,7 +1471,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     setBusyAction('settings');
     setNotice(undefined);
     try {
-      const saved = await sendMessage<AppSettings>({ type: 'settings:set', settings });
+      const saved = await sendMessage({ type: 'settings:set', settings });
       setState((current) =>
         current
           ? {
@@ -1445,10 +1491,10 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   const testAiProvider = async (provider: AiProviderConfig): Promise<AiProviderTestResult> =>
-    sendMessage<AiProviderTestResult>({ type: 'ai:testConnection', provider });
+    sendMessage({ type: 'ai:testConnection', provider });
 
   const clearPendingCapture = async () => {
-    await sendMessage<{ cleared: boolean }>({ type: 'capture:clearPending' });
+    await sendMessage({ type: 'capture:clearPending' });
     await loadState();
   };
 
@@ -1457,7 +1503,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
       source === 'article'
         ? { type: 'capture:currentArticle' }
         : { type: 'capture:currentSocial', source };
-    const result = await sendMessage<{ capture: CapturedContent }>(request);
+    const result = await sendMessage(request);
     setFocusedCaptureId(result.capture.id);
     await loadState();
 
@@ -1467,196 +1513,13 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const captureCurrentSocial = async (source: 'twitter' | 'weibo') => captureCurrentContent(source);
 
   const removePendingCapture = async (id: string) => {
-    await sendMessage<{ removed: boolean }>({ type: 'capture:removePending', id });
+    await sendMessage({ type: 'capture:removePending', id });
     await loadState();
   };
 
   const clearHealthRecords = async () => {
-    await sendMessage<{ cleared: boolean }>({ type: 'health:clearRecords' });
-    setUrlHealthProgress(undefined);
+    await sendMessage({ type: 'health:clearRecords' });
     await loadState();
-  };
-
-  const deleteBookmarksFromHealth = async (records: UrlHealthRecord[]) => {
-    if (records.length === 0) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `确定批量删除 ${records.length} 个 Chrome 书签吗？\n\nShuHai 会逐项记录结果；实际删除成功的项目可以安全恢复。`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyAction('health');
-    setNotice(undefined);
-    try {
-      const { operation } = await sendBookmarkOperation({
-        type: 'bookmarkOperations:delete',
-        requestId: createOperationRequestId(),
-        bookmarkIds: records.map((record) => record.bookmarkId),
-      });
-      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
-      if (operation.summary.succeeded > 0) {
-        await addActivityEntry({
-          type: 'health_delete',
-          summary: summarizeHealthDelete(operation.summary.succeeded),
-          details: operation.items
-            .filter((item) => item.executionStatus === 'succeeded')
-            .map((item) => ({ label: item.title })),
-        }).catch(() => undefined);
-      }
-      toast({
-        kind: operation.status === 'complete' ? 'success' : 'info',
-        message:
-          operation.status === 'complete'
-            ? `已删除 ${operation.summary.succeeded} 个书签。`
-            : `删除部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
-        description:
-          operation.summary.succeeded > 0 ? '成功项可从本页的最近操作中恢复。' : undefined,
-      });
-      await loadState();
-    } catch (deleteError) {
-      showError(deleteError);
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
-
-  const retryHealthRecord = async (record: UrlHealthRecord) => {
-    setNotice(undefined);
-    try {
-      const granted = await requestHealthCheckPermission();
-      if (!granted) {
-        setNotice({
-          kind: 'warning',
-          message: '重试检查需要临时访问该书签地址，未授权时不会发起检测。',
-        });
-        return;
-      }
-
-      setBusyAction('health');
-      setStatus(`正在重新检查：${record.bookmarkTitle}`);
-      const result = await sendMessage<{ record: UrlHealthRecord; records: UrlHealthRecord[] }>({
-        type: 'health:retryOne',
-        bookmarkId: record.bookmarkId,
-      });
-      setHealthRecords(result.records);
-      toast({
-        kind: result.record.status === 'alive' ? 'success' : 'info',
-        message: `已重新检查：${healthStatusLabel(result.record.status)}。`,
-      });
-      setStatus(`已重新检查：${record.bookmarkTitle}`);
-    } catch (retryError) {
-      showError(retryError);
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
-
-  const updateBookmarkUrlFromHealth = async (record: UrlHealthRecord, url: string) => {
-    const confirmed = window.confirm(
-      `确定替换这个 Chrome 书签的 URL 吗？\n\n${record.bookmarkTitle}\n${url}`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyAction('health');
-    setNotice(undefined);
-    try {
-      const { operation } = await sendBookmarkOperation({
-        type: 'bookmarkOperations:updateUrls',
-        requestId: createOperationRequestId(),
-        updates: [{ id: record.bookmarkId, url }],
-      });
-      if (operation.summary.succeeded > 0) {
-        await addActivityEntry({
-          type: 'health_update',
-          summary: summarizeHealthUpdate(operation.summary.succeeded),
-          details: [{ label: record.bookmarkTitle }],
-        }).catch(() => undefined);
-      }
-      toast({
-        kind:
-          operation.status === 'complete' && operation.summary.succeeded > 0 ? 'success' : 'info',
-        message:
-          operation.summary.succeeded > 0
-            ? '已更新书签链接。'
-            : operation.summary.skipped > 0
-              ? '书签已经是目标链接，没有执行修改。'
-              : '书签已发生变化或更新失败，当前链接没有被覆盖。',
-        description:
-          operation.summary.succeeded > 0 ? '这次更新可从本页的最近操作中恢复。' : undefined,
-      });
-      await loadState();
-    } catch (updateError) {
-      showError(updateError);
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
-
-  const updateBookmarkUrlsFromHealth = async (records: UrlHealthRecord[]) => {
-    const updatableRecords = records.filter(
-      (record) => record.status === 'redirected' && record.finalUrl,
-    );
-    if (updatableRecords.length === 0) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `确定批量更新 ${updatableRecords.length} 个重定向书签吗？\n\n会替换为检测到的跳转目标，并逐项记录结果和恢复数据。`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyAction('health');
-    setNotice(undefined);
-    try {
-      const { operation } = await sendBookmarkOperation({
-        type: 'bookmarkOperations:updateUrls',
-        requestId: createOperationRequestId(),
-        updates: updatableRecords.map((record) => ({
-          id: record.bookmarkId,
-          url: record.finalUrl ?? record.bookmarkUrl,
-        })),
-      });
-      if (operation.summary.succeeded > 0) {
-        await addActivityEntry({
-          type: 'health_update',
-          summary: summarizeHealthUpdate(operation.summary.succeeded),
-          details: operation.items
-            .filter((item) => item.executionStatus === 'succeeded')
-            .map((item) => ({ label: item.title })),
-        }).catch(() => undefined);
-      }
-      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
-      toast({
-        kind:
-          operation.status === 'complete' && operation.summary.succeeded > 0 ? 'success' : 'info',
-        message:
-          operation.summary.succeeded > 0 && operation.status === 'complete'
-            ? `已更新 ${operation.summary.succeeded} 个重定向书签。`
-            : operation.summary.succeeded === 0 &&
-                operation.summary.skipped > 0 &&
-                failedCount === 0
-              ? `所选 ${operation.summary.skipped} 个书签已经是目标链接，没有执行修改。`
-              : `更新部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
-        description:
-          operation.summary.succeeded > 0 ? '成功项可从本页的最近操作中恢复。' : undefined,
-      });
-      await loadState();
-    } catch (updateError) {
-      showError(updateError);
-    } finally {
-      setBusyAction(undefined);
-    }
   };
 
   const restoreBookmarkOperation = async (operation: BookmarkOperation) => {
@@ -1675,7 +1538,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
       return;
     }
 
-    setBusyAction('health');
+    setBusyAction('operation');
     setNotice(undefined);
     try {
       const { operation: restored } = await sendBookmarkOperation({
@@ -1715,7 +1578,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
       return;
     }
 
-    setBusyAction('health');
+    setBusyAction('operation');
     setNotice(undefined);
     try {
       const { operation: resolved } = await sendBookmarkOperation({
@@ -1751,7 +1614,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
   const completeOnboarding = async () => {
     try {
-      await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+      await sendMessage({ type: 'onboarding:set', onboarded: true });
       setState((current) => (current ? { ...current, onboarded: true } : current));
       toast({ kind: 'success', message: '已跳过首次引导。' });
     } catch (onboardingError) {
@@ -1829,7 +1692,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
   const quickHealthFromPopup = () => {
     usePopupWorkspace('health');
-    void startHealthCheck();
   };
 
   const useRuleClassification = () => {
@@ -1850,20 +1712,19 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const settings = state?.settings ?? DEFAULT_SETTINGS;
   const bookmarks = state?.bookmarks ?? [];
   const exportBookmarks = plan ? applyPlanFolders(bookmarks, plan) : bookmarks;
-  const canUndo =
-    state?.bookmarkOperations.some(
-      (operation) =>
-        operation.type === 'move_bookmarks' &&
-        (operation.status === 'complete' ||
-          operation.status === 'partial' ||
-          operation.status === 'restore_partial') &&
-        operation.items.some(
-          (item) =>
-            item.executionStatus === 'succeeded' &&
-            item.restoreStatus !== 'restored' &&
-            item.restoreStatus !== 'accepted_current',
-        ),
-    ) ?? false;
+  const canUndo = bookmarkOperations.some(
+    (operation) =>
+      operation.type === 'move_bookmarks' &&
+      (operation.status === 'complete' ||
+        operation.status === 'partial' ||
+        operation.status === 'restore_partial') &&
+      operation.items.some(
+        (item) =>
+          item.executionStatus === 'succeeded' &&
+          item.restoreStatus !== 'restored' &&
+          item.restoreStatus !== 'accepted_current',
+      ),
+  );
   const selectedCount = useMemo(
     () => plan?.moves.filter((move) => move.selected).length ?? 0,
     [plan],
@@ -1947,6 +1808,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
         onOpenSettings={handleOpenSettingsFromX}
         opening={xSyncOpening}
         ready={xSyncWindowId !== undefined && !xSyncOpening}
+        securityFailed={xSyncSecurityFailed}
       />
     );
   }
@@ -1966,6 +1828,40 @@ function AppContent({ surface = 'popup' }: AppProps) {
         </header>
         <div className="min-h-0 flex-1 px-3 pt-2">
           <XSyncPage />
+        </div>
+      </main>
+    );
+  }
+
+  const recoveryOnlyOperations = bookmarkOperations.filter(
+    (operation) =>
+      operation.type === 'delete_bookmarks' || operation.type === 'update_bookmark_urls',
+  );
+  if (showWorkspace && stateReadFailed) {
+    return (
+      <main className={`flex ${workspaceClass} flex-col bg-background text-foreground`}>
+        <header className="px-3 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <BrandMark />
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight">书签操作恢复</h1>
+              <p className="truncate text-xs text-muted-foreground">
+                主数据读取失败，仅开放独立恢复日志
+              </p>
+            </div>
+          </div>
+          <Separator className="mt-3" />
+        </header>
+        <div className="min-h-0 flex-1 px-3 pb-3 pt-2">
+          <HealthPage
+            historyAvailable={false}
+            onAcceptCurrent={acceptBookmarkOperationCurrentState}
+            onCancelOperation={cancelBookmarkOperation}
+            onClear={clearHealthRecords}
+            onRestoreOperation={restoreBookmarkOperation}
+            operations={recoveryOnlyOperations}
+            records={[]}
+          />
         </div>
       </main>
     );
@@ -1996,7 +1892,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const pageTitle: Record<PageName, string> = {
     home: 'ShuHai',
     organize: '整理书签',
-    health: '检查失效链接',
+    health: '链接检查历史',
     collection: '待入库',
     activity: '历史记录',
     settings: '设置',
@@ -2016,7 +1912,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
         onCreatePlan={() => void createPlan(classifyMode)}
         onOpenActivity={() => setPage('activity')}
         onOpenCollection={() => setPage('collection')}
-        onOpenHealth={() => void startHealthCheck()}
+        onOpenHealth={() => setPage('health')}
         onOpenOrganize={() => {
           setPage('organize');
           setOrganizeMode('browse');
@@ -2062,23 +1958,12 @@ function AppContent({ surface = 'popup' }: AppProps) {
       />
     ) : page === 'health' ? (
       <HealthPage
-        bookmarks={bookmarks}
-        checking={healthChecking}
+        historyAvailable={Boolean(state)}
         onAcceptCurrent={acceptBookmarkOperationCurrentState}
-        onCancel={cancelHealthCheck}
         onCancelOperation={cancelBookmarkOperation}
         onClear={clearHealthRecords}
-        onDeleteMany={deleteBookmarksFromHealth}
-        onRetry={retryHealthRecord}
         onRestoreOperation={restoreBookmarkOperation}
-        onStart={startHealthCheck}
-        onUpdateManyUrls={updateBookmarkUrlsFromHealth}
-        onUpdateUrl={updateBookmarkUrlFromHealth}
-        operations={(state?.bookmarkOperations ?? []).filter(
-          (operation) =>
-            operation.type === 'delete_bookmarks' || operation.type === 'update_bookmark_urls',
-        )}
-        progress={urlHealthProgress}
+        operations={recoveryOnlyOperations}
         records={state?.urlHealthRecords ?? []}
       />
     ) : page === 'collection' ? (

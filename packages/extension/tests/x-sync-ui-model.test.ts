@@ -9,9 +9,11 @@ import type {
 import {
   acceptFreshXSyncLaunchIntent,
   classifyXHostPermissionOrigins,
+  describeXSyncRuntimeError,
   deriveXSyncUiModel,
   formatXSyncShortStatus,
   prepareNextXSyncBatch,
+  X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
   type XSyncUiSnapshot,
 } from '../src/popup/pages/x-sync-ui-model.js';
 
@@ -111,6 +113,12 @@ function snapshot(overrides: Partial<XSyncUiSnapshot> = {}): XSyncUiSnapshot {
 }
 
 describe('X sync UI model', () => {
+  it('uses the fixed security bootstrap failure explanation', () => {
+    expect(describeXSyncRuntimeError('security_bootstrap_failed')).toBe(
+      X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
+    );
+  });
+
   it.each([
     [[], 'not_granted'],
     [['https://x.com/*'], 'granted'],

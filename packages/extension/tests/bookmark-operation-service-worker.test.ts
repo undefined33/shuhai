@@ -15,6 +15,8 @@ const operationMocks = vi.hoisted(() => ({
   restore: vi.fn(),
 }));
 const stateMocks = vi.hoisted(() => ({
+  ensureTrustedLocalStorageAccess: vi.fn(async () => undefined),
+  getBookmarkOperations: vi.fn(async () => []),
   getLastMoveRecords: vi.fn(async () => []),
   listBackups: vi.fn(async () => []),
   getFullTree: vi.fn(async () => []),
@@ -69,11 +71,22 @@ vi.mock('../src/utils/storage.js', () => {
     BookmarkOperationStorageError,
     clearPendingCapture: vi.fn(async () => undefined),
     clearUrlHealthRecords: vi.fn(async () => undefined),
+    ensureTrustedLocalStorageAccess: stateMocks.ensureTrustedLocalStorageAccess,
+    getBookmarkOperations: stateMocks.getBookmarkOperations,
     getExportManifests: vi.fn(async () => []),
     getOnboarded: vi.fn(async () => false),
     getOnboardingProgress: vi.fn(async () => undefined),
     getPendingCaptures: vi.fn(async () => []),
-    getSettings: vi.fn(async () => ({ aiProviders: [] })),
+    getSettings: vi.fn(async () => ({
+      useAi: false,
+      activeProviderId: 'deepseek-default',
+      aiProviders: [],
+      customRules: [],
+      templates: [],
+      activeTemplateIds: {},
+      defaultClassifyMode: 'safe',
+      exportDirectory: 'Bookmarks',
+    })),
     getUrlHealthRecords: vi.fn(async () => []),
     normalizeSettings: vi.fn((settings: unknown) => settings),
     removePendingCapture: vi.fn(async () => false),
@@ -150,6 +163,14 @@ function createChromeHarness(): ChromeHarness {
       removeAll: vi.fn(),
     },
     permissions: {
+      getAll: vi.fn((callback: (permissions: chrome.permissions.Permissions) => void) => {
+        callback({ origins: [] });
+      }),
+      remove: vi.fn(
+        (_permissions: chrome.permissions.Permissions, callback: (removed: boolean) => void) => {
+          callback(true);
+        },
+      ),
       onRemoved: event(),
     },
     runtime,
@@ -437,20 +458,25 @@ describe('bookmark operation service worker boundary', () => {
     },
   );
 
-  it('returns reconciled persisted bookmark operations from state:get', async () => {
-    const persistedOperations = [{ id: 'operation-from-journal' }];
-    operationMocks.reconcile.mockResolvedValueOnce(persistedOperations);
+  it('keeps operation recovery independent from state:get', async () => {
     const harness = await loadServiceWorker();
 
-    const response = (await send(
+    const stateResponse = (await send(
       harness.getMessageListener(),
       { type: 'state:get' },
       sender('sidepanel'),
     )) as { ok: true; data: { bookmarkOperations: unknown[] } };
+    const operationsResponse = await send(
+      harness.getMessageListener(),
+      { type: 'operations:getRecent' },
+      sender('sidepanel'),
+    );
 
-    expect(response.ok).toBe(true);
-    expect(response.data.bookmarkOperations).toBe(persistedOperations);
-    expect(operationMocks.reconcile).toHaveBeenCalledTimes(1);
+    expect(stateResponse.ok).toBe(true);
+    expect(stateResponse.data.bookmarkOperations).toEqual([]);
+    expect(operationsResponse).toEqual({ ok: true, data: { operations: [] } });
+    expect(stateMocks.getBookmarkOperations).toHaveBeenCalledTimes(1);
+    expect(operationMocks.reconcile).not.toHaveBeenCalled();
     expectNoChromeMutation(harness);
   });
 
@@ -529,7 +555,8 @@ describe('bookmark operation service worker boundary', () => {
 
     await expect(send(harness.getMessageListener(), message, sender('popup'))).resolves.toEqual({
       ok: false,
-      error: 'Unsupported request',
+      error: 'Extension request rejected',
+      errorCode: 'invalid_request',
     });
     expect(operationMocks.reconcile).not.toHaveBeenCalled();
     expect(operationMocks.executeDelete).not.toHaveBeenCalled();

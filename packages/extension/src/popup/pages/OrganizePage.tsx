@@ -158,7 +158,7 @@ export default function OrganizePage({
                 {showIndexTool ? '收起书签目录' : '生成书签目录'}
               </Button>
               <Button onClick={onOpenHealth} size="sm" variant="outline">
-                检查失效链接
+                查看链接历史
               </Button>
               <Button onClick={onOpenHome} size="sm" variant="ghost">
                 返回首页

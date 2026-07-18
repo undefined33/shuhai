@@ -5,7 +5,7 @@ import type {
   SyncStopReason,
   WriteOutcome,
 } from '../../social/sync-schema.js';
-import type { XSyncLaunchIntent } from '../../social/x-sync-messages.js';
+import type { XSyncLaunchIntent, XSyncMinimalRuntimeError } from '../../social/x-sync-messages.js';
 
 export type XSyncUiPhase = 'preflight' | 'scanning' | 'review' | 'writing' | 'result';
 export type XSyncUiTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
@@ -115,6 +115,29 @@ export interface XSyncUiModel {
 const X_HOST_ORIGIN = 'https://x.com/*';
 const X_DEFAULT_CANDIDATE_LIMIT = 10;
 const LEGACY_BROAD_HOST_ORIGINS = new Set(['http://*/*', 'https://*/*']);
+
+export const X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE =
+  '旧全站访问权限未能确认撤销，ShuHai 已暂停；请在扩展详情中撤销站点访问后重新加载扩展。';
+
+const X_SYNC_RUNTIME_ERROR_MESSAGES: Readonly<Record<XSyncMinimalRuntimeError['code'], string>> =
+  Object.freeze({
+    forbidden_sender: '当前页面无权控制 X 同步任务',
+    launch_expired: '启动已过期，请重新点击扩展按钮',
+    launch_missing: '没有找到本次启动请求，请重新点击扩展按钮',
+    source_conflict: '已有一个 X 同步任务正在进行',
+    stale_revision: '任务状态已经变化，已重新载入最新进度',
+    invalid_state: '当前任务阶段不允许执行这个操作',
+    tab_changed: 'X 收藏页已经切换，任务没有读取其它页面',
+    permission_revoked: 'X 页面访问权限尚未授予或已被撤销',
+    storage_corrupt: '同步状态无法安全读取，任务已停止',
+    security_bootstrap_failed: X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
+    invalid_message: '同步请求未通过安全校验',
+    internal_error: '同步任务暂时无法继续',
+  });
+
+export function describeXSyncRuntimeError(code: XSyncMinimalRuntimeError['code']): string {
+  return X_SYNC_RUNTIME_ERROR_MESSAGES[code];
+}
 
 export function classifyXHostPermissionOrigins(
   origins: readonly string[],

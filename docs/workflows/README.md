@@ -57,7 +57,7 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 |    1 | X/微博收藏同步可行性                | 041     | `DONE/PASS`                                         |
 |    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
 |    3 | X 与微博增量同步                    | 043/044 | 043 `DONE/PASS`，044 `PLANNED`                      |
-|    4 | 书签整理安全收口                    | 045A-C  | 045A `DONE/PASS`；045B 合同准备，045C 串行等待      |
+|    4 | 书签整理安全收口                    | 045A-C  | 045A/045B `DONE/PASS`；045C 等待合同与独立预审      |
 |    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
 
-Goal 043B 已完成最终真实 pause/resume、同一 X 标签 `tab_changed`、用户取消和 no-write 证据，独立完成审查为 `PASS`。X 仍是 `LIMITED_GO/batch-only`，不能用受界批次推导 feed 末尾或完整历史归档。Goal 045A 的 mock-only 书签 mutation 安全收口也已独立 `PASS`；当前没有生产 implementation writer，045B 必须先完成精确合同和独立预审，045C 继续等待 045B PASS。Goal 044 保持 `PLANNED`，且必须先由新的研究门禁改变微博 `NO_GO` 结论。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此仍不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 已完成最终真实 pause/resume、同一 X 标签 `tab_changed`、用户取消和 no-write 证据，独立完成审查为 `PASS`。X 仍是 `LIMITED_GO/batch-only`，不能用受界批次推导 feed 末尾或完整历史归档。Goal 045A 的 mock-only 书签 mutation 安全收口和 Goal 045B 的 trust-boundary/URL-health 收口均已独立 `PASS`；045C 现只允许编写精确合同并完成独立预审，成为唯一 `READY`/`IN_PROGRESS` Goal 后才能实施。Goal 044 保持 `PLANNED`，且必须先由新的研究门禁改变微博 `NO_GO` 结论。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此仍不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

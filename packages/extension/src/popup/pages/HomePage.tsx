@@ -190,12 +190,12 @@ export default function HomePage({
           />
         ) : null}
         <SecondaryAction
-          action="检查"
-          description="找出死链、错误和重定向"
+          action="查看"
+          description="查看旧检查结果并人工核实"
           disabled={busy || bookmarkCount === 0}
           icon={Activity}
           onClick={onOpenHealth}
-          title="检查失效链接"
+          title="查看链接检查历史"
         />
         {pendingCount > 0 ? (
           <SecondaryAction

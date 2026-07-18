@@ -47,15 +47,13 @@ describe('extension manifest', () => {
     expect(manifest.permissions).toContain('scripting');
   });
 
-  it('requests broad URL access only as an optional health-check permission', () => {
+  it('keeps only the exact X origin as an optional host permission', () => {
     expect(manifest.permissions).not.toContain('<all_urls>');
-    expect(manifest.optional_host_permissions).toEqual(['http://*/*', 'https://*/*']);
+    expect(manifest.optional_host_permissions).toEqual(['https://x.com/*']);
   });
 
-  it('does not grant or statically inject X and Twitter access', () => {
-    expect(manifest.host_permissions).toEqual(['https://weibo.com/*', 'https://m.weibo.cn/*']);
-    expect(manifest.host_permissions).not.toContain('https://x.com/*');
-    expect(manifest.host_permissions).not.toContain('https://twitter.com/*');
+  it('does not grant or statically inject persistent platform access', () => {
+    expect(manifest.host_permissions ?? []).toEqual([]);
 
     const staticMatches = (manifest.content_scripts ?? []).flatMap(
       (contentScript) => contentScript.matches ?? [],
@@ -66,7 +64,9 @@ describe('extension manifest', () => {
     expect(staticMatches).not.toContain('https://x.com/*');
     expect(staticMatches).not.toContain('https://twitter.com/*');
     expect(staticScripts).not.toContain('content/twitter.js');
-    expect(staticMatches).toEqual(['https://weibo.com/*', 'https://m.weibo.cn/*']);
+    expect(staticMatches).not.toContain('https://weibo.com/*');
+    expect(staticMatches).not.toContain('https://m.weibo.cn/*');
+    expect(staticScripts).not.toContain('content/weibo.js');
   });
 
   it('does not load remote resources from extension UI styles', () => {
