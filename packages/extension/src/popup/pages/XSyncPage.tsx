@@ -295,7 +295,19 @@ function classificationLabel(classification: SyncJobItem['classification']): str
   return '待判断';
 }
 
-export default function XSyncPage() {
+interface XSyncPageProps {
+  readonly onExit?: () => void;
+}
+
+export function invokeXSyncExitAdapter(onExit: (() => void) | undefined): boolean {
+  if (!onExit) {
+    return false;
+  }
+  onExit();
+  return true;
+}
+
+export default function XSyncPage({ onExit }: XSyncPageProps = {}) {
   const [securityBootstrapState, setSecurityBootstrapState] = useState<
     'pending' | 'ready' | 'failed'
   >('pending');
@@ -621,6 +633,9 @@ export default function XSyncPage() {
   const handlePrepareNextBatch = () => {
     const job = snapshot.job;
     if (!job || !model.canPrepareNextBatch || busy) return;
+    if (invokeXSyncExitAdapter(onExit)) {
+      return;
+    }
     const transition = prepareNextXSyncBatch(job);
     jobIdRef.current = transition.jobId;
     launchIntentRef.current = transition.launchIntent;

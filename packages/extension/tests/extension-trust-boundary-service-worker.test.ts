@@ -1,7 +1,21 @@
-import { IDBFactory } from 'fake-indexeddb';
+import {
+  IDBCursor,
+  IDBDatabase,
+  IDBFactory,
+  IDBIndex,
+  IDBObjectStore,
+  IDBRequest,
+  IDBTransaction,
+} from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { X_SYNC_PROTOCOL } from '../src/social/x-sync-messages.js';
+import {
+  SURFACE_PROTOCOL,
+  SURFACE_REGISTRY_KEY,
+  parseSurfaceResponse,
+  type SurfaceRequest,
+} from '../src/shared/surface-contract.js';
 
 const EXTENSION_ID = 'a'.repeat(32);
 const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
@@ -27,6 +41,8 @@ interface HarnessOptions {
   readonly removeResult?: boolean;
   readonly storageData?: Record<string, unknown>;
   readonly stalledStage?: BootstrapStage;
+  readonly stalledSessionGetCount?: number;
+  readonly windowIds?: number[];
 }
 
 interface BootstrapHarness {
@@ -40,12 +56,15 @@ interface BootstrapHarness {
   readonly getAll: ReturnType<typeof vi.fn>;
   readonly indexedDbOpen: ReturnType<typeof vi.fn>;
   readonly removePermission: ReturnType<typeof vi.fn>;
+  readonly sessionGet: ReturnType<typeof vi.fn>;
   readonly setAccessLevel: ReturnType<typeof vi.fn>;
   currentOrigins(): string[];
+  sessionValue(key: string): unknown;
   getConnectListener(): ConnectListener;
   getMessageListener(): MessageListener;
   getPermissionRemovedListener(): (permissions: chrome.permissions.Permissions) => void;
   revokeOrigins(origins: string[]): void;
+  releaseSessionGet(): void;
   release(stage: BootstrapStage): void;
 }
 
@@ -68,6 +87,9 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     | undefined;
   let origins = [...(options.initialOrigins ?? [])];
   let storageData = structuredClone(options.storageData ?? {});
+  let sessionData: Record<string, unknown> = {};
+  let sessionGetCount = 0;
+  const sessionGetReleases: Array<() => void> = [];
   let getAllCount = 0;
   const releases = new Map<BootstrapStage, () => void>();
 
@@ -143,6 +165,12 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     configurable: true,
     value: indexedDbOpen,
   });
+  vi.stubGlobal('IDBCursor', IDBCursor);
+  vi.stubGlobal('IDBDatabase', IDBDatabase);
+  vi.stubGlobal('IDBIndex', IDBIndex);
+  vi.stubGlobal('IDBObjectStore', IDBObjectStore);
+  vi.stubGlobal('IDBRequest', IDBRequest);
+  vi.stubGlobal('IDBTransaction', IDBTransaction);
   vi.stubGlobal('indexedDB', factory);
 
   const bookmarks = {
@@ -168,6 +196,21 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     }),
     sendMessage: vi.fn(),
   };
+  const sessionGet = vi.fn((key: string, callback: (items: Record<string, unknown>) => void) => {
+    sessionGetCount += 1;
+    const respond = () => {
+      callback(
+        Object.prototype.hasOwnProperty.call(sessionData, key)
+          ? { [key]: structuredClone(sessionData[key]) }
+          : {},
+      );
+    };
+    if (sessionGetCount <= (options.stalledSessionGetCount ?? 0)) {
+      sessionGetReleases.push(respond);
+      return;
+    }
+    respond();
+  });
   const chromeMock = {
     bookmarks,
     contextMenus: {
@@ -255,9 +298,15 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
         setAccessLevel,
       },
       session: {
-        get: vi.fn(),
-        remove: vi.fn(),
-        set: vi.fn(),
+        get: sessionGet,
+        remove: vi.fn((key: string, callback?: () => void) => {
+          delete sessionData[key];
+          callback?.();
+        }),
+        set: vi.fn((items: Record<string, unknown>, callback?: () => void) => {
+          sessionData = { ...sessionData, ...structuredClone(items) };
+          callback?.();
+        }),
       },
     },
     tabs: {
@@ -268,6 +317,17 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
       query: vi.fn(),
       sendMessage: vi.fn(),
     },
+    windows: {
+      get: vi.fn((windowId: number, callback: (window: chrome.windows.Window) => void) => {
+        if (!(options.windowIds ?? [7, 8]).includes(windowId)) {
+          runtime.lastError = { message: 'window missing' };
+          callback({ id: windowId } as chrome.windows.Window);
+          runtime.lastError = undefined;
+          return;
+        }
+        callback({ id: windowId } as chrome.windows.Window);
+      }),
+    },
   } as unknown as typeof chrome;
   vi.stubGlobal('chrome', chromeMock);
 
@@ -276,8 +336,10 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
     getAll,
     indexedDbOpen,
     removePermission,
+    sessionGet,
     setAccessLevel,
     currentOrigins: () => [...origins],
+    sessionValue: (key) => structuredClone(sessionData[key]),
     getConnectListener: () => {
       if (!connectListener) {
         throw new Error('connect listener missing');
@@ -303,6 +365,13 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
         throw new Error('permission removed listener missing');
       }
       permissionRemovedListener({ origins: removedOrigins });
+    },
+    releaseSessionGet: () => {
+      const release = sessionGetReleases.shift();
+      if (!release) {
+        throw new Error('session get is not stalled');
+      }
+      release();
     },
     release: (stage) => {
       const release = releases.get(stage);
@@ -424,6 +493,26 @@ async function loadServiceWorker(options: HarnessOptions = {}): Promise<Bootstra
   return harness;
 }
 
+type SurfaceRequestOf<T extends SurfaceRequest['type']> = Extract<SurfaceRequest, { type: T }>;
+
+function surfaceRequest<T extends SurfaceRequest['type']>(
+  type: T,
+  requestId: string,
+  windowId = 7,
+  extra: Partial<
+    Omit<SurfaceRequestOf<T>, 'protocol' | 'version' | 'type' | 'requestId' | 'windowId'>
+  > = {},
+): SurfaceRequestOf<T> {
+  return {
+    protocol: SURFACE_PROTOCOL,
+    version: 1,
+    type,
+    requestId,
+    windowId,
+    ...extra,
+  } as SurfaceRequestOf<T>;
+}
+
 beforeEach(() => {
   vi.resetModules();
   vi.useRealTimers();
@@ -462,6 +551,170 @@ describe('service worker security bootstrap', () => {
     expect(harness.getAll).toHaveBeenCalledTimes(2);
     expect(harness.removePermission).not.toHaveBeenCalled();
     expect(harness.currentOrigins()).toEqual([]);
+  });
+
+  it('returns a bounded surface summary without private bookmark, Vault, or task data', async () => {
+    const harness = await loadServiceWorker();
+    harness.bookmarks.getTree.mockImplementation(
+      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
+        callback(classificationTree()),
+    );
+    const legacySummary = await send(harness.getMessageListener(), { type: 'state:summary' });
+    expect(legacySummary, JSON.stringify(legacySummary)).toMatchObject({ ok: true });
+    const treeCallsBeforeSurface = harness.bookmarks.getTree.mock.calls.length;
+    const vaultReadsBeforeSurface = harness.indexedDbOpen.mock.calls.filter(
+      ([databaseName]) => databaseName === 'shuhai-vault',
+    ).length;
+    const request = surfaceRequest('summary', 'surface-summary-1');
+
+    const response = parseSurfaceResponse(
+      request,
+      await send(harness.getMessageListener(), request, sender('popup')),
+    );
+
+    expect(response.ok, JSON.stringify(response)).toBe(true);
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        bookmarkCount: null,
+        folderCount: null,
+        vaultConfigured: null,
+        aiConfigured: null,
+        lastSavedAt: null,
+        activeTask: null,
+        pendingLaunch: null,
+      },
+    });
+    expect(harness.bookmarks.getTree).toHaveBeenCalledTimes(treeCallsBeforeSurface);
+    expect(
+      harness.indexedDbOpen.mock.calls.filter(([databaseName]) => databaseName === 'shuhai-vault'),
+    ).toHaveLength(vaultReadsBeforeSurface);
+    expect(JSON.stringify(response)).not.toMatch(
+      /examplepermissionrevoke|private-path|token=|apiKey|vaultPath/iu,
+    );
+  });
+
+  it('binds launch and acknowledgement to one Chrome window with an idempotent tombstone', async () => {
+    const harness = await loadServiceWorker({ windowIds: [7, 8] });
+    const launchSeven = surfaceRequest('launch', 'surface-launch-7', 7, {
+      target: 'bookmarks-transition',
+    });
+    const launchEight = surfaceRequest('launch', 'surface-launch-8', 8, {
+      target: 'x-sync',
+    });
+    const responseSeven = parseSurfaceResponse(
+      launchSeven,
+      await send(harness.getMessageListener(), launchSeven, sender('popup')),
+    );
+    const responseEight = parseSurfaceResponse(
+      launchEight,
+      await send(harness.getMessageListener(), launchEight, sender('popup')),
+    );
+    expect(responseSeven.ok).toBe(true);
+    expect(responseEight.ok).toBe(true);
+    if (!responseSeven.ok || !responseEight.ok) {
+      throw new Error('surface launch fixture failed');
+    }
+
+    const wrongWindowAck = surfaceRequest('ackLaunch', 'surface-wrong-window', 8, {
+      intentId: responseSeven.data.intentId,
+    });
+    await expect(
+      send(harness.getMessageListener(), wrongWindowAck, sender('sidepanel')),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'intent_mismatch' });
+
+    const ack = surfaceRequest('ackLaunch', 'surface-ack-7', 7, {
+      intentId: responseSeven.data.intentId,
+    });
+    await expect(
+      send(harness.getMessageListener(), ack, sender('sidepanel')),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { acknowledged: true, alreadyAcknowledged: false },
+    });
+    const repeatedAck = { ...ack, requestId: 'surface-ack-7-repeat' };
+    await expect(
+      send(harness.getMessageListener(), repeatedAck, sender('sidepanel')),
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { acknowledged: true, alreadyAcknowledged: true },
+    });
+
+    expect(harness.sessionValue(SURFACE_REGISTRY_KEY)).toMatchObject({
+      version: 1,
+      pending: [expect.objectContaining({ windowId: 8, intentId: responseEight.data.intentId })],
+      tombstones: [expect.objectContaining({ windowId: 7, intentId: responseSeven.data.intentId })],
+    });
+  });
+
+  it('serializes concurrent window launches so neither registry intent is lost', async () => {
+    const harness = await loadServiceWorker({
+      stalledSessionGetCount: 1,
+      windowIds: [7, 8],
+    });
+    const launchSeven = surfaceRequest('launch', 'surface-concurrent-7', 7, {
+      target: 'bookmarks-transition',
+    });
+    const launchEight = surfaceRequest('launch', 'surface-concurrent-8', 8, {
+      target: 'x-sync',
+    });
+
+    const first = send(harness.getMessageListener(), launchSeven, sender('popup'));
+    await vi.waitFor(() => expect(harness.sessionGet).toHaveBeenCalledTimes(1));
+    const second = send(harness.getMessageListener(), launchEight, sender('popup'));
+    await Promise.resolve();
+    expect(harness.sessionGet).toHaveBeenCalledTimes(1);
+
+    harness.releaseSessionGet();
+    const [responseSeven, responseEight] = await Promise.all([first, second]);
+    expect(responseSeven).toMatchObject({ ok: true });
+    expect(responseEight).toMatchObject({ ok: true });
+    expect(harness.sessionValue(SURFACE_REGISTRY_KEY)).toMatchObject({
+      pending: [expect.objectContaining({ windowId: 7 }), expect.objectContaining({ windowId: 8 })],
+    });
+  });
+
+  it('fails an expired exact launch closed and removes it from the bounded registry', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const harness = await loadServiceWorker();
+    const launch = surfaceRequest('launch', 'surface-expiring', 7, {
+      target: 'x-single',
+    });
+    const launchResponse = parseSurfaceResponse(
+      launch,
+      await send(harness.getMessageListener(), launch, sender('popup')),
+    );
+    if (!launchResponse.ok) {
+      throw new Error('surface launch fixture failed');
+    }
+    now.mockReturnValue(11_001);
+    const ack = surfaceRequest('ackLaunch', 'surface-expired-ack', 7, {
+      intentId: launchResponse.data.intentId,
+    });
+
+    await expect(
+      send(harness.getMessageListener(), ack, sender('sidepanel')),
+    ).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'intent_expired',
+    });
+    expect(harness.sessionValue(SURFACE_REGISTRY_KEY)).toMatchObject({ pending: [] });
+  });
+
+  it('rejects a surface sender before reading Chrome windows or private state', async () => {
+    const harness = await loadServiceWorker();
+    const request = surfaceRequest('summary', 'surface-forbidden');
+
+    await expect(
+      send(harness.getMessageListener(), request, {
+        id: EXTENSION_ID,
+        origin: 'https://x.com',
+        url: 'https://x.com/i/bookmarks',
+        tab: { id: 1 } as chrome.tabs.Tab,
+      }),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'forbidden_sender' });
+    expect(harness.bookmarks.getTree).not.toHaveBeenCalled();
+    expect(harness.indexedDbOpen).not.toHaveBeenCalled();
   });
 
   it('accepts remove=false only when the postcondition proves broad grants are gone', async () => {

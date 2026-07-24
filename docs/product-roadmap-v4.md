@@ -293,13 +293,21 @@ extractor_version: 1
 
 ### Goal 046：极简界面与两周 dogfood
 
-状态：`PLANNED`
+状态：046A `DONE/PASS`；046B/046C `PLANNED`
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
 - Options 最小设置和高级折叠。
 - X/微博同步与书签整理各一条真实 Chrome E2E。
 - 连续两周记录主动使用次数、失败、中断和放弃步骤。
+
+当前拆分：
+
+1. [Goal 046A](./goals/goal-046a-surface-shell-and-popup.md)：主壳、上下文 Popup、
+   Side Panel lazy task route 与 bundle 边界。合同和实现独立 review 均 `PASS`。
+2. Goal 046B：书签整理与 X 同步两条旅程、独立 Options 和旧入口收缩。
+3. Goal 046C：完全隔离 fixture E2E、可访问性、视觉与性能验收。两周真实 dogfood 仍是
+   后续人工使用门禁，不会被自动化截图伪装成完成。
 
 ### Goal 047：平台扩展门禁
 
