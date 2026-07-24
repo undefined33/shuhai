@@ -1,60 +1,142 @@
 import { describe, expect, it } from 'vitest';
+
 import {
+  AI_PROVIDER_SECRETS_MAX_BYTES,
+  AI_PROVIDER_TYPES,
+  DEFAULT_PROVIDER_IDS,
+  AiProviderSecretsEnvelopeSchema,
+  createAiProviderSecret,
   createDefaultAiProviders,
   createProviderFromTemplate,
-  getActiveProvider,
+  emptyAiProviderSecrets,
+  getAiProviderSecret,
+  isValidAiModel,
+  parseAiProviderSecrets,
+  providerEndpoint,
+  providerOrigin,
+  providerPermission,
   providerTemplate,
-  trimTrailingSlash,
+  removeAiProviderSecret,
+  upsertAiProviderSecret,
   upsertProvider,
 } from '../src/shared/ai-providers.js';
-import type { AppSettings } from '../src/shared/bookmark-types.js';
-import { DEFAULT_SETTINGS } from '../src/utils/storage.js';
 
-describe('AI providers', () => {
-  it('creates the built-in providers from templates', () => {
+describe('AI provider contract', () => {
+  it('exposes exactly three fixed public providers without endpoint or key fields', () => {
     const providers = createDefaultAiProviders();
 
-    expect(providers.map((provider) => provider.provider)).toEqual(['deepseek', 'kimi', 'glm']);
-    expect(providers[0]).toMatchObject({
-      id: 'deepseek-default',
-      baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
-    });
-  });
-
-  it('returns only enabled active providers', () => {
-    const provider = createProviderFromTemplate(providerTemplate('glm'), {
-      apiKey: 'glm-key',
-    });
-    const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
-      useAi: true,
-      activeProviderId: provider.id,
-      aiProviders: [{ ...provider, enabled: false }],
-      customRules: [],
-      defaultClassifyMode: 'safe',
-      exportDirectory: 'Bookmarks',
-    };
-
-    expect(getActiveProvider(settings)).toBeUndefined();
-    expect(
-      getActiveProvider({
-        ...settings,
-        aiProviders: [provider],
-      }),
-    ).toEqual(provider);
-  });
-
-  it('upserts providers and normalizes trailing slashes', () => {
-    const provider = createProviderFromTemplate(providerTemplate('kimi'), {
-      apiKey: 'kimi-key',
-      baseUrl: 'https://api.moonshot.cn/v1///',
-    });
-
-    expect(trimTrailingSlash(provider.baseUrl)).toBe('https://api.moonshot.cn/v1');
-    expect(upsertProvider([], provider)).toEqual([provider]);
-    expect(upsertProvider([provider], { ...provider, model: 'moonshot-v1-32k' })).toEqual([
-      { ...provider, model: 'moonshot-v1-32k' },
+    expect(providers.map((provider) => provider.provider)).toEqual(AI_PROVIDER_TYPES);
+    expect(providers.map((provider) => provider.id)).toEqual([
+      DEFAULT_PROVIDER_IDS.deepseek,
+      DEFAULT_PROVIDER_IDS.kimi,
+      DEFAULT_PROVIDER_IDS.glm,
     ]);
+    for (const provider of providers) {
+      expect(Object.keys(provider).sort()).toEqual([
+        'enabled',
+        'hasApiKey',
+        'id',
+        'model',
+        'name',
+        'provider',
+      ]);
+      expect(provider).not.toHaveProperty('apiKey');
+      expect(provider).not.toHaveProperty('baseUrl');
+    }
+  });
+
+  it('binds each provider to one official endpoint, origin and permission', () => {
+    expect(providerEndpoint('deepseek')).toBe('https://api.deepseek.com/chat/completions');
+    expect(providerEndpoint('kimi')).toBe('https://api.moonshot.cn/v1/chat/completions');
+    expect(providerEndpoint('glm')).toBe('https://open.bigmodel.cn/api/paas/v4/chat/completions');
+    for (const provider of AI_PROVIDER_TYPES) {
+      const template = providerTemplate(provider);
+      expect(providerOrigin(provider)).toBe(new URL(template.endpoint).origin);
+      expect(providerPermission(provider)).toBe(`${providerOrigin(provider)}/*`);
+    }
+  });
+
+  it('normalizes attempted public identity and endpoint-like mutations', () => {
+    const provider = createProviderFromTemplate(providerTemplate('deepseek'), {
+      id: 'attacker',
+      name: 'Changed',
+      model: 'deepseek-v4-flash',
+      hasApiKey: true,
+    } as never);
+    const providers = upsertProvider(createDefaultAiProviders(), {
+      ...provider,
+      id: 'changed',
+      name: 'Changed',
+    });
+
+    expect(provider.id).toBe(DEFAULT_PROVIDER_IDS.deepseek);
+    expect(provider.name).toBe(providerTemplate('deepseek').name);
+    expect(providers.find((item) => item.provider === 'deepseek')).toMatchObject({
+      id: DEFAULT_PROVIDER_IDS.deepseek,
+      name: providerTemplate('deepseek').name,
+      hasApiKey: true,
+    });
+  });
+
+  it('accepts only bounded model tokens that cannot affect URL or headers', () => {
+    expect(isValidAiModel('glm-5.2')).toBe(true);
+    expect(isValidAiModel('kimi_k3.preview')).toBe(true);
+    for (const invalid of [
+      '',
+      ' model',
+      'model ',
+      'a/b',
+      'a\\b',
+      'a:b',
+      '..',
+      'model..preview',
+      'model\npreview',
+      'a'.repeat(129),
+    ]) {
+      expect(isValidAiModel(invalid)).toBe(false);
+    }
+  });
+
+  it('stores secrets in a provider/origin-bound strict envelope', () => {
+    const deepseek = createAiProviderSecret('deepseek', 'sk-test');
+    expect(deepseek).toEqual({
+      provider: 'deepseek',
+      origin: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+    });
+    expect(createAiProviderSecret('deepseek', 'bad key')).toBeUndefined();
+
+    const first = upsertAiProviderSecret(emptyAiProviderSecrets(), deepseek!);
+    const kimi = createAiProviderSecret('kimi', 'kimi-key')!;
+    const second = upsertAiProviderSecret(first!, kimi)!;
+    expect(getAiProviderSecret(second, 'deepseek')?.apiKey).toBe('sk-test');
+    expect(removeAiProviderSecret(second, 'deepseek').providers).toEqual([kimi]);
+  });
+
+  it('rejects duplicate, wrong-origin and unknown-field secret envelopes', () => {
+    const secret = createAiProviderSecret('deepseek', 'sk-test')!;
+    expect(parseAiProviderSecrets({ version: 1, providers: [secret, secret] })).toBeUndefined();
+    expect(
+      parseAiProviderSecrets({
+        version: 1,
+        providers: [{ ...secret, origin: 'https://evil.example' }],
+      }),
+    ).toBeUndefined();
+    expect(
+      parseAiProviderSecrets({
+        version: 1,
+        providers: [{ ...secret, extra: true }],
+      }),
+    ).toBeUndefined();
+    const bounded = {
+      version: 1,
+      providers: [
+        createAiProviderSecret('deepseek', `a${'b'.repeat(4_000)}`),
+        createAiProviderSecret('kimi', `c${'d'.repeat(4_000)}`),
+        createAiProviderSecret('glm', `e${'f'.repeat(4_000)}`),
+      ],
+    };
+    expect(JSON.stringify(bounded).length).toBeLessThan(AI_PROVIDER_SECRETS_MAX_BYTES);
+    expect(AiProviderSecretsEnvelopeSchema.safeParse(bounded).success).toBe(true);
   });
 });

@@ -1,5 +1,8 @@
 packages:
-  - "packages/*"
+  - 'packages/*'
+overrides:
+  vite: '6.4.3'
+lockfileIncludeTarballUrl: false
 allowBuilds:
   esbuild: true
 onlyBuiltDependencies:

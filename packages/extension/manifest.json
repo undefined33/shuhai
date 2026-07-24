@@ -2,14 +2,14 @@
   "manifest_version": 3,
   "name": "ShuHai Bookmark Organizer",
   "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzVH54/jlOqx4H3Dds99QtxyzwYGjNMZeG0zSWWu77bz9Jy2khABHbHdTQKKOLAZoden/xzl3vLQUJ/hHZm4zkjjc1uE1bwWfwpXx+lbsMMWBBmU5f0gFNbW+u+6gi4Bi8RUxObM83L0jdGlHZ4bwjSFN+m/YUsi7RDKr1muSKw2IMUfYdQ9s9NZ617JjY/HvoI+QPuXi7nPtbeJ1oX0tzSJx3e2BUk73qqu9ceXuC1Ldn4tS4dPk5Qqhe8jic+GIJxWd7BdpqKK8+V2k3HV8vH6Y9mtY78c51pgBqhh5IrT55YwCypguJ+8beeFkpcfGO0Lruz1OwEiioC+I6Txz1QIDAQAB",
   "description": "Organize Chrome bookmarks with local rules and optional AI review.",
   "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel", "activeTab", "scripting"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "host_permissions": [
+  "optional_host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*",
-    "https://weibo.com/*",
-    "https://m.weibo.cn/*"
+    "https://api.deepseek.com/*",
+    "https://api.moonshot.cn/*",
+    "https://open.bigmodel.cn/*"
   ],
   "action": {
     "default_popup": "popup/index.html",
@@ -21,17 +21,5 @@
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
-  },
-  "content_scripts": [
-    {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
-      "js": ["content/twitter.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://weibo.com/*", "https://m.weibo.cn/*"],
-      "js": ["content/weibo.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }

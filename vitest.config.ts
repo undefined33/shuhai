@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     globals: false,
     setupFiles: isRootRun ? ['./packages/extension/tests/setup.ts'] : [],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**', '**/.pnpm-store/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'json-summary'],

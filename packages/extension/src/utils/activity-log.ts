@@ -1,3 +1,6 @@
+import { z } from 'zod';
+
+import { cloneBoundedStructuredValue } from '../shared/extension-messages.js';
 import { getLocalValue, setLocalValues } from './storage.js';
 import { sanitizeArticleMarkdown, sanitizeText } from './sanitize.js';
 
@@ -7,6 +10,7 @@ export type ActivityType =
   | 'health_delete'
   | 'health_update'
   | 'capture_save'
+  | 'x_item_review'
   | 'vault_export'
   | 'backup_create';
 
@@ -30,6 +34,8 @@ export interface ActivityInput {
   timestamp?: string;
 }
 
+export type XItemActivityClassification = 'new' | 'existing' | 'changed' | 'incomplete' | 'error';
+
 export interface ActivityFilter {
   types?: ActivityType[];
   keyword?: string;
@@ -51,21 +57,147 @@ export interface ActivityGroup {
 export const ACTIVITY_LOG_KEY = 'activityLog';
 export const MAX_ACTIVITY_ENTRIES = 200;
 export const MAX_ACTIVITY_DETAILS = 20;
+const ACTIVITY_LOG_MAX_BYTES = 256 * 1_024;
+const ACTIVITY_TYPES = [
+  'classify_apply',
+  'classify_undo',
+  'health_delete',
+  'health_update',
+  'capture_save',
+  'x_item_review',
+  'vault_export',
+  'backup_create',
+] as const;
+
+const activityDetailSchema: z.ZodType<ActivityDetail> = z.strictObject({
+  label: z.string().max(512),
+  meta: z.string().max(2_048).optional(),
+});
+
+const timestampSchema = z
+  .string()
+  .max(35)
+  .refine((value) => {
+    try {
+      return new Date(value).toISOString() === value;
+    } catch {
+      return false;
+    }
+  });
+
+const activityEntrySchema: z.ZodType<ActivityEntry> = z.strictObject({
+  id: z.string().min(1).max(256),
+  type: z.enum(ACTIVITY_TYPES),
+  timestamp: timestampSchema,
+  summary: z.string().max(4_096),
+  details: z.array(activityDetailSchema).max(MAX_ACTIVITY_DETAILS).optional(),
+});
+
+const activityInputSchema: z.ZodType<ActivityInput> = z.strictObject({
+  type: z.enum(ACTIVITY_TYPES),
+  summary: z.string().max(4_096),
+  details: z
+    .array(activityDetailSchema)
+    .max(MAX_ACTIVITY_DETAILS * 2)
+    .optional(),
+  timestamp: timestampSchema.optional(),
+});
+
+const activityLogSchema = z.array(activityEntrySchema).max(MAX_ACTIVITY_ENTRIES);
+
+function parseActivityInput(input: unknown): ActivityInput {
+  const cloned = cloneBoundedStructuredValue(input, {
+    maxBytes: 64 * 1_024,
+    maxDepth: 6,
+    maxNodes: 512,
+    maxStringBytes: 4_096,
+  });
+  const parsed = activityInputSchema.safeParse(cloned);
+  if (!parsed.success) {
+    throw new Error('activity_input_invalid');
+  }
+  return parsed.data;
+}
+
+function xReviewFields(details: ActivityDetail[] | undefined): {
+  classification: XItemActivityClassification;
+  outcome: 'review_ready' | 'no_write';
+} {
+  const list = details ?? [];
+  const values = new Map(list.map((detail) => [detail.label, detail.meta]));
+  const classification = values.get('classification');
+  const outcome = values.get('outcome');
+  if (
+    list.length !== 3 ||
+    values.size !== 3 ||
+    values.get('source') !== 'x' ||
+    !['new', 'existing', 'changed', 'incomplete', 'error'].includes(classification ?? '') ||
+    (outcome !== 'review_ready' && outcome !== 'no_write')
+  ) {
+    throw new Error('activity_log_invalid');
+  }
+  return {
+    classification: classification as XItemActivityClassification,
+    outcome,
+  };
+}
+
+function normalizeStoredEntry(entry: ActivityEntry): ActivityEntry {
+  if (entry.type === 'capture_save') {
+    return {
+      id: entry.id,
+      type: entry.type,
+      timestamp: entry.timestamp,
+      summary: '旧内容保存记录',
+    };
+  }
+  if (entry.type === 'x_item_review') {
+    const { classification, outcome } = xReviewFields(entry.details);
+    return {
+      id: entry.id,
+      type: entry.type,
+      timestamp: entry.timestamp,
+      summary: outcome === 'no_write' ? 'X 收藏已存在，无需写入' : 'X 收藏已进入复核',
+      details: [
+        { label: 'source', meta: 'x' },
+        { label: 'classification', meta: classification },
+        { label: 'outcome', meta: outcome },
+      ],
+    };
+  }
+  return entry;
+}
+
+function parseActivityLog(value: unknown): ActivityEntry[] {
+  const cloned = cloneBoundedStructuredValue(value, {
+    maxBytes: ACTIVITY_LOG_MAX_BYTES,
+    maxDepth: 6,
+    maxNodes: 4_096,
+    maxStringBytes: 4_096,
+  });
+  const parsed = activityLogSchema.safeParse(cloned);
+  if (!parsed.success) {
+    throw new Error('activity_log_invalid');
+  }
+  return parsed.data.map(normalizeStoredEntry);
+}
 
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `activity_${Date.now()}_${Math.random()}`;
 }
 
 export function normalizeActivityEntry(input: ActivityInput): ActivityEntry {
-  const details = input.details?.slice(0, MAX_ACTIVITY_DETAILS);
+  const parsed = parseActivityInput(input);
+  const legacyCapture = parsed.type === 'capture_save';
+  const details = legacyCapture ? undefined : parsed.details?.slice(0, MAX_ACTIVITY_DETAILS);
 
-  return {
+  return normalizeStoredEntry({
     id: createId(),
-    type: input.type,
-    timestamp: input.timestamp ?? new Date().toISOString(),
-    summary: input.summary,
+    type: parsed.type,
+    timestamp: parsed.timestamp ?? new Date().toISOString(),
+    summary: legacyCapture ? '旧内容保存记录' : parsed.summary,
     ...(details && details.length > 0 ? { details } : {}),
-  };
+  });
 }
 
 export function trimActivityLog(entries: ActivityEntry[]): ActivityEntry[] {
@@ -75,7 +207,8 @@ export function trimActivityLog(entries: ActivityEntry[]): ActivityEntry[] {
 }
 
 export async function getActivityLog(): Promise<ActivityEntry[]> {
-  return trimActivityLog(await getLocalValue<ActivityEntry[]>(ACTIVITY_LOG_KEY, []));
+  const entries = await getLocalValue<unknown>(ACTIVITY_LOG_KEY, []);
+  return trimActivityLog(parseActivityLog(entries));
 }
 
 export async function addActivityEntry(input: ActivityInput): Promise<ActivityEntry> {
@@ -86,6 +219,21 @@ export async function addActivityEntry(input: ActivityInput): Promise<ActivityEn
   });
 
   return entry;
+}
+
+export function addXItemReviewActivity(
+  classification: XItemActivityClassification,
+  outcome: 'review_ready' | 'no_write',
+): Promise<ActivityEntry> {
+  return addActivityEntry({
+    type: 'x_item_review',
+    summary: outcome === 'no_write' ? 'X 收藏已存在，无需写入' : 'X 收藏已进入复核',
+    details: [
+      { label: 'source', meta: 'x' },
+      { label: 'classification', meta: classification },
+      { label: 'outcome', meta: outcome },
+    ],
+  });
 }
 
 export function clearActivityLog(): Promise<void> {

@@ -86,6 +86,48 @@ describe('chrome bookmark utilities', () => {
   });
 
   it('undoes move records in reverse order', async () => {
+    setBookmarkTree([
+      {
+        id: '0',
+        title: '',
+        syncing: false,
+        children: [
+          {
+            id: '1',
+            title: 'Original',
+            parentId: '0',
+            index: 0,
+            syncing: false,
+            children: [],
+          },
+          {
+            id: '2',
+            title: 'Target',
+            parentId: '0',
+            index: 1,
+            syncing: false,
+            children: [
+              {
+                id: '10',
+                title: 'A',
+                url: 'https://example.com/a',
+                parentId: '2',
+                index: 0,
+                syncing: false,
+              },
+              {
+                id: '11',
+                title: 'B',
+                url: 'https://example.com/b',
+                parentId: '2',
+                index: 1,
+                syncing: false,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
     const undone = await undoMoveRecords([
       {
         bookmarkId: '10',

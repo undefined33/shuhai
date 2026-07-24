@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
-  BookOpen,
   Loader2,
   PanelRightOpen,
   Settings as SettingsIcon,
@@ -11,28 +10,37 @@ import {
 import type {
   AiProviderConfig,
   AiProviderTestResult,
+  AiProviderType,
   AppSettings,
   BackupRecord,
   BookmarkItem,
   BookmarkNode,
-  CapturedContent,
-  ClassificationPortMessage,
-  ClassificationPortRequest,
+  BookmarkOperation,
+  BookmarkOperationCommand,
+  BookmarkOperationCommandResponse,
   ClassificationMode,
   ClassificationPlan,
   ClassificationProgress,
   ExportManifest,
-  ExtensionRequest,
-  ExtensionResponse,
   ExtensionState,
   FolderItem,
   MovePlan,
   StateSummary,
-  UrlHealthPortMessage,
-  UrlHealthPortRequest,
-  UrlHealthProgress,
   UrlHealthRecord,
 } from '../shared/bookmark-types.js';
+import { isBookmarkOperation } from '../shared/bookmark-types.js';
+import { inspectAiClassificationCandidates } from '../shared/ai-classifier.js';
+import { providerPermission, providerTemplate } from '../shared/ai-providers.js';
+import {
+  parseClassificationPortMessage,
+  parseBookmarkOperationMessageResponse,
+  parseLegacyResponse,
+  type ClassificationPortMessage,
+  type ClassificationPortRequest,
+  type ExtensionRequest,
+  type LegacyPendingSummary,
+  type LegacySuccessData,
+} from '../shared/extension-messages.js';
 import { Badge } from '../components/ui/badge.js';
 import { Button } from '../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
@@ -49,7 +57,14 @@ import { Alert } from '../components/ui/alert.js';
 import { Separator } from '../components/ui/separator.js';
 import { ToastProvider, useToast } from '../components/ui/toast.js';
 import { ErrorRecovery } from '../components/ErrorRecovery.js';
-import { DEFAULT_SETTINGS, normalizeSettings, saveOnboardingProgress } from '../utils/storage.js';
+import {
+  DEFAULT_SETTINGS,
+  getLocalValue,
+  normalizeSettings,
+  removeLocalValues,
+  saveOnboardingProgress,
+  setLocalValues,
+} from '../utils/storage.js';
 import {
   computeOnboardingProgress,
   onboardingComplete,
@@ -57,23 +72,38 @@ import {
 } from '../utils/onboarding.js';
 import { toStructuredError, type StructuredError } from '../utils/error-messages.js';
 import { getVaultHandle } from '../utils/vault-writer.js';
+import type { SyncJob } from '../social/sync-schema.js';
+import { openSyncStore } from '../social/sync-store.js';
+import { canonicalizeXStatusUrl } from '../social/x-single-item.js';
+import {
+  X_SYNC_BOOKMARKS_URL,
+  X_SYNC_PROTOCOL,
+  parseXSyncUiResponse,
+  type XSyncUiRequest,
+  type XSyncUiResponse,
+} from '../social/x-sync-messages.js';
 import {
   addActivityEntry,
-  summarizeHealthDelete,
-  summarizeHealthUpdate,
+  summarizeClassifyApply,
+  summarizeClassifyUndo,
 } from '../utils/activity-log.js';
 import ActivityPage from './pages/ActivityPage.js';
 import CollectionPage from './pages/CollectionPage.js';
 import HealthPage from './pages/HealthPage.js';
 import HomePage from './pages/HomePage.js';
-import type { CurrentTabInfo, InlineSaveSource } from './pages/InlineSavePanel.js';
+import type { CurrentTabInfo } from './pages/InlineSavePanel.js';
 import { OnboardingChecklist } from './pages/OnboardingChecklist.js';
 import OrganizePage, { type OrganizeMode } from './pages/OrganizePage.js';
 import Settings from './pages/Settings.js';
+import XSyncPage, { requestXSyncSecurityBootstrap } from './pages/XSyncPage.js';
+import {
+  formatXSyncShortStatus,
+  X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE,
+} from './pages/x-sync-ui-model.js';
 
 type Surface = 'popup' | 'sidepanel';
 type PageName = 'home' | 'organize' | 'health' | 'collection' | 'activity' | 'settings';
-type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'health' | undefined;
+type BusyAction = 'load' | 'plan' | 'apply' | 'undo' | 'settings' | 'operation' | undefined;
 type Notice = { kind: 'success' | 'warning' | 'error'; message: string } | undefined;
 
 const PREFERRED_VIEW_KEY = 'shuhaiPreferredView';
@@ -140,8 +170,8 @@ export function normalizeExtensionState(value: unknown): ExtensionState {
     folders: arrayOrEmpty<FolderItem>(state.folders),
     backups: arrayOrEmpty<BackupRecord>(state.backups),
     exportManifests: arrayOrEmpty<ExportManifest>(state.exportManifests),
-    pendingCaptures: arrayOrEmpty<CapturedContent>(state.pendingCaptures),
     urlHealthRecords: arrayOrEmpty<UrlHealthRecord>(state.urlHealthRecords),
+    bookmarkOperations: [],
     lastMoveRecordCount:
       typeof state.lastMoveRecordCount === 'number' && Number.isFinite(state.lastMoveRecordCount)
         ? state.lastMoveRecordCount
@@ -163,11 +193,6 @@ function normalizeStateSummary(value: unknown): StateSummary {
       typeof summary.folderCount === 'number' && Number.isFinite(summary.folderCount)
         ? summary.folderCount
         : 0,
-    pendingCaptureCount:
-      typeof summary.pendingCaptureCount === 'number' &&
-      Number.isFinite(summary.pendingCaptureCount)
-        ? summary.pendingCaptureCount
-        : 0,
     onboarded: summary.onboarded === true,
     hasVaultHandle: summary.hasVaultHandle === true,
     hasAiProvider: summary.hasAiProvider === true,
@@ -175,30 +200,94 @@ function normalizeStateSummary(value: unknown): StateSummary {
   };
 }
 
-function sendMessage<T>(request: ExtensionRequest): Promise<T> {
+function sendRawRuntimeMessage(request: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(request, (response: ExtensionResponse | undefined) => {
+    chrome.runtime.sendMessage(request, (response: unknown) => {
       const error = chrome.runtime.lastError?.message;
       if (error) {
         reject(new Error(error));
         return;
       }
 
-      if (!response) {
+      if (response === undefined) {
         reject(new Error('扩展后台没有响应'));
         return;
       }
 
-      if (!response.ok) {
-        const responseError = new Error(response.error) as Error & { errorCode?: string };
-        responseError.errorCode = response.errorCode;
-        reject(responseError);
-        return;
-      }
-
-      resolve(response.data as T);
+      resolve(response);
     });
   });
+}
+
+async function sendMessage<R extends ExtensionRequest>(request: R): Promise<LegacySuccessData<R>> {
+  const response = parseLegacyResponse(request, await sendRawRuntimeMessage(request));
+  if (!response.ok) {
+    const responseError = new Error(response.error) as Error & { errorCode?: string };
+    responseError.errorCode = response.errorCode;
+    throw responseError;
+  }
+  return response.data;
+}
+
+function createOperationRequestId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (!randomId) {
+    throw new Error('无法创建安全的书签操作请求');
+  }
+  return `ui:${randomId}`;
+}
+
+async function sendBookmarkOperation(
+  request: BookmarkOperationCommand,
+): Promise<BookmarkOperationCommandResponse> {
+  const envelope = parseBookmarkOperationMessageResponse(
+    await sendRawRuntimeMessage(request),
+    request.requestId,
+  );
+  if (!envelope.ok) {
+    const responseError = new Error(envelope.error) as Error & { errorCode?: string };
+    responseError.errorCode = envelope.errorCode;
+    throw responseError;
+  }
+  const response = envelope.data;
+  if (!response.receipt.result.ok) {
+    const error = new Error('书签操作未执行') as Error & { errorCode?: string };
+    error.errorCode = response.receipt.result.errorCode;
+    throw error;
+  }
+  return response;
+}
+
+export function classificationMessageDisposition(
+  message: ClassificationPortMessage,
+  planRequestId: string,
+  cancelRequestId?: string,
+): 'accept' | 'cancelled' | 'invalid' {
+  if (message.type === 'cancelled') {
+    return message.targetRequestId === planRequestId &&
+      cancelRequestId !== undefined &&
+      message.requestId === cancelRequestId
+      ? 'cancelled'
+      : 'invalid';
+  }
+  if (cancelRequestId !== undefined) {
+    return 'cancelled';
+  }
+  return message.requestId === planRequestId ? 'accept' : 'invalid';
+}
+
+export async function loadStateWithIndependentOperations(
+  loadStateRequest: () => Promise<unknown>,
+  loadOperationsRequest: () => Promise<BookmarkOperation[]>,
+): Promise<{
+  state: PromiseSettledResult<unknown>;
+  operations: PromiseSettledResult<BookmarkOperation[]>;
+}> {
+  const [state, operations] = await Promise.allSettled([
+    loadStateRequest(),
+    loadOperationsRequest(),
+  ]);
+  return { state, operations };
 }
 
 function selectedMoveIds(plan: ClassificationPlan): string[] {
@@ -256,21 +345,6 @@ function formatDuration(ms: number | undefined): string {
   return `${Math.ceil(seconds / 60)} 分钟`;
 }
 
-function healthStatusLabel(status: UrlHealthRecord['status']): string {
-  switch (status) {
-    case 'alive':
-      return '正常';
-    case 'redirected':
-      return '重定向';
-    case 'dead':
-      return '死链';
-    case 'error':
-      return '检查失败';
-    case 'skipped':
-      return '已跳过';
-  }
-}
-
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -312,18 +386,50 @@ async function openSidePanel(): Promise<void> {
   await chrome.sidePanel.open({ windowId });
 }
 
-function requestHealthCheckPermission(): Promise<boolean> {
-  if (!chrome.permissions?.request) {
-    return Promise.resolve(true);
-  }
+function isExactXBookmarksPage(tab: CurrentTabInfo | undefined): boolean {
+  return tab?.url === X_SYNC_BOOKMARKS_URL;
+}
 
-  return new Promise((resolve) => {
-    chrome.permissions.request(
-      {
-        origins: ['http://*/*', 'https://*/*'],
-      },
-      (granted) => resolve(Boolean(granted)),
-    );
+function isActiveXSyncJob(job: SyncJob | undefined): boolean {
+  return Boolean(
+    job &&
+      ['prepared', 'scanning', 'paused', 'ready_for_review', 'writing', 'partial'].includes(
+        job.status,
+      ),
+  );
+}
+
+async function readXSyncJob(activeOnly: boolean): Promise<SyncJob | undefined> {
+  const store = await openSyncStore();
+  try {
+    if (activeOnly) {
+      return await store.getActiveJob('x');
+    }
+    return (await store.listJobs({ source: 'x', limit: 1 }))[0];
+  } finally {
+    store.close();
+  }
+}
+
+function sendXSyncPopupMessage(request: XSyncUiRequest): Promise<XSyncUiResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(request, (rawResponse: unknown) => {
+      const runtimeError = chrome.runtime.lastError?.message;
+      if (runtimeError) {
+        reject(new Error('无法建立 X 同步任务'));
+        return;
+      }
+      try {
+        const response = parseXSyncUiResponse(rawResponse);
+        if (!response.ok) {
+          reject(new Error('当前 X 收藏页无法启动同步'));
+          return;
+        }
+        resolve(response);
+      } catch {
+        reject(new Error('X 同步后台返回了无法验证的响应'));
+      }
+    });
   });
 }
 
@@ -347,73 +453,31 @@ function normalizePreferredPage(value: unknown): PageName | undefined {
 }
 
 function storePreferredPage(page: PageName): Promise<void> {
-  if (!chrome.storage?.local) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    chrome.storage.local.set({ [PREFERRED_VIEW_KEY]: page }, () => resolve());
-  });
+  return setLocalValues({ [PREFERRED_VIEW_KEY]: page });
 }
 
-function takePreferredPage(): Promise<PageName | undefined> {
-  if (!chrome.storage?.local) {
-    return Promise.resolve(undefined);
+async function takePreferredPage(): Promise<PageName | undefined> {
+  const preferredPage = normalizePreferredPage(
+    await getLocalValue<unknown>(PREFERRED_VIEW_KEY, undefined),
+  );
+  if (preferredPage) {
+    await removeLocalValues([PREFERRED_VIEW_KEY]);
   }
-
-  return new Promise((resolve) => {
-    chrome.storage.local.get(PREFERRED_VIEW_KEY, (items) => {
-      const preferredPage = normalizePreferredPage(items[PREFERRED_VIEW_KEY]);
-      if (preferredPage) {
-        void chrome.storage.local.remove(PREFERRED_VIEW_KEY);
-        resolve(preferredPage);
-        return;
-      }
-
-      resolve(undefined);
-    });
-  });
+  return preferredPage;
 }
 
-function detectInlineSaveSource(url: string): InlineSaveSource | undefined {
-  try {
-    const parsed = new URL(url);
-    if (
-      (parsed.hostname === 'x.com' ||
-        parsed.hostname.endsWith('.x.com') ||
-        parsed.hostname === 'twitter.com' ||
-        parsed.hostname.endsWith('.twitter.com')) &&
-      /\/[^/]+\/status\/\d+/.test(parsed.pathname)
-    ) {
-      return 'twitter';
-    }
-
-    if (
-      (parsed.hostname === 'weibo.com' ||
-        parsed.hostname.endsWith('.weibo.com') ||
-        parsed.hostname === 'm.weibo.cn') &&
-      (/\/detail\/[^/?#]+/.test(parsed.pathname) || /\/status\/[^/?#]+/.test(parsed.pathname))
-    ) {
-      return 'weibo';
-    }
-
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return 'article';
-    }
-  } catch {
-    return undefined;
-  }
-
-  return undefined;
-}
-
-function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
+export function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
   if (!chrome.tabs?.query) {
     return Promise.resolve(undefined);
   }
 
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        resolve(undefined);
+        return;
+      }
+
       const tab = tabs[0];
       const url = tab?.url ?? '';
       if (!url) {
@@ -424,39 +488,95 @@ function getActiveTabInfo(): Promise<CurrentTabInfo | undefined> {
       resolve({
         title: tab.title,
         url,
-        source: detectInlineSaveSource(url),
+        canSaveX: Boolean(canonicalizeXStatusUrl(url)),
       });
     });
   });
 }
 
+function requestOptionalOrigin(origin: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.permissions.contains({ origins: [origin] }, (alreadyGranted) => {
+      if (chrome.runtime.lastError) {
+        resolve(false);
+        return;
+      }
+      if (alreadyGranted) {
+        resolve(true);
+        return;
+      }
+      chrome.permissions.request({ origins: [origin] }, (granted) => {
+        resolve(!chrome.runtime.lastError && granted === true);
+      });
+    });
+  });
+}
+
+export async function requestAiClassificationConsent(
+  provider: AiProviderConfig,
+  candidateCount: number,
+  confirmRequest: (message: string) => boolean,
+  requestPermission: (origin: string) => Promise<boolean>,
+): Promise<{
+  ai?: { provider: AiProviderType; confirmed: true };
+  permissionDenied: boolean;
+}> {
+  if (!Number.isSafeInteger(candidateCount) || candidateCount <= 0) {
+    return { permissionDenied: false };
+  }
+  const template = providerTemplate(provider.provider);
+  const confirmed = confirmRequest(
+    [
+      `Provider: ${provider.name} (${template.origin})`,
+      `候选数量: ${candidateCount}`,
+      '发送字段: 受限标题、网站 hostname、已有目标目录标签',
+      '不会发送: 完整 URL、query、正文、书签树、Vault、Cookie/token 或 API Key',
+      '',
+      '是否同意本次使用 AI？取消后仍会使用纯本地规则。',
+    ].join('\n'),
+  );
+  if (!confirmed) {
+    return { permissionDenied: false };
+  }
+  if (!(await requestPermission(providerPermission(provider.provider)))) {
+    return { permissionDenied: true };
+  }
+  return {
+    ai: { provider: provider.provider, confirmed: true },
+    permissionDenied: false,
+  };
+}
+
 interface PopupLauncherProps {
   busy: boolean;
+  currentTab?: CurrentTabInfo;
   onboardingProgress: OnboardingProgress;
   summary?: StateSummary;
   state?: ExtensionState;
   onOpenSidePanel(page: PageName): void;
   onQuickClassify(): void;
   onQuickHealth(): void;
+  onSaveCurrentX(): Promise<void>;
   onSkipOnboarding(): void;
   onUsePopup(page: PageName): void;
 }
 
 function PopupLauncher({
   busy,
+  currentTab,
   onboardingProgress,
   summary,
   state,
   onOpenSidePanel,
   onQuickClassify,
   onQuickHealth,
+  onSaveCurrentX,
   onSkipOnboarding,
   onUsePopup,
 }: PopupLauncherProps) {
   const bookmarkCount = summary?.bookmarkCount ?? state?.bookmarks?.length ?? 0;
   const folderCount = summary?.folderCount ?? state?.folders?.length ?? 0;
-  const pendingCaptureCount = summary?.pendingCaptureCount ?? state?.pendingCaptures?.length ?? 0;
-  const setupReady = Boolean(summary?.hasVaultHandle && summary?.hasAiProvider);
+  const setupReady = Boolean(summary?.hasVaultHandle);
   const lastSavedLabel = summary?.lastExportDate
     ? new Date(summary.lastExportDate).toLocaleDateString()
     : undefined;
@@ -477,9 +597,6 @@ function PopupLauncher({
               </p>
             </div>
           </div>
-          {pendingCaptureCount > 0 ? (
-            <Badge variant="accent">待入库 {pendingCaptureCount}</Badge>
-          ) : null}
         </header>
 
         <Separator />
@@ -491,15 +608,29 @@ function PopupLauncher({
                 <PanelRightOpen className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-base font-semibold">打开 ShuHai 工作区</h2>
+                <h2 className="text-base font-semibold">
+                  {currentTab?.canSaveX ? '保存当前 X 内容' : '打开 ShuHai 工作区'}
+                </h2>
                 <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-                  在侧边栏里整理书签、检查失效链接、确认内容入库。
+                  {currentTab?.canSaveX
+                    ? '只读取当前详情页，提取后进入复核，不会直接写入 Vault。'
+                    : '在侧边栏里整理书签、同步 X 收藏，并确认内容写入 Vault。'}
                 </p>
               </div>
             </div>
-            <Button className="h-10 w-full" disabled={busy} onClick={() => onOpenSidePanel('home')}>
-              <PanelRightOpen className="h-4 w-4" />
-              打开工作区
+            <Button
+              className="h-10 w-full"
+              disabled={busy}
+              onClick={() =>
+                currentTab?.canSaveX ? void onSaveCurrentX() : onOpenSidePanel('home')
+              }
+            >
+              {currentTab?.canSaveX ? (
+                <Sparkles className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+              {currentTab?.canSaveX ? '加入安全复核' : '打开工作区'}
             </Button>
           </CardContent>
         </Card>
@@ -515,7 +646,7 @@ function PopupLauncher({
           </Button>
           <Button disabled={busy || bookmarkCount === 0} onClick={onQuickHealth} variant="outline">
             <Activity className="h-4 w-4" />
-            找出坏链接
+            查看链接历史
           </Button>
         </div>
 
@@ -534,12 +665,6 @@ function PopupLauncher({
         </div>
 
         <div className="mt-auto grid gap-2">
-          {pendingCaptureCount > 0 ? (
-            <Button disabled={busy} onClick={() => onUsePopup('collection')} variant="secondary">
-              <BookOpen className="h-4 w-4" />
-              处理待入库 {pendingCaptureCount}
-            </Button>
-          ) : null}
           <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
             <button
               className="hover:text-foreground"
@@ -584,7 +709,7 @@ function PopupLauncher({
       {state && !state.onboarded ? (
         <OnboardingChecklist
           compact
-          onOpenCollect={() => onUsePopup('collection')}
+          onOpenCollect={() => onUsePopup('home')}
           onOpenOrganize={() => onUsePopup('organize')}
           onOpenSettings={() => onUsePopup('settings')}
           onSkip={onSkipOnboarding}
@@ -608,11 +733,6 @@ function PopupLauncher({
             <Sparkles className="h-4 w-4" />
             整理书签
           </Button>
-          <Button disabled={busy} onClick={() => onOpenSidePanel('collection')} variant="outline">
-            <BookOpen className="h-4 w-4" />
-            待入库
-            {pendingCaptureCount > 0 ? <Badge variant="accent">{pendingCaptureCount}</Badge> : null}
-          </Button>
           <Button disabled={busy} onClick={() => onOpenSidePanel('settings')} variant="outline">
             <SettingsIcon className="h-4 w-4" />
             设置
@@ -631,7 +751,7 @@ function PopupLauncher({
             variant="secondary"
           >
             <Sparkles className="h-4 w-4" />
-            AI 整理
+            整理书签
           </Button>
           <Button
             disabled={busy || bookmarkCount === 0}
@@ -639,7 +759,7 @@ function PopupLauncher({
             variant="secondary"
           >
             <Activity className="h-4 w-4" />
-            检查链接
+            链接历史
           </Button>
         </CardContent>
       </Card>
@@ -650,12 +770,6 @@ function PopupLauncher({
             <span className="text-muted-foreground">AI 整理</span>
             <Badge variant={state?.settings?.useAi ? 'success' : 'warning'}>
               {state?.settings?.useAi ? '已启用' : '规则模式'}
-            </Badge>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">待入库</span>
-            <Badge variant={pendingCaptureCount > 0 ? 'accent' : 'outline'}>
-              {pendingCaptureCount}
             </Badge>
           </div>
         </CardContent>
@@ -671,6 +785,86 @@ function PopupLauncher({
           继续用弹窗
         </Button>
       </div>
+    </main>
+  );
+}
+
+interface XSyncPopupLauncherProps {
+  lastJob?: SyncJob;
+  opening: boolean;
+  ready: boolean;
+  securityFailed: boolean;
+  onOpen(): void;
+  onOpenSettings(): void;
+}
+
+function XSyncPopupLauncher({
+  lastJob,
+  opening,
+  ready,
+  securityFailed,
+  onOpen,
+  onOpenSettings,
+}: XSyncPopupLauncherProps) {
+  const continuing = isActiveXSyncJob(lastJob);
+
+  return (
+    <main className="flex min-h-[380px] flex-col bg-background p-4 text-foreground">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandMark />
+          <div className="min-w-0">
+            <h1 className="text-base font-semibold tracking-tight">
+              <TitleWithSerifTail>ShuHai</TitleWithSerifTail>
+            </h1>
+            <p className="mt-1 text-xs text-muted-foreground">X 收藏同步</p>
+          </div>
+        </div>
+        <Button
+          aria-label="打开设置"
+          onClick={onOpenSettings}
+          size="icon"
+          title="设置"
+          variant="ghost"
+        >
+          <SettingsIcon className="h-4 w-4" />
+        </Button>
+      </header>
+
+      <Separator className="my-4" />
+
+      <div className="space-y-3">
+        {securityFailed ? (
+          <Alert variant="destructive">{X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE}</Alert>
+        ) : null}
+        <div>
+          <h2 className="text-base font-semibold">
+            {continuing ? '继续上次 X 同步任务' : '同步新增收藏'}
+          </h2>
+          <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
+            打开侧边栏后检查新增收藏。扫描受固定预算限制，复核前不会写入 Vault。
+          </p>
+        </div>
+
+        <div className="rounded-md border border-border bg-muted/40 p-3 text-[13px]">
+          <span className="text-muted-foreground">上次任务</span>
+          <p className="mt-1 font-medium">{formatXSyncShortStatus(lastJob)}</p>
+        </div>
+
+        <Button
+          className="h-10 w-full"
+          disabled={!ready || securityFailed}
+          loading={opening}
+          onClick={onOpen}
+        >
+          <PanelRightOpen className="h-4 w-4" />
+          {continuing ? '打开同步任务' : '同步新增收藏'}
+        </Button>
+      </div>
+
+      <p className="mt-auto pt-5 text-xs leading-5 text-muted-foreground">
+        只处理当前 X 收藏页；不会读取 Cookie、token、其它标签页，也不会自动重试平台限制。
+      </p>
     </main>
   );
 }
@@ -716,6 +910,8 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [page, setPage] = useState<PageName>('home');
   const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('browse');
   const [state, setState] = useState<ExtensionState | undefined>();
+  const [stateReadFailed, setStateReadFailed] = useState(false);
+  const [bookmarkOperations, setBookmarkOperations] = useState<BookmarkOperation[]>([]);
   const [summary, setSummary] = useState<StateSummary | undefined>();
   const [onboardingProgress, setOnboardingProgress] =
     useState<OnboardingProgress>(EMPTY_ONBOARDING_PROGRESS);
@@ -727,17 +923,43 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const [recoveryError, setRecoveryError] = useState<StructuredError | undefined>();
   const [confirmApplyOpen, setConfirmApplyOpen] = useState(false);
   const [classificationProgress, setClassificationProgress] = useState<ClassificationProgress>();
-  const [urlHealthProgress, setUrlHealthProgress] = useState<UrlHealthProgress>();
-  const [healthChecking, setHealthChecking] = useState(false);
   const [forcePopupWorkspace, setForcePopupWorkspace] = useState(false);
   const [currentTabInfo, setCurrentTabInfo] = useState<CurrentTabInfo | undefined>();
-  const [focusedCaptureId, setFocusedCaptureId] = useState('');
   const [lastAppliedMoveCount, setLastAppliedMoveCount] = useState(0);
+  const [contextResolved, setContextResolved] = useState(false);
+  const [xSyncRoute, setXSyncRoute] = useState(false);
+  const [xSyncWindowId, setXSyncWindowId] = useState<number>();
+  const [xSyncLastJob, setXSyncLastJob] = useState<SyncJob>();
+  const [xSyncOpening, setXSyncOpening] = useState(false);
+  const [xSyncSecurityFailed, setXSyncSecurityFailed] = useState(false);
   const classificationPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
-  const healthPortRef = useRef<chrome.runtime.Port | undefined>(undefined);
-  const previousPendingCaptureCountRef = useRef<number | undefined>(undefined);
+  const classificationRequestIdRef = useRef<string | undefined>(undefined);
+  const classificationCancelRequestIdRef = useRef<string | undefined>(undefined);
 
-  const busy = Boolean(busyAction) || healthChecking;
+  const busy = Boolean(busyAction);
+
+  useEffect(() => {
+    const listener = (message: unknown, sender: chrome.runtime.MessageSender) => {
+      const event = objectRecord(message);
+      if (
+        sender.id !== chrome.runtime.id ||
+        sender.tab ||
+        event.type !== 'bookmarkOperations:progress' ||
+        !isBookmarkOperation(event.operation)
+      ) {
+        return;
+      }
+      const operation = event.operation;
+
+      setBookmarkOperations((current) => [
+        operation,
+        ...current.filter((candidate) => candidate.id !== operation.id),
+      ]);
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
 
   useEffect(() => {
     if (notice?.kind !== 'success') {
@@ -761,15 +983,25 @@ function AppContent({ surface = 'popup' }: AppProps) {
     });
   };
 
-  const setHealthRecords = (records: UrlHealthRecord[]) => {
-    setState((current) => (current ? { ...current, urlHealthRecords: records } : current));
+  const loadOperations = async (): Promise<BookmarkOperation[]> => {
+    const result = await sendMessage({ type: 'operations:getRecent' });
+    setBookmarkOperations(result.operations);
+    return result.operations;
   };
 
   const loadState = async () => {
     setBusyAction('load');
     setNotice(undefined);
+    const loadResult = await loadStateWithIndependentOperations(
+      () => sendMessage({ type: 'state:get' }),
+      loadOperations,
+    );
+    let stateLoaded = false;
     try {
-      let nextState = normalizeExtensionState(await sendMessage<unknown>({ type: 'state:get' }));
+      if (loadResult.state.status === 'rejected') {
+        throw loadResult.state.reason;
+      }
+      let nextState = normalizeExtensionState(loadResult.state.value);
       const vaultHandle = await getVaultHandle().catch(() => null);
       const progress = computeOnboardingProgress({
         hasVaultHandle: Boolean(vaultHandle),
@@ -780,18 +1012,19 @@ function AppContent({ surface = 'popup' }: AppProps) {
       setOnboardingProgress(progress);
       await saveOnboardingProgress(progress).catch(() => undefined);
       if (!nextState.onboarded && onboardingComplete(progress)) {
-        await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+        await sendMessage({ type: 'onboarding:set', onboarded: true });
         nextState = { ...nextState, onboarded: true };
       }
       setState(nextState);
+      setStateReadFailed(false);
+      stateLoaded = true;
       setSummary({
         bookmarkCount: nextState.bookmarks.length,
         folderCount: nextState.folders.length,
-        pendingCaptureCount: nextState.pendingCaptures.length,
         onboarded: nextState.onboarded,
         hasVaultHandle: Boolean(vaultHandle),
         hasAiProvider: nextState.settings.aiProviders.some(
-          (provider) => provider.enabled && provider.apiKey.trim().length > 0,
+          (provider) => provider.enabled && provider.hasApiKey,
         ),
         lastExportDate: nextState.exportManifests[0]?.exportedAt,
       });
@@ -799,8 +1032,17 @@ function AppContent({ surface = 'popup' }: AppProps) {
       setStatus(`已读取 ${nextState.bookmarks.length} 个书签`);
       setRecoveryError(undefined);
     } catch (loadError) {
+      setState(undefined);
+      setStateReadFailed(true);
+      if (loadResult.operations.status === 'fulfilled' && loadResult.operations.value.length > 0) {
+        setPage('health');
+        setStatus('书签数据读取失败，仅显示可恢复操作');
+      }
       showError(loadError);
     } finally {
+      if (stateLoaded && loadResult.operations.status === 'rejected') {
+        showError(loadResult.operations.reason);
+      }
       setBusyAction(undefined);
     }
   };
@@ -809,9 +1051,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     setBusyAction('load');
     setNotice(undefined);
     try {
-      const nextSummary = normalizeStateSummary(
-        await sendMessage<unknown>({ type: 'state:summary' }),
-      );
+      const nextSummary = normalizeStateSummary(await sendMessage({ type: 'state:summary' }));
       setSummary(nextSummary);
       setOnboardingProgress({
         vaultConfigured: nextSummary.hasVaultHandle,
@@ -829,24 +1069,82 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   useEffect(() => {
-    if (surface === 'sidepanel') {
-      void loadState();
-    } else {
-      void loadSummary();
-    }
-    void getActiveTabInfo().then(setCurrentTabInfo);
-  }, []);
+    let disposed = false;
+    void (async () => {
+      const tab = await getActiveTabInfo();
+      if (disposed) return;
+      setCurrentTabInfo(tab);
+      const exactXBookmarks = isExactXBookmarksPage(tab);
 
-  useEffect(() => {
-    void takePreferredPage().then((preferredPage) => {
-      if (preferredPage) {
-        setPage(preferredPage);
+      if (surface === 'popup' && exactXBookmarks) {
+        try {
+          await requestXSyncSecurityBootstrap();
+        } catch {
+          if (disposed) return;
+          setXSyncSecurityFailed(true);
+          setXSyncRoute(true);
+          setBusyAction(undefined);
+          setContextResolved(true);
+          return;
+        }
+        const [windowId, lastJob] = await Promise.all([
+          getCurrentWindowId().catch(() => undefined),
+          readXSyncJob(false).catch(() => undefined),
+        ]);
+        if (disposed) return;
+        setXSyncWindowId(windowId);
+        setXSyncLastJob(lastJob);
+        setXSyncRoute(true);
+        setBusyAction(undefined);
+        setContextResolved(true);
+        return;
       }
+
+      if (surface === 'sidepanel') {
+        try {
+          await requestXSyncSecurityBootstrap();
+        } catch {
+          if (disposed) return;
+          if (exactXBookmarks) {
+            setXSyncSecurityFailed(true);
+            setXSyncRoute(true);
+            setBusyAction(undefined);
+            setContextResolved(true);
+            return;
+          }
+          throw new Error(X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE);
+        }
+        const activeJob = await readXSyncJob(true).catch(() => undefined);
+        if (disposed) return;
+        if (activeJob || exactXBookmarks) {
+          setXSyncLastJob(activeJob);
+          setXSyncRoute(true);
+          setBusyAction(undefined);
+          setContextResolved(true);
+          return;
+        }
+        const preferredPage = await takePreferredPage();
+        if (disposed) return;
+        if (preferredPage) setPage(preferredPage);
+        await loadState();
+      } else {
+        await loadSummary();
+      }
+      if (!disposed) setContextResolved(true);
+    })().catch((error) => {
+      if (disposed) return;
+      showError(error);
+      setBusyAction(undefined);
+      setContextResolved(true);
     });
+
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (!chrome.storage?.onChanged) {
+    if (!chrome.storage?.onChanged || xSyncRoute) {
       return undefined;
     }
 
@@ -859,7 +1157,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
         'exportManifests',
         'lastMoveRecords',
         'onboarded',
-        'pendingCapture',
         'settings',
         'urlHealthRecords',
       ]);
@@ -876,24 +1173,36 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
-  }, [forcePopupWorkspace, surface]);
-
-  useEffect(() => {
-    const pendingCount = state?.pendingCaptures?.length ?? 0;
-    const previousCount = previousPendingCaptureCountRef.current;
-    if (previousCount !== undefined && pendingCount > previousCount) {
-      const latestCapture = [...(state?.pendingCaptures ?? [])].sort(
-        (a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt),
-      )[0];
-      setFocusedCaptureId(latestCapture?.id ?? '');
-      setPage('home');
-      setForcePopupWorkspace(true);
-      toast({ kind: 'success', message: '内容已提取到 ShuHai，确认后写入 Vault。' });
-    }
-    previousPendingCaptureCountRef.current = pendingCount;
-  }, [state?.pendingCaptures?.length, toast]);
+  }, [forcePopupWorkspace, surface, xSyncRoute]);
 
   const createPlan = async (mode: ClassificationMode) => {
+    let ai: { provider: AiProviderType; confirmed: true } | undefined;
+    const activeProvider = settings.aiProviders.find(
+      (provider) =>
+        provider.id === settings.activeProviderId && provider.enabled && provider.hasApiKey,
+    );
+    if (settings.useAi && activeProvider) {
+      const candidateInspection = inspectAiClassificationCandidates(bookmarks, settings, {
+        mode,
+        folders,
+      });
+      if (candidateInspection.errorCode === 'request_invalid') {
+        toast({
+          kind: 'info',
+          message: 'AI 目标目录超过安全上限，本次改用纯本地规则。',
+        });
+      }
+      const consent = await requestAiClassificationConsent(
+        activeProvider,
+        candidateInspection.count,
+        (message) => window.confirm(message),
+        requestOptionalOrigin,
+      );
+      ai = consent.ai;
+      if (consent.permissionDenied) {
+        toast({ kind: 'info', message: '未获得 AI 服务权限，本次改用纯本地规则。' });
+      }
+    }
     setBusyAction('plan');
     setNotice(undefined);
     setPage('organize');
@@ -908,7 +1217,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     });
     setStatus(mode === 'full' ? '正在重新审视全部书签...' : '正在生成整理建议...');
     try {
-      const nextPlan = await createPlanWithProgress(mode);
+      const nextPlan = await createPlanWithProgress(mode, ai);
       setPlan(nextPlan);
       setOrganizeMode('plan');
       setStatus(`生成 ${nextPlan.moves.length} 条移动建议`);
@@ -920,27 +1229,92 @@ function AppContent({ surface = 'popup' }: AppProps) {
             : '没有生成移动建议，可以切换整理模式后重试。',
       });
     } catch (planError) {
-      showError(planError);
+      if (
+        planError &&
+        typeof planError === 'object' &&
+        (planError as { errorCode?: string }).errorCode === 'classification_cancelled'
+      ) {
+        setNotice({ kind: 'warning', message: '已取消本次书签分析，未生成或应用整理建议。' });
+        setStatus('已取消书签分析');
+      } else {
+        showError(planError);
+      }
     } finally {
       classificationPortRef.current?.disconnect();
       classificationPortRef.current = undefined;
+      classificationRequestIdRef.current = undefined;
+      classificationCancelRequestIdRef.current = undefined;
       setClassificationProgress(undefined);
       setBusyAction(undefined);
     }
   };
 
-  const createPlanWithProgress = (mode: ClassificationMode): Promise<ClassificationPlan> =>
+  const createPlanWithProgress = (
+    mode: ClassificationMode,
+    ai?: { provider: AiProviderType; confirmed: true },
+  ): Promise<ClassificationPlan> =>
     new Promise((resolve, reject) => {
       if (!chrome.runtime.connect) {
-        void sendMessage<ClassificationPlan>({ type: 'plan:create', mode }).then(resolve, reject);
+        void sendMessage({ type: 'plan:create', mode, ...(ai ? { ai } : {}) }).then(
+          resolve,
+          reject,
+        );
         return;
       }
 
+      const randomId = globalThis.crypto?.randomUUID?.();
+      if (!randomId) {
+        reject(new Error('无法创建安全的分类请求'));
+        return;
+      }
       const port = chrome.runtime.connect({ name: 'classify' });
+      const requestId = `classify:${randomId}`;
       let settled = false;
       classificationPortRef.current = port;
+      classificationRequestIdRef.current = requestId;
 
-      port.onMessage.addListener((message: ClassificationPortMessage) => {
+      const rejectInvalidOutput = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        port.disconnect();
+        const error = new Error('分类任务返回了无法验证的响应') as Error & {
+          errorCode?: string;
+        };
+        error.errorCode = 'response_invalid';
+        reject(error);
+      };
+
+      port.onMessage.addListener((rawMessage: unknown) => {
+        let message;
+        try {
+          message = parseClassificationPortMessage(rawMessage);
+        } catch {
+          rejectInvalidOutput();
+          return;
+        }
+
+        const disposition = classificationMessageDisposition(
+          message,
+          requestId,
+          classificationCancelRequestIdRef.current,
+        );
+        if (disposition === 'invalid') {
+          rejectInvalidOutput();
+          return;
+        }
+        if (disposition === 'cancelled') {
+          settled = true;
+          port.disconnect();
+          const error = new Error('Classification cancelled') as Error & {
+            errorCode?: string;
+          };
+          error.errorCode = 'classification_cancelled';
+          reject(error);
+          return;
+        }
+
         if (message.type === 'progress') {
           setClassificationProgress(message.progress);
           setStatus(
@@ -952,10 +1326,12 @@ function AppContent({ surface = 'popup' }: AppProps) {
         if (message.type === 'complete') {
           settled = true;
           if (message.cancelled) {
-            setNotice({
-              kind: 'warning',
-              message: `已取消，基于已分析的 ${message.progress.done} 个书签生成部分建议。`,
-            });
+            const error = new Error('Classification cancelled') as Error & {
+              errorCode?: string;
+            };
+            error.errorCode = 'classification_cancelled';
+            reject(error);
+            return;
           }
           resolve(message.plan);
           return;
@@ -970,102 +1346,35 @@ function AppContent({ surface = 'popup' }: AppProps) {
       });
 
       port.onDisconnect.addListener(() => {
-        if (!settled && chrome.runtime.lastError?.message) {
-          reject(new Error(chrome.runtime.lastError.message));
+        if (!settled) {
+          settled = true;
+          reject(new Error(chrome.runtime.lastError?.message ?? '分类任务连接意外中断'));
         }
       });
 
-      port.postMessage({ type: 'plan:create', mode } satisfies ClassificationPortRequest);
+      port.postMessage({
+        type: 'plan:create',
+        requestId,
+        mode,
+        ...(ai ? { ai } : {}),
+      } satisfies ClassificationPortRequest);
     });
 
   const cancelClassification = () => {
-    classificationPortRef.current?.postMessage({
-      type: 'cancel',
-    } satisfies ClassificationPortRequest);
-    setStatus('正在取消，本批次结束后会生成部分建议...');
-  };
-
-  const startHealthCheck = async () => {
-    setNotice(undefined);
-    setUrlHealthProgress(undefined);
-    setPage('health');
-
-    try {
-      const granted = await requestHealthCheckPermission();
-      if (!granted) {
-        setNotice({
-          kind: 'warning',
-          message: '检查失效链接需要临时访问书签中的 http/https 地址，未授权时不会发起检测。',
-        });
-        return;
-      }
-
-      if (!chrome.runtime.connect) {
-        throw new Error('当前扩展环境不支持长任务连接');
-      }
-
-      healthPortRef.current?.disconnect();
-      const port = chrome.runtime.connect({ name: 'health' });
-      let settled = false;
-      healthPortRef.current = port;
-      setHealthChecking(true);
-      setStatus('正在检查链接...');
-
-      port.onMessage.addListener((message: UrlHealthPortMessage) => {
-        if (message.type === 'progress') {
-          setUrlHealthProgress(message.progress);
-          setHealthRecords(message.records);
-          setStatus(`链接检查 ${message.progress.done}/${message.progress.total}`);
-          return;
-        }
-
-        if (message.type === 'complete') {
-          settled = true;
-          setUrlHealthProgress(message.progress);
-          setHealthRecords(message.records);
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-          void loadState();
-          setNotice({
-            kind:
-              message.progress.summary.dead + message.progress.summary.error > 0
-                ? 'warning'
-                : 'success',
-            message: message.cancelled
-              ? `已暂停：本次已保留 ${message.progress.done} 条检查结果。`
-              : `检查完成：死链 ${message.progress.summary.dead}，错误 ${message.progress.summary.error}，重定向 ${message.progress.summary.redirected}`,
-          });
-          setStatus(message.cancelled ? '链接检查已暂停' : '链接检查完成');
-          return;
-        }
-
-        if (message.type === 'error') {
-          settled = true;
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-          const error = new Error(message.error) as Error & { errorCode?: string };
-          error.errorCode = message.errorCode;
-          showError(error);
-        }
-      });
-
-      port.onDisconnect.addListener(() => {
-        if (!settled) {
-          setHealthChecking(false);
-          healthPortRef.current = undefined;
-        }
-      });
-
-      port.postMessage({ type: 'health:check' } satisfies UrlHealthPortRequest);
-    } catch (healthError) {
-      setHealthChecking(false);
-      showError(healthError);
+    const port = classificationPortRef.current;
+    const targetRequestId = classificationRequestIdRef.current;
+    const randomId = globalThis.crypto?.randomUUID?.();
+    if (!port || !targetRequestId || !randomId) {
+      return;
     }
-  };
-
-  const cancelHealthCheck = () => {
-    healthPortRef.current?.postMessage({ type: 'pause' } satisfies UrlHealthPortRequest);
-    setStatus('正在暂停链接检查，已完成结果会保留...');
+    const requestId = `cancel:${randomId}`;
+    classificationCancelRequestIdRef.current = requestId;
+    port.postMessage({
+      type: 'cancel',
+      requestId,
+      targetRequestId,
+    } satisfies ClassificationPortRequest);
+    setStatus('正在安全取消本次书签分析...');
   };
 
   const applyPlan = async () => {
@@ -1073,21 +1382,57 @@ function AppContent({ surface = 'popup' }: AppProps) {
       return;
     }
 
+    const selectedMoves = plan.moves.filter((move) => move.selected);
+    if (selectedMoves.length === 0) {
+      return;
+    }
+
     setBusyAction('apply');
     setNotice(undefined);
-    setStatus('正在备份并移动书签...');
+    setStatus('正在逐项记录并移动书签...');
     try {
-      const result = await sendMessage<{ moved: number; failed: unknown[] }>({
-        type: 'plan:apply',
-        plan,
-        selectedMoveIds: selectedMoveIds(plan),
+      const { operation } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:move',
+        requestId: createOperationRequestId(),
+        moves: selectedMoves.map((move) => ({
+          bookmarkId: move.bookmarkId,
+          targetFolder: move.targetFolder,
+        })),
       });
-      setStatus(`已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个`);
+      const targetFolders = new Set(selectedMoves.map((move) => move.targetFolder));
+      const failedCount = operation.summary.failed + operation.summary.executionConflicts;
+      setStatus(
+        `整理结果：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}`,
+      );
       toast({
-        kind: result.failed.length > 0 ? 'info' : 'success',
-        message: `已移动 ${result.moved} 个书签，失败 ${result.failed.length} 个。`,
+        kind: operation.status === 'complete' ? 'success' : 'info',
+        message:
+          operation.status === 'complete'
+            ? `已移动 ${operation.summary.succeeded} 个书签。`
+            : `整理部分完成：成功 ${operation.summary.succeeded}，失败或冲突 ${failedCount}，跳过 ${operation.summary.skipped}。`,
+        description:
+          operation.summary.succeeded > 0
+            ? '成功项已记录，可使用“撤销上次整理”安全恢复。'
+            : undefined,
       });
-      setLastAppliedMoveCount(result.moved);
+      if (operation.summary.succeeded > 0) {
+        await addActivityEntry({
+          type: 'classify_apply',
+          summary: summarizeClassifyApply(operation.summary.succeeded, targetFolders.size),
+          details: selectedMoves
+            .filter((move) =>
+              operation.items.some(
+                (item) =>
+                  item.bookmarkId === move.bookmarkId && item.executionStatus === 'succeeded',
+              ),
+            )
+            .map((move) => ({
+              label: move.bookmarkTitle,
+              meta: `${move.currentFolder || '根目录'} → ${move.targetFolder}`,
+            })),
+        }).catch(() => undefined);
+      }
+      setLastAppliedMoveCount(operation.summary.succeeded);
       setPlan(undefined);
       setPage('organize');
       setOrganizeMode('browse');
@@ -1101,13 +1446,49 @@ function AppContent({ surface = 'popup' }: AppProps) {
   };
 
   const undoLast = async () => {
+    const operation = bookmarkOperations.find(
+      (candidate) =>
+        candidate.type === 'move_bookmarks' &&
+        (candidate.status === 'complete' ||
+          candidate.status === 'partial' ||
+          candidate.status === 'restore_partial'),
+    );
+    if (!operation) {
+      return;
+    }
+
     setBusyAction('undo');
     setNotice(undefined);
     setStatus('正在撤销上次整理...');
     try {
-      const result = await sendMessage<{ undone: number }>({ type: 'plan:undoLast' });
-      setStatus(`已撤销 ${result.undone} 个移动操作`);
-      toast({ kind: 'success', message: `已撤销 ${result.undone} 个移动操作。` });
+      const { operation: restored } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:restore',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      setStatus(
+        `恢复结果：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}`,
+      );
+      toast({
+        kind: restored.status === 'restored' ? 'success' : 'info',
+        message:
+          restored.status === 'restored'
+            ? `已恢复 ${restored.summary.restored} 个书签。`
+            : `恢复部分完成：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}。`,
+        description:
+          restored.summary.restoreConflicts > 0
+            ? '冲突项保持当前状态，没有覆盖你之后的修改。'
+            : undefined,
+      });
+      if (restored.summary.restored > 0) {
+        await addActivityEntry({
+          type: 'classify_undo',
+          summary: summarizeClassifyUndo(restored.summary.restored),
+          details: restored.items
+            .filter((item) => item.restoreStatus === 'restored')
+            .map((item) => ({ label: item.title, meta: '回到原位置' })),
+        }).catch(() => undefined);
+      }
       await loadState();
     } catch (undoError) {
       showError(undoError);
@@ -1120,7 +1501,7 @@ function AppContent({ surface = 'popup' }: AppProps) {
     setBusyAction('settings');
     setNotice(undefined);
     try {
-      const saved = await sendMessage<AppSettings>({ type: 'settings:set', settings });
+      const saved = await sendMessage({ type: 'settings:set', settings });
       setState((current) =>
         current
           ? {
@@ -1139,182 +1520,163 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
-  const testAiProvider = async (provider: AiProviderConfig): Promise<AiProviderTestResult> =>
-    sendMessage<AiProviderTestResult>({ type: 'ai:testConnection', provider });
+  const setAiProviderSecret = async (
+    provider: AiProviderType,
+    apiKey: string,
+  ): Promise<AppSettings> => sendMessage({ type: 'ai:secret:set', provider, apiKey });
 
-  const clearPendingCapture = async () => {
-    await sendMessage<{ cleared: boolean }>({ type: 'capture:clearPending' });
-    await loadState();
+  const clearAiProviderSecret = async (provider: AiProviderType): Promise<AppSettings> =>
+    sendMessage({ type: 'ai:secret:clear', provider, confirmed: true });
+
+  const discardLegacyAi = async (): Promise<AppSettings> =>
+    sendMessage({ type: 'ai:legacy:discard', confirmed: true });
+
+  const testAiProvider = async (provider: AiProviderType): Promise<AiProviderTestResult> =>
+    sendMessage({ type: 'ai:testConnection', provider });
+
+  const inspectLegacyPending = async (): Promise<LegacyPendingSummary> =>
+    sendMessage({
+      type: 'legacyPending:inspect',
+      requestId: createOperationRequestId(),
+    });
+
+  const clearLegacyPending = async (): Promise<void> => {
+    await sendMessage({
+      type: 'legacyPending:clear',
+      requestId: createOperationRequestId(),
+      confirmed: true,
+    });
   };
 
-  const captureCurrentContent = async (source: InlineSaveSource) => {
-    const request: ExtensionRequest =
-      source === 'article'
-        ? { type: 'capture:currentArticle' }
-        : { type: 'capture:currentSocial', source };
-    const result = await sendMessage<{ capture: CapturedContent }>(request);
-    setFocusedCaptureId(result.capture.id);
-    await loadState();
-
-    return result.capture;
-  };
-
-  const captureCurrentSocial = async (source: 'twitter' | 'weibo') => captureCurrentContent(source);
-
-  const removePendingCapture = async (id: string) => {
-    await sendMessage<{ removed: boolean }>({ type: 'capture:removePending', id });
-    await loadState();
+  const saveCurrentX = async (): Promise<void> => {
+    setBusyAction('operation');
+    setNotice(undefined);
+    try {
+      const result = await sendMessage({
+        type: 'xSingle:start',
+        requestId: createOperationRequestId(),
+      });
+      const [job, windowId] = await Promise.all([
+        readXSyncJob(false).catch(() => undefined),
+        getCurrentWindowId().catch(() => undefined),
+      ]);
+      setXSyncLastJob(job);
+      setXSyncWindowId(windowId);
+      setXSyncRoute(true);
+      setStatus(
+        result.noWriteCandidate
+          ? '这条 X 内容已存在，没有创建写入候选。'
+          : 'X 内容已进入复核，确认后才能写入 Vault。',
+      );
+      toast({
+        kind: result.noWriteCandidate ? 'info' : 'success',
+        message: result.noWriteCandidate ? '内容已存在，没有重复写入。' : '内容已进入安全复核。',
+      });
+    } catch (error) {
+      showError(error);
+    } finally {
+      setBusyAction(undefined);
+    }
   };
 
   const clearHealthRecords = async () => {
-    await sendMessage<{ cleared: boolean }>({ type: 'health:clearRecords' });
-    setUrlHealthProgress(undefined);
+    await sendMessage({ type: 'health:clearRecords' });
     await loadState();
   };
 
-  const deleteBookmarksFromHealth = async (records: UrlHealthRecord[]) => {
-    if (records.length === 0) {
+  const restoreBookmarkOperation = async (operation: BookmarkOperation) => {
+    const restorableCount = operation.items.filter(
+      (item) =>
+        item.executionStatus === 'succeeded' &&
+        item.restoreStatus !== 'restored' &&
+        item.restoreStatus !== 'accepted_current',
+    ).length;
+    if (
+      restorableCount === 0 ||
+      !window.confirm(
+        `恢复这次操作中 ${restorableCount} 个成功变更吗？\n\n如果书签后来被修改，ShuHai 会保留当前状态并标记冲突。`,
+      )
+    ) {
       return;
     }
 
-    const confirmed = window.confirm(
-      `确定批量删除 ${records.length} 个 Chrome 书签吗？\n\n删除前会逐条创建备份。`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      for (const record of records) {
-        await sendMessage<{ deleted: boolean; backupKey: string }>({
-          type: 'bookmark:delete',
-          id: record.bookmarkId,
-        });
-      }
-      await addActivityEntry({
-        type: 'health_delete',
-        summary: summarizeHealthDelete(records.length),
-        details: records.map((record) => ({
-          label: record.bookmarkTitle,
-          meta: record.bookmarkUrl,
-        })),
-      });
-      toast({ kind: 'success', message: `已删除 ${records.length} 个书签，并已创建备份。` });
-      await loadState();
-    } catch (deleteError) {
-      showError(deleteError);
-    }
-  };
-
-  const retryHealthRecord = async (record: UrlHealthRecord) => {
+    setBusyAction('operation');
     setNotice(undefined);
     try {
-      const granted = await requestHealthCheckPermission();
-      if (!granted) {
-        setNotice({
-          kind: 'warning',
-          message: '重试检查需要临时访问该书签地址，未授权时不会发起检测。',
-        });
-        return;
-      }
-
-      setBusyAction('health');
-      setStatus(`正在重新检查：${record.bookmarkTitle}`);
-      const result = await sendMessage<{ record: UrlHealthRecord; records: UrlHealthRecord[] }>({
-        type: 'health:retryOne',
-        bookmarkId: record.bookmarkId,
+      const { operation: restored } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:restore',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
       });
-      setHealthRecords(result.records);
       toast({
-        kind: result.record.status === 'alive' ? 'success' : 'info',
-        message: `已重新检查：${healthStatusLabel(result.record.status)}。`,
+        kind: restored.status === 'restored' ? 'success' : 'info',
+        message:
+          restored.status === 'restored'
+            ? `已恢复 ${restored.summary.restored} 个书签。`
+            : `恢复部分完成：成功 ${restored.summary.restored}，失败 ${restored.summary.restoreFailed}，冲突 ${restored.summary.restoreConflicts}。`,
+        description:
+          restored.summary.restoreConflicts > 0
+            ? '冲突项保持当前状态，没有覆盖后续修改。'
+            : undefined,
       });
-      setStatus(`已重新检查：${record.bookmarkTitle}`);
-    } catch (retryError) {
-      showError(retryError);
+      await loadState();
+    } catch (restoreError) {
+      showError(restoreError);
     } finally {
       setBusyAction(undefined);
     }
   };
 
-  const updateBookmarkUrlFromHealth = async (record: UrlHealthRecord, url: string) => {
-    const confirmed = window.confirm(
-      `确定替换这个 Chrome 书签的 URL 吗？\n\n${record.bookmarkTitle}\n${url}`,
-    );
-
-    if (!confirmed) {
+  const acceptBookmarkOperationCurrentState = async (operation: BookmarkOperation) => {
+    const unresolvedCount = operation.items.filter(
+      (item) => item.restoreStatus === 'conflict' || item.restoreStatus === 'restore_failed',
+    ).length;
+    if (
+      unresolvedCount === 0 ||
+      !window.confirm(
+        `接受 ${unresolvedCount} 个书签的当前状态吗？\n\n接受后 ShuHai 不会再次尝试覆盖这些项目。`,
+      )
+    ) {
       return;
     }
 
-    try {
-      await sendMessage<{ updated: boolean; backupKey: string }>({
-        type: 'bookmark:updateUrl',
-        id: record.bookmarkId,
-        url,
-      });
-      await addActivityEntry({
-        type: 'health_update',
-        summary: summarizeHealthUpdate(1),
-        details: [{ label: record.bookmarkTitle, meta: `${record.bookmarkUrl} → ${url}` }],
-      });
-      toast({ kind: 'success', message: '已更新书签链接，并已创建备份。' });
-      await loadState();
-    } catch (updateError) {
-      showError(updateError);
-    }
-  };
-
-  const updateBookmarkUrlsFromHealth = async (records: UrlHealthRecord[]) => {
-    const updatableRecords = records.filter(
-      (record) => record.status === 'redirected' && record.finalUrl,
-    );
-    if (updatableRecords.length === 0) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `确定批量更新 ${updatableRecords.length} 个重定向书签吗？\n\n会把它们替换为检测到的跳转目标，更新前会逐条创建备份。`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    setBusyAction('health');
+    setBusyAction('operation');
     setNotice(undefined);
     try {
-      for (const [index, record] of updatableRecords.entries()) {
-        setStatus(`正在更新重定向 ${index + 1}/${updatableRecords.length}`);
-        await sendMessage<{ updated: boolean; backupKey: string }>({
-          type: 'bookmark:updateUrl',
-          id: record.bookmarkId,
-          url: record.finalUrl ?? record.bookmarkUrl,
-        });
-      }
-      await addActivityEntry({
-        type: 'health_update',
-        summary: summarizeHealthUpdate(updatableRecords.length),
-        details: updatableRecords.map((record) => ({
-          label: record.bookmarkTitle,
-          meta: `${record.bookmarkUrl} → ${record.finalUrl ?? record.bookmarkUrl}`,
-        })),
+      const { operation: resolved } = await sendBookmarkOperation({
+        type: 'bookmarkOperations:acceptCurrent',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
       });
       toast({
         kind: 'success',
-        message: `已更新 ${updatableRecords.length} 个重定向书签，并已创建备份。`,
+        message: `已接受 ${resolved.summary.acceptedCurrent} 个书签的当前状态。`,
       });
       await loadState();
-    } catch (updateError) {
-      showError(updateError);
+    } catch (acceptError) {
+      showError(acceptError);
     } finally {
       setBusyAction(undefined);
+    }
+  };
+
+  const cancelBookmarkOperation = async (operation: BookmarkOperation) => {
+    try {
+      await sendBookmarkOperation({
+        type: 'bookmarkOperations:cancel',
+        requestId: createOperationRequestId(),
+        operationId: operation.id,
+      });
+      setStatus('正在安全停止书签操作...');
+      await loadState();
+    } catch (cancelError) {
+      showError(cancelError);
     }
   };
 
   const completeOnboarding = async () => {
     try {
-      await sendMessage<{ onboarded: boolean }>({ type: 'onboarding:set', onboarded: true });
+      await sendMessage({ type: 'onboarding:set', onboarded: true });
       setState((current) => (current ? { ...current, onboarded: true } : current));
       toast({ kind: 'success', message: '已跳过首次引导。' });
     } catch (onboardingError) {
@@ -1346,6 +1708,44 @@ function AppContent({ surface = 'popup' }: AppProps) {
     }
   };
 
+  const handleOpenXSync = () => {
+    if (!chrome.sidePanel?.open || xSyncWindowId === undefined) {
+      showError(new Error('当前窗口无法打开 X 同步侧边栏'));
+      return;
+    }
+
+    let panelPromise: Promise<void>;
+    try {
+      // This call must stay first in the click handler so Chrome preserves the user gesture.
+      panelPromise = chrome.sidePanel.open({ windowId: xSyncWindowId });
+    } catch (error) {
+      showError(error);
+      return;
+    }
+
+    setXSyncOpening(true);
+    const launchPromise = isActiveXSyncJob(xSyncLastJob)
+      ? Promise.resolve()
+      : (() => {
+          const randomId = globalThis.crypto?.randomUUID?.();
+          if (!randomId) return Promise.reject(new Error('无法创建安全的同步请求'));
+          return sendXSyncPopupMessage({
+            protocol: X_SYNC_PROTOCOL,
+            type: 'launch',
+            requestId: `popup-${randomId}`,
+          }).then(() => undefined);
+        })();
+
+    void Promise.all([panelPromise, launchPromise])
+      .catch(showError)
+      .finally(() => setXSyncOpening(false));
+  };
+
+  const handleOpenSettingsFromX = () => {
+    setXSyncRoute(false);
+    usePopupWorkspace('settings');
+  };
+
   const quickClassifyFromPopup = () => {
     usePopupWorkspace('organize');
     setOrganizeMode('plan');
@@ -1354,7 +1754,6 @@ function AppContent({ surface = 'popup' }: AppProps) {
 
   const quickHealthFromPopup = () => {
     usePopupWorkspace('health');
-    void startHealthCheck();
   };
 
   const useRuleClassification = () => {
@@ -1375,7 +1774,19 @@ function AppContent({ surface = 'popup' }: AppProps) {
   const settings = state?.settings ?? DEFAULT_SETTINGS;
   const bookmarks = state?.bookmarks ?? [];
   const exportBookmarks = plan ? applyPlanFolders(bookmarks, plan) : bookmarks;
-  const canUndo = (state?.lastMoveRecordCount ?? 0) > 0;
+  const canUndo = bookmarkOperations.some(
+    (operation) =>
+      operation.type === 'move_bookmarks' &&
+      (operation.status === 'complete' ||
+        operation.status === 'partial' ||
+        operation.status === 'restore_partial') &&
+      operation.items.some(
+        (item) =>
+          item.executionStatus === 'succeeded' &&
+          item.restoreStatus !== 'restored' &&
+          item.restoreStatus !== 'accepted_current',
+      ),
+  );
   const selectedCount = useMemo(
     () => plan?.moves.filter((move) => move.selected).length ?? 0,
     [plan],
@@ -1438,15 +1849,97 @@ function AppContent({ surface = 'popup' }: AppProps) {
     return () => window.removeEventListener('keydown', listener);
   }, [busy, busyAction, confirmApplyOpen, organizeMode, page, plan, selectedCount, showWorkspace]);
 
+  if (!contextResolved) {
+    return (
+      <main
+        className={`flex ${workspaceClass} items-center justify-center bg-background text-foreground`}
+      >
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          正在识别当前任务
+        </div>
+      </main>
+    );
+  }
+
+  if (xSyncRoute && surface === 'popup') {
+    return (
+      <XSyncPopupLauncher
+        lastJob={xSyncLastJob}
+        onOpen={handleOpenXSync}
+        onOpenSettings={handleOpenSettingsFromX}
+        opening={xSyncOpening}
+        ready={xSyncWindowId !== undefined && !xSyncOpening}
+        securityFailed={xSyncSecurityFailed}
+      />
+    );
+  }
+
+  if (xSyncRoute && surface === 'sidepanel') {
+    return (
+      <main className="flex h-screen flex-col bg-background text-foreground">
+        <header className="px-3 py-3">
+          <div className="flex items-center gap-2">
+            <BrandMark />
+            <div>
+              <h1 className="text-base font-semibold tracking-tight">X 收藏同步</h1>
+              <p className="mt-0.5 text-xs text-muted-foreground">当前任务工作台</p>
+            </div>
+          </div>
+          <Separator className="mt-3" />
+        </header>
+        <div className="min-h-0 flex-1 px-3 pt-2">
+          <XSyncPage />
+        </div>
+      </main>
+    );
+  }
+
+  const recoveryOnlyOperations = bookmarkOperations.filter(
+    (operation) =>
+      operation.type === 'delete_bookmarks' || operation.type === 'update_bookmark_urls',
+  );
+  if (showWorkspace && stateReadFailed) {
+    return (
+      <main className={`flex ${workspaceClass} flex-col bg-background text-foreground`}>
+        <header className="px-3 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <BrandMark />
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight">书签操作恢复</h1>
+              <p className="truncate text-xs text-muted-foreground">
+                主数据读取失败，仅开放独立恢复日志
+              </p>
+            </div>
+          </div>
+          <Separator className="mt-3" />
+        </header>
+        <div className="min-h-0 flex-1 px-3 pb-3 pt-2">
+          <HealthPage
+            historyAvailable={false}
+            onAcceptCurrent={acceptBookmarkOperationCurrentState}
+            onCancelOperation={cancelBookmarkOperation}
+            onClear={clearHealthRecords}
+            onRestoreOperation={restoreBookmarkOperation}
+            operations={recoveryOnlyOperations}
+            records={[]}
+          />
+        </div>
+      </main>
+    );
+  }
+
   if (!showWorkspace) {
     return (
       <>
         <PopupLauncher
           busy={busy}
+          currentTab={currentTabInfo}
           onboardingProgress={onboardingProgress}
           onOpenSidePanel={handleOpenSidePanel}
           onQuickClassify={quickClassifyFromPopup}
           onQuickHealth={quickHealthFromPopup}
+          onSaveCurrentX={saveCurrentX}
           onSkipOnboarding={completeOnboarding}
           onUsePopup={usePopupWorkspace}
           summary={summary}
@@ -1456,14 +1949,10 @@ function AppContent({ surface = 'popup' }: AppProps) {
     );
   }
 
-  const pendingCaptures = state?.pendingCaptures ?? [];
-  const focusedCapture = focusedCaptureId
-    ? pendingCaptures.find((capture) => capture.id === focusedCaptureId)
-    : undefined;
   const pageTitle: Record<PageName, string> = {
     home: 'ShuHai',
     organize: '整理书签',
-    health: '检查失效链接',
+    health: '链接检查历史',
     collection: '待入库',
     activity: '历史记录',
     settings: '设置',
@@ -1474,26 +1963,20 @@ function AppContent({ surface = 'popup' }: AppProps) {
         bookmarkCount={bookmarks.length}
         busy={busy}
         currentTab={currentTabInfo}
-        exportManifests={state?.exportManifests ?? []}
         folderCount={folders.length}
-        initialCapture={focusedCapture}
         onboarded={state?.onboarded ?? false}
         onboardingProgress={onboardingProgress}
-        onCapture={captureCurrentContent}
         onCreatePlan={() => void createPlan(classifyMode)}
         onOpenActivity={() => setPage('activity')}
         onOpenCollection={() => setPage('collection')}
-        onOpenHealth={() => void startHealthCheck()}
+        onOpenHealth={() => setPage('health')}
         onOpenOrganize={() => {
           setPage('organize');
           setOrganizeMode('browse');
         }}
         onOpenSettings={() => setPage('settings')}
-        onRefresh={loadState}
-        onRemovePendingCapture={removePendingCapture}
+        onSaveCurrentX={saveCurrentX}
         onSkipOnboarding={completeOnboarding}
-        pendingCaptures={pendingCaptures}
-        settings={settings}
       />
     ) : page === 'organize' ? (
       <OrganizePage
@@ -1529,28 +2012,21 @@ function AppContent({ surface = 'popup' }: AppProps) {
       />
     ) : page === 'health' ? (
       <HealthPage
-        bookmarks={bookmarks}
-        checking={healthChecking}
-        onCancel={cancelHealthCheck}
+        historyAvailable={Boolean(state)}
+        onAcceptCurrent={acceptBookmarkOperationCurrentState}
+        onCancelOperation={cancelBookmarkOperation}
         onClear={clearHealthRecords}
-        onDeleteMany={deleteBookmarksFromHealth}
-        onRetry={retryHealthRecord}
-        onStart={startHealthCheck}
-        onUpdateManyUrls={updateBookmarkUrlsFromHealth}
-        onUpdateUrl={updateBookmarkUrlFromHealth}
-        progress={urlHealthProgress}
+        onRestoreOperation={restoreBookmarkOperation}
+        operations={recoveryOnlyOperations}
         records={state?.urlHealthRecords ?? []}
       />
     ) : page === 'collection' ? (
       <CollectionPage
+        busy={busy}
+        currentTab={currentTabInfo}
         exportManifests={state?.exportManifests ?? []}
-        onCaptureCurrentSocial={captureCurrentSocial}
-        onClearPendingCapture={clearPendingCapture}
         onOpenSettings={openSettingsFromOnboarding}
-        onRefresh={loadState}
-        onRemovePendingCapture={removePendingCapture}
-        pendingCaptures={pendingCaptures}
-        settings={settings}
+        onSaveCurrentX={saveCurrentX}
       />
     ) : page === 'activity' ? (
       <ActivityPage onBack={() => setPage('home')} settings={settings} />
@@ -1559,9 +2035,14 @@ function AppContent({ surface = 'popup' }: AppProps) {
         backups={backups}
         busy={busy}
         exportManifests={state?.exportManifests ?? []}
+        onClearLegacyPending={clearLegacyPending}
+        onClearProviderSecret={clearAiProviderSecret}
+        onDiscardLegacyAi={discardLegacyAi}
         onDownloadBackup={downloadBackup}
+        onInspectLegacyPending={inspectLegacyPending}
         onOpenActivity={() => setPage('activity')}
         onSave={saveSettings}
+        onSetProviderSecret={setAiProviderSecret}
         onTestProvider={testAiProvider}
         settings={settings}
       />

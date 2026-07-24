@@ -16,7 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "lint": "pnpm -r run lint",
-    "typecheck": "tsc -b packages/shared --force && pnpm -r run typecheck",
+    "typecheck": "pnpm --filter @shuhai/shared exec tsc -b --force && pnpm -r run typecheck",
     "clean": "pnpm -r run clean",
     "prepare": "husky"
   },
@@ -24,7 +24,7 @@
     "@eslint/js": "9.27.0",
     "@playwright/test": "1.60.0",
     "@types/node": "22.15.21",
-    "@vitest/coverage-v8": "3.1.4",
+    "@vitest/coverage-v8": "3.2.6",
     "eslint": "9.27.0",
     "eslint-config-prettier": "10.1.5",
     "globals": "16.1.0",
@@ -33,7 +33,7 @@
     "prettier": "3.5.3",
     "tsx": "4.19.4",
     "typescript-eslint": "8.32.1",
-    "vitest": "3.1.4"
+    "vitest": "3.2.6"
   },
   "dependencies": {
     "openai": "6.38.0"

@@ -1,8 +1,35 @@
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { copyFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
-import { defineConfig, type PluginOption } from 'vite';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { Script } from 'node:vm';
+import { build, defineConfig, type PluginOption } from 'vite';
+
+const CONTENT_SCRIPT_ENTRIES = {
+  article: 'src/content/article.ts',
+  toast: 'src/content/toast.ts',
+  twitter: 'src/content/twitter.ts',
+  weibo: 'src/content/weibo.ts',
+  'x-bookmarks': 'src/content/x-bookmarks.ts',
+} as const;
+
+const VIRTUAL_CONTENT_ENTRY = 'virtual:shuhai-content-entry';
+const RESOLVED_VIRTUAL_CONTENT_ENTRY = `\0${VIRTUAL_CONTENT_ENTRY}`;
+
+export function assertClassicContentScript(code: string, fileName: string): void {
+  if (code.trim().length === 0) {
+    throw new Error(`Content script ${fileName} is empty`);
+  }
+
+  new Script(code, { filename: fileName });
+}
+
+export function finalizeClassicContentScript(code: string, fileName: string): string {
+  assertClassicContentScript(code, fileName);
+  const wrapped = `(() => {\n${code}\n})();\n`;
+  assertClassicContentScript(wrapped, fileName);
+  return wrapped;
+}
 
 function copyExtensionManifest(): PluginOption {
   const root = resolve(__dirname);
@@ -21,59 +48,76 @@ function copyExtensionManifest(): PluginOption {
   };
 }
 
-function wrapContentScripts(): PluginOption {
+function contentEntryPlugin(entryPath: string): PluginOption {
   return {
-    name: 'wrap-content-scripts',
-    generateBundle(_options, bundle) {
-      for (const chunk of Object.values(bundle)) {
-        if (chunk.type !== 'chunk' || !chunk.fileName.startsWith('content/')) {
-          continue;
-        }
-
-        chunk.code = `(() => {\n${chunk.code}\n})();\n`;
+    name: 'resolve-content-entry',
+    resolveId(source) {
+      if (source === VIRTUAL_CONTENT_ENTRY) {
+        return RESOLVED_VIRTUAL_CONTENT_ENTRY;
       }
+
+      return undefined;
+    },
+    load(id) {
+      if (id === RESOLVED_VIRTUAL_CONTENT_ENTRY) {
+        return `import ${JSON.stringify(entryPath)};`;
+      }
+
+      return undefined;
     },
   };
 }
 
-function duplicateContentDiagnostics(): PluginOption {
-  const diagnosticsPath = resolve(__dirname, 'src/utils/extractor-diagnostics.ts');
-  const normalizedDiagnosticsPath = diagnosticsPath.replace(/\\/g, '/');
+function buildClassicContentScripts(): PluginOption {
+  const root = resolve(__dirname);
+  const dist = resolve(root, 'dist');
 
   return {
-    name: 'duplicate-content-diagnostics',
-    enforce: 'pre',
-    resolveId(source, importer) {
-      if (!importer || !source.includes('extractor-diagnostics')) {
-        return undefined;
-      }
-
-      const normalizedImporter = importer.replace(/\\/g, '/');
-      if (!normalizedImporter.includes('/src/content/')) {
-        return undefined;
-      }
-
-      return `${normalizedDiagnosticsPath}?content=${basename(normalizedImporter)}`;
+    name: 'build-classic-content-scripts',
+    apply: 'build',
+    buildStart() {
+      this.addWatchFile(resolve(root, 'src'));
+      this.addWatchFile(resolve(root, '../shared/src'));
     },
-    load(id) {
-      if (!id.startsWith(`${normalizedDiagnosticsPath}?content=`)) {
-        return undefined;
-      }
+    async writeBundle() {
+      for (const [name, source] of Object.entries(CONTENT_SCRIPT_ENTRIES)) {
+        const output = resolve(dist, 'content', `${name}.js`);
 
-      return readFileSync(diagnosticsPath, 'utf8');
+        await build({
+          configFile: false,
+          logLevel: 'silent',
+          root,
+          plugins: [contentEntryPlugin(resolve(root, source))],
+          resolve: {
+            alias: {
+              '@shuhai/shared': resolve(__dirname, '../shared/src/index.ts'),
+            },
+          },
+          build: {
+            emptyOutDir: false,
+            minify: true,
+            outDir: dist,
+            rollupOptions: {
+              input: VIRTUAL_CONTENT_ENTRY,
+              output: {
+                entryFileNames: `content/${name}.js`,
+                format: 'iife',
+                inlineDynamicImports: true,
+              },
+            },
+          },
+        });
+
+        const bundledCode = readFileSync(output, 'utf8');
+        writeFileSync(output, finalizeClassicContentScript(bundledCode, output));
+      }
     },
   };
 }
 
 export default defineConfig({
   root: resolve(__dirname, 'src'),
-  plugins: [
-    react(),
-    tailwindcss(),
-    copyExtensionManifest(),
-    duplicateContentDiagnostics(),
-    wrapContentScripts(),
-  ],
+  plugins: [react(), tailwindcss(), copyExtensionManifest(), buildClassicContentScripts()],
   resolve: {
     alias: {
       '@shuhai/shared': resolve(__dirname, '../shared/src/index.ts'),
@@ -87,10 +131,6 @@ export default defineConfig({
         popup: resolve(__dirname, 'src/popup/index.html'),
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
         'background/service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
-        'content/article': resolve(__dirname, 'src/content/article.ts'),
-        'content/toast': resolve(__dirname, 'src/content/toast.ts'),
-        'content/twitter': resolve(__dirname, 'src/content/twitter.ts'),
-        'content/weibo': resolve(__dirname, 'src/content/weibo.ts'),
       },
       output: {
         assetFileNames: 'assets/[name].[ext]',
