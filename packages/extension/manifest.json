@@ -18,6 +18,10 @@
   "side_panel": {
     "default_path": "sidepanel/index.html"
   },
+  "options_ui": {
+    "page": "options/index.html",
+    "open_in_tab": true
+  },
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"

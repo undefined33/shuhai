@@ -12,6 +12,7 @@ import {
   StructuredInputError,
   UrlHealthRecordSchema,
   cloneBoundedStructuredValue,
+  isOptionsPageRequest,
   makeLegacyError,
   parseBookmarkOperationMessageResponse,
   parseClassificationPortMessage,
@@ -19,6 +20,7 @@ import {
   parseExtensionRequest,
   parseLegacyResponse,
   validateExtensionUiSender,
+  validateOptionsPageSender,
   type ExtensionRequest,
   type StructuredInputLimits,
 } from '../src/shared/extension-messages.js';
@@ -68,6 +70,18 @@ function asciiPayloadAtSerializedBytes(
 
 function settings() {
   return structuredClone(DEFAULT_SETTINGS);
+}
+
+function bookmarkTaskSettings() {
+  const value = settings();
+  return {
+    useAi: value.useAi,
+    activeProviderId: value.activeProviderId,
+    aiProviders: value.aiProviders,
+    aiLegacySummary: value.aiLegacySummary,
+    customRules: value.customRules,
+    defaultClassifyMode: value.defaultClassifyMode,
+  };
 }
 
 function provider() {
@@ -307,7 +321,7 @@ describe('bounded extension message clone', () => {
 
   it.each([
     ['operation response', EXTENSION_MESSAGE_LIMITS.operationResponse],
-    ['legacy state response', EXTENSION_MESSAGE_LIMITS.legacyResponse],
+    ['legacy response', EXTENSION_MESSAGE_LIMITS.legacyResponse],
   ] as const)(
     'enforces the production %s byte budget at the exact limit and limit+1',
     (_label, limits) => {
@@ -495,8 +509,7 @@ describe('bounded extension message clone', () => {
 describe('legacy request and response correlation', () => {
   it.each([
     { type: 'security:getBootstrapStatus' },
-    { type: 'state:get' },
-    { type: 'state:summary' },
+    { type: 'bookmarkTask:getSnapshot' },
     { type: 'operations:getRecent' },
     { type: 'plan:create', mode: 'safe' },
     { type: 'settings:get' },
@@ -510,16 +523,23 @@ describe('legacy request and response correlation', () => {
     { type: 'legacyPending:inspect', requestId: 'legacy-inspect-1' },
     { type: 'legacyPending:clear', requestId: 'legacy-clear-1', confirmed: true },
     { type: 'xSingle:start', requestId: 'x-single-start-1' },
-    { type: 'health:clearRecords' },
-    { type: 'backups:list' },
+    { type: 'health:listRecords' },
+    { type: 'health:clearRecords', confirmed: true },
+    { type: 'backups:listSummaries' },
+    { type: 'backups:get', key: 'backup_1700000000000' },
   ] satisfies unknown[])('accepts the minimal strict request $type', (request) => {
     expect(parseExtensionRequest(request)).toEqual(request);
   });
 
   it('rejects unknown request fields and retired health retry messages', () => {
-    expect(() => parseExtensionRequest({ type: 'state:get', unexpected: true })).toThrow(
-      StructuredInputError,
-    );
+    for (const retired of [
+      { type: 'state:get' },
+      { type: 'state:summary' },
+      { type: 'backups:list' },
+      { type: 'health:clearRecords' },
+    ]) {
+      expect(() => parseExtensionRequest(retired)).toThrow(StructuredInputError);
+    }
     expect(() =>
       parseExtensionRequest({ type: 'health:retryOne', bookmarkId: 'bookmark-1' }),
     ).toThrow(StructuredInputError);
@@ -548,28 +568,11 @@ describe('legacy request and response correlation', () => {
   it.each([
     [{ type: 'security:getBootstrapStatus' }, { ready: true }],
     [
-      { type: 'state:get' },
+      { type: 'bookmarkTask:getSnapshot' },
       {
-        tree: [],
         bookmarks: [],
         folders: [],
-        backups: [],
-        exportManifests: [],
-        urlHealthRecords: [],
-        bookmarkOperations: [],
-        lastMoveRecordCount: 0,
-        onboarded: false,
-        settings: settings(),
-      },
-    ],
-    [
-      { type: 'state:summary' },
-      {
-        bookmarkCount: 0,
-        folderCount: 0,
-        onboarded: false,
-        hasVaultHandle: false,
-        hasAiProvider: false,
+        settings: bookmarkTaskSettings(),
       },
     ],
     [{ type: 'operations:getRecent' }, { operations: [] }],
@@ -625,8 +628,10 @@ describe('legacy request and response correlation', () => {
         noWriteCandidate: false,
       },
     ],
-    [{ type: 'health:clearRecords' }, { cleared: true }],
-    [{ type: 'backups:list' }, []],
+    [{ type: 'health:listRecords' }, { records: [] }],
+    [{ type: 'health:clearRecords', confirmed: true }, { cleared: true }],
+    [{ type: 'backups:listSummaries' }, { backups: [] }],
+    [{ type: 'backups:get', key: 'backup_1700000000000' }, { backup: null }],
   ] satisfies Array<[unknown, unknown]>)(
     'accepts the request-correlated success response for $0.type',
     (requestValue, data) => {
@@ -660,7 +665,7 @@ describe('legacy request and response correlation', () => {
     const securityRequest = parseExtensionRequest({
       type: 'security:getBootstrapStatus',
     });
-    const stateRequest = parseExtensionRequest({ type: 'state:get' });
+    const stateRequest = parseExtensionRequest({ type: 'operations:getRecent' });
 
     expect(
       parseLegacyResponse(securityRequest, makeLegacyError('security_bootstrap_failed')),
@@ -853,6 +858,60 @@ describe('trusted extension sender validation', () => {
 
     expect(validateExtensionUiSender(value)).toBeUndefined();
     expect(idGetter).not.toHaveBeenCalled();
+  });
+
+  it('accepts only the exact Options page identity', () => {
+    const options = sender('popup', { url: `${EXTENSION_ORIGIN}/options/index.html` });
+    expect(validateOptionsPageSender(options)).toEqual({ surface: 'options' });
+    expect(validateOptionsPageSender(sender('popup'))).toBeUndefined();
+    expect(
+      validateOptionsPageSender(
+        sender('popup', { url: `${EXTENSION_ORIGIN}/options/index.html?q=1` }),
+      ),
+    ).toBeUndefined();
+    expect(
+      validateOptionsPageSender(
+        sender('popup', { url: `${EXTENSION_ORIGIN}/options/index.html#settings` }),
+      ),
+    ).toBeUndefined();
+    expect(
+      validateOptionsPageSender(
+        sender('popup', {
+          url: `${EXTENSION_ORIGIN}/options/index.html`,
+          tab: { id: 1 } as chrome.tabs.Tab,
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('exposes the exact Options request allowlist', () => {
+    for (const request of [
+      { type: 'security:getBootstrapStatus' },
+      { type: 'settings:get' },
+      { type: 'settings:set', settings: settings() },
+      { type: 'ai:secret:set', provider: provider(), apiKey: 'private-key' },
+      { type: 'ai:secret:clear', provider: provider(), confirmed: true },
+      { type: 'ai:legacy:discard', confirmed: true },
+      { type: 'ai:testConnection', provider: provider() },
+      { type: 'legacyPending:inspect', requestId: 'legacy-inspect-1' },
+      { type: 'legacyPending:clear', requestId: 'legacy-clear-1', confirmed: true },
+      { type: 'backups:listSummaries' },
+      { type: 'backups:get', key: 'backup_1700000000000' },
+      { type: 'health:listRecords' },
+      { type: 'health:clearRecords', confirmed: true },
+    ]) {
+      expect(isOptionsPageRequest(parseExtensionRequest(request))).toBe(true);
+    }
+    for (const request of [
+      { type: 'bookmarkTask:getSnapshot' },
+      { type: 'operations:getRecent' },
+      { type: 'plan:create', mode: 'safe' },
+      { type: 'onboarding:getProgress' },
+      { type: 'onboarding:set', onboarded: true },
+      { type: 'xSingle:start', requestId: 'x-single-start-1' },
+    ]) {
+      expect(isOptionsPageRequest(parseExtensionRequest(request))).toBe(false);
+    }
   });
 });
 

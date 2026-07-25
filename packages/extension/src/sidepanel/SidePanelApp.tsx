@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpenCheck, BookmarkCheck, RefreshCw } from 'lucide-react';
+import { BookOpenCheck, BookmarkCheck, RefreshCw, Settings } from 'lucide-react';
 
 import { Button } from '../components/ui/button.js';
 import { ActionBar } from '../shell/ActionBar.js';
@@ -24,8 +24,7 @@ import {
 } from './sidepanel-route.js';
 
 const LazyXSyncPage = lazy(() => import('../popup/pages/XSyncPage.js'));
-const LazyLegacyApp = lazy(() => import('../popup/App.js'));
-const PREFERRED_VIEW_KEY = 'shuhaiPreferredView';
+const LazyBookmarkTaskApp = lazy(() => import('../tasks/bookmarks/BookmarkTaskApp.js'));
 
 type SidePanelState = 'loading' | 'error' | SidePanelRoute;
 
@@ -98,18 +97,6 @@ async function acknowledgeLaunch(windowId: number, intentId: string): Promise<vo
   if (!response.ok) {
     throw new Error(response.errorCode);
   }
-}
-
-function preferOrganizeWorkspace(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.set({ [PREFERRED_VIEW_KEY]: 'organize' }, () => {
-      if (chrome.runtime.lastError) {
-        reject(new Error('storage_unavailable'));
-        return;
-      }
-      resolve();
-    });
-  });
 }
 
 export function SidePanelIdle({
@@ -194,9 +181,6 @@ export default function SidePanelApp() {
       if ('intentId' in next && next.intentId) {
         await acknowledgeLaunch(windowId, next.intentId);
       }
-      if (next.kind === 'bookmarks-transition') {
-        await preferOrganizeWorkspace();
-      }
       commitState(next);
     } catch {
       commitState('error');
@@ -257,23 +241,46 @@ export default function SidePanelApp() {
   }, [commitState, refresh]);
 
   const openBookmarks = () => {
-    void preferOrganizeWorkspace()
-      .then(() => commitState({ kind: 'bookmarks-transition', intentId: 'local-transition' }))
-      .catch(() => commitState('error'));
+    commitState({ kind: 'bookmarks-transition', intentId: 'local-transition' });
   };
 
   if (typeof state !== 'string' && state.kind === 'bookmarks-transition') {
     return (
-      <Suspense fallback={<SurfaceLoading label="正在打开书签工作区" />}>
-        <LazyLegacyApp surface="sidepanel" />
-      </Suspense>
+      <main className="flex h-screen min-h-0 flex-col px-4 pb-4 pt-4 sm:px-5">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border pb-3">
+          <Brand subtitle="当前任务工作区" />
+          <Button
+            aria-label="打开设置"
+            onClick={() => void chrome.runtime.openOptionsPage()}
+            size="icon"
+            title="打开设置"
+            variant="ghost"
+          >
+            <Settings aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 pt-4">
+          <Suspense fallback={<SurfaceLoading label="正在打开书签工作区" />}>
+            <LazyBookmarkTaskApp onExit={() => commitState({ kind: 'idle' })} />
+          </Suspense>
+        </div>
+      </main>
     );
   }
 
   return (
     <main className="flex h-screen min-h-0 flex-col px-4 pb-4 pt-4 sm:px-5">
-      <div className="shrink-0 border-b border-border pb-3">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border pb-3">
         <Brand subtitle="当前任务工作区" />
+        <Button
+          aria-label="打开设置"
+          onClick={() => void chrome.runtime.openOptionsPage()}
+          size="icon"
+          title="打开设置"
+          variant="ghost"
+        >
+          <Settings aria-hidden="true" className="h-4 w-4" />
+        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pt-4">
         {state === 'loading' ? <SurfaceLoading /> : null}

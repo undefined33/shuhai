@@ -1,9 +1,9 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-07-24
-> 当前状态：Goal 041/042/043/045A/045B/045C/046A 均已 `DONE/PASS`；当前没有 `READY` 或 `IN_PROGRESS` Goal
-> 执行规则：046B/046C 必须分别完成合同和独立审查后再串行推进。
-> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 的主壳部分已由 Goal 046A 完成。
+> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B 均已 `DONE/PASS`；046C 仍为 `PLANNED`，须先完成独立合同审查
+> 执行规则：046C 只有在合同独立审查 `PASS` 并正式转入 `READY/IN_PROGRESS` 后才能执行隔离 E2E。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B，视觉与可用性验收属于 046C。
 
 ## 当前编排状态
 
@@ -18,9 +18,10 @@
 | Goal 045C | `DONE`                      | 内容保存与 AI 隐私收口                   | 独立 review PASS，P0/P1/P2 为 0 |
 | Goal 044  | `PLANNED`                   | 微博研究门禁                             | 需要新研究合同和显式状态推进    |
 | Goal 046A | `DONE`                      | 主壳拆分、上下文 Popup 与 bundle 边界    | 独立实现 review `PASS`          |
-| 046B/046C | `PLANNED`                   | 两条旅程、Options 与隔离 E2E             | 前一 Goal `DONE/PASS` 后建合同  |
+| Goal 046B | `DONE`                      | 两条旅程、独立 Options 与旧入口收缩      | 独立实现 review `PASS`          |
+| Goal 046C | `PLANNED`                   | 隔离 E2E、可用性与视觉验收               | 独立合同 review                 |
 | Goal 047  | `RESEARCH_GATE`             | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 046A 已完成，正在为 046B 建立独立合同    | 046B 合同 review `PASS`         |
+| workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 046B 已完成，等待 046C 合同门禁          | 046C 独立合同 review            |
 
 ## v4 当前队列
 
@@ -35,8 +36,8 @@
 | [045B](./goal-045b-extension-trust-boundary.md)        | `DONE`                    | 消息、storage、权限与 URL 体检退役       | mock-only + 独立 review PASS   |
 | [045C](./goal-045c-content-save-ai-privacy.md)         | `DONE`                    | 内容保存链路和 AI 隐私边界               | mock-only + 独立 review PASS   |
 | [046A](./goal-046a-surface-shell-and-popup.md)         | `DONE`                    | Popup/Side Panel 主壳与按需加载          | 独立实现 review PASS           |
-| 046B                                                   | `PLANNED`                 | 两条用户旅程与独立 Options               | 046A DONE/PASS                 |
-| 046C                                                   | `PLANNED`                 | 隔离 E2E、可用性与视觉验收               | 046B DONE/PASS                 |
+| [046B](./goal-046b-two-journeys-and-options.md)        | `DONE`                    | 两条用户旅程与独立 Options               | 独立实现 review PASS           |
+| 046C                                                   | `PLANNED`                 | 隔离 E2E、可用性与视觉验收               | 独立合同 review                |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                     | 两周真实使用数据               |
 
 032-040 原队列不再按旧依赖链自动推进。Goal 033-040 的安全、持久化、提取和 UI 结论没有删除，但必须在 042-046 中按 v4 用户旅程重新写范围，不得直接沿用旧编号实施。

@@ -1660,6 +1660,12 @@ export interface BackupRecord {
   tree: BookmarkNode[];
 }
 
+export interface BackupSummary {
+  key: string;
+  createdAt: string;
+  bookmarkCount: number;
+}
+
 export interface AppSettings {
   useAi: boolean;
   activeProviderId: string;
@@ -1671,6 +1677,16 @@ export interface AppSettings {
   defaultClassifyMode: ClassificationMode;
   exportDirectory: string;
 }
+
+export type BookmarkTaskSettings = Pick<
+  AppSettings,
+  | 'useAi'
+  | 'activeProviderId'
+  | 'aiProviders'
+  | 'aiLegacySummary'
+  | 'customRules'
+  | 'defaultClassifyMode'
+>;
 
 export type ExportManifestType = 'bookmark-index' | 'capture' | 'activity';
 

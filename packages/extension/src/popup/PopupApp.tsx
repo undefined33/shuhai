@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookmarkCheck, BookOpenCheck, PanelRightOpen, RefreshCw, RotateCcw } from 'lucide-react';
+import {
+  BookmarkCheck,
+  BookOpenCheck,
+  PanelRightOpen,
+  RefreshCw,
+  RotateCcw,
+  Settings,
+} from 'lucide-react';
 
 import { Button } from '../components/ui/button.js';
 import { ActionBar } from '../shell/ActionBar.js';
@@ -166,6 +173,17 @@ export function executePopupAction(
   })();
 }
 
+export async function openPopupOptionsPage(
+  openOptionsPage: () => Promise<void> = () => chrome.runtime.openOptionsPage(),
+): Promise<boolean> {
+  try {
+    await openOptionsPage();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function resolvePopupAction(summary: SurfaceSummary, tabKind: PopupTabKind): PopupAction {
   if (summary.activeTask) {
     return {
@@ -261,6 +279,7 @@ export default function PopupApp() {
   const [state, setState] = useState<PopupState>({ kind: 'loading' });
   const [busy, setBusy] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
+  const [optionsFailed, setOptionsFailed] = useState(false);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -310,8 +329,24 @@ export default function PopupApp() {
 
   return (
     <main className="flex h-[600px] flex-col px-5 pb-4 pt-5">
-      <div className="border-b border-border pb-4">
+      <div className="flex items-start justify-between gap-3 border-b border-border pb-4">
         <Brand subtitle="当前页面的下一步" />
+        <Button
+          aria-label="打开设置"
+          onClick={() => {
+            setOptionsFailed(false);
+            void openPopupOptionsPage().then((opened) => {
+              if (!opened) {
+                setOptionsFailed(true);
+              }
+            });
+          }}
+          size="icon"
+          title="打开设置"
+          variant="ghost"
+        >
+          <Settings aria-hidden="true" className="h-4 w-4" />
+        </Button>
       </div>
 
       {state.kind === 'loading' ? <SurfaceLoading label="正在识别当前页面" /> : null}
@@ -341,6 +376,11 @@ export default function PopupApp() {
       {actionFailed ? (
         <p className="mt-2 text-[12.5px] leading-5 text-destructive" role="alert">
           任务没有成功启动。请确认当前页面未切换，然后重试。
+        </p>
+      ) : null}
+      {optionsFailed ? (
+        <p className="mt-2 text-[12.5px] leading-5 text-destructive" role="alert">
+          设置页未能打开，请稍后重试。
         </p>
       ) : null}
     </main>

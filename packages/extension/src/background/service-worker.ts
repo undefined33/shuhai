@@ -13,15 +13,13 @@ import type {
   ClassificationSuggestion,
   ClassificationProgress,
   ClassificationMode,
-  ExtensionState,
-  StateSummary,
 } from '../shared/bookmark-types.js';
 import {
   parseBookmarkOperationCommand,
   parseBookmarkOperationCommandResponse,
 } from '../shared/bookmark-types.js';
 import { generateClassificationPlan } from '../shared/classifier.js';
-import { getLastMoveRecords, listBackups } from '../utils/backup.js';
+import { getBackupByKey, listBackupSummaries } from '../utils/backup.js';
 import { flattenBookmarkTree, getFullTree } from '../utils/chrome-bookmarks.js';
 import {
   BookmarkOperationCommandError,
@@ -40,12 +38,11 @@ import {
   clearUrlHealthRecords,
   discardLegacyAiConfiguration,
   getAiProviderSecretForUse,
-  getExportManifests,
+  getBookmarkTaskSettings,
   getOnboardingProgress,
   getSettings,
   inspectLegacyPendingCapture,
   normalizeSettings,
-  getOnboarded,
   getBookmarkOperations,
   getUrlHealthRecords,
   ensureTrustedLocalStorageAccess,
@@ -68,7 +65,9 @@ import {
   parseClassificationPortRequest,
   parseExtensionRequest,
   parseLegacyResponse,
+  isOptionsPageRequest,
   validateExtensionUiSender,
+  validateOptionsPageSender,
 } from '../shared/extension-messages.js';
 import {
   SURFACE_INTENT_TTL_MS,
@@ -93,7 +92,6 @@ import {
 import { DEFAULT_PROVIDER_IDS, providerPermission } from '../shared/ai-providers.js';
 import { addXItemReviewActivity } from '../utils/activity-log.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
-import { getVaultHandle } from '../utils/vault-writer.js';
 import {
   X_BOOKMARKS_ADAPTER_VERSION,
   X_BOOKMARKS_CEILINGS,
@@ -1422,45 +1420,20 @@ function ensureXSyncRecovery(): Promise<{ readonly ok: boolean }> {
   return xSyncRecovery;
 }
 
-async function getState(): Promise<ExtensionState> {
+async function getBookmarkTaskSnapshot() {
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
-  const backups = await listBackups();
-  const exportManifests = await getExportManifests();
-  const lastMoveRecords = await getLastMoveRecords();
-  const settings = await getSettings();
-  const urlHealthRecords = await getUrlHealthRecords();
-  const onboarded = await getOnboarded();
 
   return {
-    tree,
-    bookmarks: summary.bookmarks,
-    folders: summary.folders,
-    backups,
-    exportManifests,
-    urlHealthRecords,
-    bookmarkOperations: [],
-    lastMoveRecordCount: lastMoveRecords.length,
-    onboarded,
-    settings,
-  };
-}
-
-async function getStateSummary(): Promise<StateSummary> {
-  const tree = await getFullTree();
-  const summary = flattenBookmarkTree(tree);
-  const settings = await getSettings();
-  const exportManifests = await getExportManifests();
-  const vaultHandle = await getVaultHandle().catch(() => null);
-  const lastExportDate = exportManifests[0]?.exportedAt;
-
-  return {
-    bookmarkCount: summary.bookmarks.length,
-    folderCount: summary.folders.length,
-    onboarded: await getOnboarded(),
-    hasVaultHandle: Boolean(vaultHandle),
-    hasAiProvider: settings.aiProviders.some((provider) => provider.enabled && provider.hasApiKey),
-    ...(lastExportDate === undefined ? {} : { lastExportDate }),
+    bookmarks: summary.bookmarks.map(({ dateAdded, ...bookmark }) => ({
+      ...bookmark,
+      ...(dateAdded === undefined ? {} : { dateAdded }),
+    })),
+    folders: summary.folders.map(({ parentId, ...folder }) => ({
+      ...folder,
+      ...(parentId === undefined ? {} : { parentId }),
+    })),
+    settings: await getBookmarkTaskSettings(),
   };
 }
 
@@ -2048,10 +2021,8 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
   switch (request.type) {
     case 'security:getBootstrapStatus':
       return { ok: true, data: { ready: true } };
-    case 'state:get':
-      return { ok: true, data: await getState() };
-    case 'state:summary':
-      return { ok: true, data: await getStateSummary() };
+    case 'bookmarkTask:getSnapshot':
+      return { ok: true, data: await getBookmarkTaskSnapshot() };
     case 'operations:getRecent':
       return { ok: true, data: { operations: await getBookmarkOperations() } };
     case 'plan:create':
@@ -2129,11 +2100,15 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
       return { ok: true, data: { cleared: true } };
     case 'xSingle:start':
       return { ok: true, data: await startXSingleCapture() };
+    case 'health:listRecords':
+      return { ok: true, data: { records: await getUrlHealthRecords() } };
     case 'health:clearRecords':
       await clearUrlHealthRecords();
       return { ok: true, data: { cleared: true } };
-    case 'backups:list':
-      return { ok: true, data: await listBackups() };
+    case 'backups:listSummaries':
+      return { ok: true, data: { backups: await listBackupSummaries() } };
+    case 'backups:get':
+      return { ok: true, data: { backup: (await getBackupByKey(request.key)) ?? null } };
   }
 }
 
@@ -2152,14 +2127,22 @@ async function handleLegacyMessage(
   message: unknown,
   sender: chrome.runtime.MessageSender,
 ): Promise<LegacyResponse<ExtensionRequest>> {
-  if (!validateExtensionUiSender(sender)) {
-    return makeLegacyError('forbidden_sender');
-  }
   let request: ExtensionRequest;
   try {
     request = parseExtensionRequest(message);
   } catch {
     return makeLegacyError('invalid_request');
+  }
+  if (request.type === 'bookmarkTask:getSnapshot') {
+    if (!validateExtensionUiSender(sender, 'sidepanel')) {
+      return makeLegacyError('forbidden_sender');
+    }
+  } else if (validateOptionsPageSender(sender)) {
+    if (!isOptionsPageRequest(request)) {
+      return makeLegacyError('forbidden_sender');
+    }
+  } else if (!validateExtensionUiSender(sender)) {
+    return makeLegacyError('forbidden_sender');
   }
 
   const bootstrap = await securityBootstrap;

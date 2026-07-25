@@ -10,6 +10,7 @@ const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta
   host_permissions?: string[];
   key?: string;
   optional_host_permissions?: string[];
+  options_ui?: { open_in_tab?: boolean; page?: string };
   permissions?: string[];
   side_panel?: { default_path?: string };
 };
@@ -40,6 +41,14 @@ describe('extension manifest', () => {
   it('declares the Chrome side panel entry', () => {
     expect(manifest.permissions).toContain('sidePanel');
     expect(manifest.side_panel?.default_path).toBe('sidepanel/index.html');
+  });
+
+  it('declares an independent Options page without adding permissions', () => {
+    expect(manifest.options_ui).toEqual({
+      page: 'options/index.html',
+      open_in_tab: true,
+    });
+    expect(manifest.permissions).not.toContain('tabs');
   });
 
   it('uses activeTab and scripting for user-triggered X extraction', () => {

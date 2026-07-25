@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PopupReadyView,
   executePopupAction,
+  openPopupOptionsPage,
   resolvePopupAction,
   type PopupActionOperations,
 } from '../src/popup/PopupApp.js';
@@ -201,5 +202,16 @@ describe('popup context shell', () => {
 
     expect(calls).toEqual(['open']);
     expect(fixture.launchXSync).not.toHaveBeenCalled();
+  });
+
+  it('reports whether the Options page opened without leaking the Chrome error', async () => {
+    await expect(openPopupOptionsPage(vi.fn(async () => undefined))).resolves.toBe(true);
+    await expect(
+      openPopupOptionsPage(
+        vi.fn(async () => {
+          throw new Error('chrome-internal-detail');
+        }),
+      ),
+    ).resolves.toBe(false);
   });
 });

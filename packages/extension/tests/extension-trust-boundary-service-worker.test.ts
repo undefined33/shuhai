@@ -21,6 +21,7 @@ const EXTENSION_ID = 'a'.repeat(32);
 const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
 const POPUP_URL = `${EXTENSION_ORIGIN}/popup/index.html`;
 const SIDEPANEL_URL = `${EXTENSION_ORIGIN}/sidepanel/index.html`;
+const OPTIONS_URL = `${EXTENSION_ORIGIN}/options/index.html`;
 
 type BootstrapStage = 'setAccessLevel' | 'firstGetAll' | 'remove' | 'secondGetAll';
 type BootstrapFailureMode = 'runtime-error' | 'reject' | 'throw';
@@ -384,11 +385,26 @@ function createHarness(options: HarnessOptions = {}): BootstrapHarness {
   };
 }
 
-function sender(surface: 'popup' | 'sidepanel'): chrome.runtime.MessageSender {
+function sender(
+  surface: 'popup' | 'sidepanel',
+  overrides: Partial<chrome.runtime.MessageSender> = {},
+): chrome.runtime.MessageSender {
   return {
     id: EXTENSION_ID,
     origin: EXTENSION_ORIGIN,
     url: surface === 'popup' ? POPUP_URL : SIDEPANEL_URL,
+    ...overrides,
+  };
+}
+
+function optionsSender(
+  overrides: Partial<chrome.runtime.MessageSender> = {},
+): chrome.runtime.MessageSender {
+  return {
+    id: EXTENSION_ID,
+    origin: EXTENSION_ORIGIN,
+    url: OPTIONS_URL,
+    ...overrides,
   };
 }
 
@@ -555,12 +571,6 @@ describe('service worker security bootstrap', () => {
 
   it('returns a bounded surface summary without private bookmark, Vault, or task data', async () => {
     const harness = await loadServiceWorker();
-    harness.bookmarks.getTree.mockImplementation(
-      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
-        callback(classificationTree()),
-    );
-    const legacySummary = await send(harness.getMessageListener(), { type: 'state:summary' });
-    expect(legacySummary, JSON.stringify(legacySummary)).toMatchObject({ ok: true });
     const treeCallsBeforeSurface = harness.bookmarks.getTree.mock.calls.length;
     const vaultReadsBeforeSurface = harness.indexedDbOpen.mock.calls.filter(
       ([databaseName]) => databaseName === 'shuhai-vault',
@@ -573,7 +583,7 @@ describe('service worker security bootstrap', () => {
     );
 
     expect(response.ok, JSON.stringify(response)).toBe(true);
-    expect(response).toMatchObject({
+    expect(response, JSON.stringify(response)).toMatchObject({
       ok: true,
       data: {
         bookmarkCount: null,
@@ -1093,7 +1103,7 @@ describe('service worker security bootstrap', () => {
     vi.useFakeTimers();
     const harness = await loadServiceWorker({ stalledStage: 'setAccessLevel' });
     const listener = harness.getMessageListener();
-    const legacy = send(listener, { type: 'state:get' });
+    const legacy = send(listener, { type: 'settings:get' });
     const bookmark = send(listener, {
       type: 'bookmarkOperations:delete',
       requestId: 'bootstrap-bookmark-1',
@@ -1125,6 +1135,194 @@ describe('service worker security bootstrap', () => {
     expect(harness.bookmarks.getTree).not.toHaveBeenCalled();
     expect(harness.bookmarks.remove).not.toHaveBeenCalled();
     expect(harness.indexedDbOpen).not.toHaveBeenCalled();
+  });
+
+  it('retires aggregate state requests before sender validation for every sender', async () => {
+    const harness = await loadServiceWorker();
+    const listener = harness.getMessageListener();
+    const senders = [
+      sender('sidepanel'),
+      optionsSender(),
+      {
+        id: 'b'.repeat(32),
+        origin: 'https://attacker.example',
+        url: 'https://attacker.example/page',
+        tab: { id: 1 } as chrome.tabs.Tab,
+      },
+    ];
+
+    for (const request of [{ type: 'state:get' }, { type: 'state:summary' }]) {
+      for (const messageSender of senders) {
+        await expect(send(listener, request, messageSender)).resolves.toEqual({
+          ok: false,
+          error: 'Extension request rejected',
+          errorCode: 'invalid_request',
+        });
+      }
+    }
+    expect(harness.bookmarks.getTree).not.toHaveBeenCalled();
+  });
+
+  it('returns a bounded bookmark snapshot only to the exact Side Panel sender', async () => {
+    const harness = await loadServiceWorker({
+      storageData: {
+        settings: {
+          useAi: true,
+          activeProviderId: 'deepseek-default',
+          aiProviders: [],
+          aiLegacySummary: {
+            builtInConflicts: [],
+            customState: 'absent',
+          },
+          customRules: [],
+          defaultClassifyMode: 'full',
+          templates: ['must-not-be-read'],
+          exportDirectory: 'Private',
+        },
+      },
+    });
+    harness.bookmarks.getTree.mockImplementation(
+      (callback: (tree: chrome.bookmarks.BookmarkTreeNode[]) => void) =>
+        callback(classificationTree()),
+    );
+
+    const response = await send(
+      harness.getMessageListener(),
+      { type: 'bookmarkTask:getSnapshot' },
+      sender('sidepanel'),
+    );
+
+    expect(response, JSON.stringify(response)).toMatchObject({
+      ok: true,
+      data: {
+        bookmarks: [expect.objectContaining({ id: 'bookmark-1' })],
+        folders: expect.any(Array),
+        settings: {
+          useAi: true,
+          activeProviderId: 'deepseek-default',
+          defaultClassifyMode: 'full',
+        },
+      },
+    });
+    expect(JSON.stringify(response)).not.toMatch(/"templates"|"exportDirectory"/u);
+    expect(harness.bookmarks.getTree).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects every non-exact bookmark snapshot sender without reading tree or storage', async () => {
+    const harness = await loadServiceWorker();
+    await send(harness.getMessageListener(), { type: 'security:getBootstrapStatus' });
+    const urlGetter = vi.fn(() => SIDEPANEL_URL);
+    const accessorSender = Object.defineProperty(
+      {
+        id: EXTENSION_ID,
+        origin: EXTENSION_ORIGIN,
+      },
+      'url',
+      { enumerable: true, get: urlGetter },
+    ) as chrome.runtime.MessageSender;
+    const invalidSenders: chrome.runtime.MessageSender[] = [
+      sender('popup'),
+      optionsSender(),
+      sender('sidepanel', { url: `${SIDEPANEL_URL}?query=1` }),
+      sender('sidepanel', { url: `${SIDEPANEL_URL}#fragment` }),
+      sender('sidepanel', { id: 'b'.repeat(32) }),
+      sender('sidepanel', { origin: 'https://attacker.example' }),
+      sender('sidepanel', { tab: { id: 1 } as chrome.tabs.Tab }),
+      accessorSender,
+    ];
+
+    for (const invalidSender of invalidSenders) {
+      const treeCalls = harness.bookmarks.getTree.mock.calls.length;
+      const storageCalls = vi.mocked(chrome.storage.local.get).mock.calls.length;
+      await expect(
+        send(harness.getMessageListener(), { type: 'bookmarkTask:getSnapshot' }, invalidSender),
+      ).resolves.toMatchObject({ ok: false, errorCode: 'forbidden_sender' });
+      expect(harness.bookmarks.getTree).toHaveBeenCalledTimes(treeCalls);
+      expect(vi.mocked(chrome.storage.local.get)).toHaveBeenCalledTimes(storageCalls);
+    }
+    expect(urlGetter).not.toHaveBeenCalled();
+  });
+
+  it('bounds Options backup and health maintenance behind the exact allowlist', async () => {
+    const timestamp = new Date(0).toISOString();
+    const backup = {
+      key: 'backup_1700000000000',
+      createdAt: timestamp,
+      bookmarkCount: 0,
+      tree: [
+        {
+          id: '0',
+          title: '',
+          folderPath: '',
+          bookmarkCount: 0,
+          children: [],
+        },
+      ],
+    };
+    const healthRecord = {
+      bookmarkId: 'bookmark-1',
+      bookmarkTitle: 'Historical result',
+      bookmarkUrl: 'https://example.com',
+      parentPath: 'Bookmarks',
+      status: 'dead',
+      checkedAt: timestamp,
+      durationMs: 1,
+      httpStatus: 404,
+    };
+    const harness = await loadServiceWorker({
+      storageData: {
+        backupIndex: [backup.key],
+        [backup.key]: backup,
+        urlHealthRecords: [healthRecord],
+      },
+    });
+    const listener = harness.getMessageListener();
+
+    await expect(
+      send(listener, { type: 'backups:listSummaries' }, optionsSender()),
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        backups: [
+          {
+            key: backup.key,
+            createdAt: timestamp,
+            bookmarkCount: 0,
+          },
+        ],
+      },
+    });
+    await expect(
+      send(listener, { type: 'backups:get', key: backup.key }, optionsSender()),
+    ).resolves.toEqual({ ok: true, data: { backup } });
+    await expect(
+      send(listener, { type: 'backups:get', key: 'backup_1700000000001' }, optionsSender()),
+    ).resolves.toEqual({ ok: true, data: { backup: null } });
+    await expect(send(listener, { type: 'health:listRecords' }, optionsSender())).resolves.toEqual({
+      ok: true,
+      data: { records: [healthRecord] },
+    });
+    await expect(
+      send(listener, { type: 'health:clearRecords' }, optionsSender()),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'invalid_request' });
+    await expect(
+      send(listener, { type: 'health:clearRecords', confirmed: true }, optionsSender()),
+    ).resolves.toEqual({ ok: true, data: { cleared: true } });
+    await expect(send(listener, { type: 'health:listRecords' }, optionsSender())).resolves.toEqual({
+      ok: true,
+      data: { records: [] },
+    });
+
+    await expect(
+      send(listener, { type: 'operations:getRecent' }, optionsSender()),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'forbidden_sender' });
+    await expect(
+      send(listener, { type: 'plan:create', mode: 'safe' }, optionsSender()),
+    ).resolves.toMatchObject({ ok: false, errorCode: 'forbidden_sender' });
+    expect(harness.bookmarks.getTree).not.toHaveBeenCalled();
+    expect(harness.bookmarks.remove).not.toHaveBeenCalled();
+    expect(harness.bookmarks.update).not.toHaveBeenCalled();
+    expect(harness.bookmarks.move).not.toHaveBeenCalled();
   });
 
   it.each(['popup', 'sidepanel'] as const)(

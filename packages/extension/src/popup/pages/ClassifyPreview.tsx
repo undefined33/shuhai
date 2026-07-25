@@ -10,6 +10,7 @@ import { Checkbox } from '../../components/ui/checkbox.js';
 import { SearchInput } from '../../components/SearchInput.js';
 import { Command, CommandInput, CommandList } from '../../components/ui/command.js';
 import { VirtualList } from '../../components/VirtualList.js';
+import { ActionBar } from '../../shell/ActionBar.js';
 import {
   Tooltip,
   TooltipContent,
@@ -21,6 +22,7 @@ interface ClassifyPreviewProps {
   plan: ClassificationPlan;
   folders: FolderItem[];
   busy: boolean;
+  applyDisabled?: boolean;
   selectedCount: number;
   onMoveChange(move: MovePlan): void;
   onApply(): void;
@@ -126,7 +128,9 @@ function FolderCombobox({ folders, value, onChange }: FolderComboboxProps) {
               type="button"
             >
               <span className="min-w-0 flex-1 truncate">创建：{value}</span>
-              <Badge variant="outline">新分类</Badge>
+              <Badge className="text-[12px]" variant="outline">
+                新分类
+              </Badge>
             </button>
           ) : null}
           {filteredFolders.map((folder) => (
@@ -141,7 +145,9 @@ function FolderCombobox({ folders, value, onChange }: FolderComboboxProps) {
               type="button"
             >
               <span className="min-w-0 flex-1 truncate">{folder.path}</span>
-              <Badge variant="secondary">{folder.bookmarkCount}</Badge>
+              <Badge className="text-[12px]" variant="secondary">
+                {folder.bookmarkCount}
+              </Badge>
             </button>
           ))}
           {filteredFolders.length === 0 && !value.trim() ? (
@@ -157,6 +163,7 @@ export default function ClassifyPreview({
   plan,
   folders,
   busy,
+  applyDisabled = false,
   selectedCount,
   onMoveChange,
   onApply,
@@ -246,40 +253,19 @@ export default function ClassifyPreview({
   return (
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
-        <div className="grid grid-cols-3 gap-2">
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-semibold">{plan.moves.length}</div>
-              <div className="text-[11px] text-muted-foreground">建议</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-semibold">{selectedCount}</div>
-              <div className="text-[11px] text-muted-foreground">选中</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-semibold">{plan.unchanged}</div>
-              <div className="text-[11px] text-muted-foreground">不动</div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button onClick={onCancel} disabled={busy} variant="ghost">
-            返回
-          </Button>
-          <Button
-            className="flex-1"
-            disabled={busy || selectedCount === 0}
-            loading={busy}
-            onClick={onApply}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            应用选中
-          </Button>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-border py-3 text-[13px]">
+          <span>
+            <strong className="font-semibold tabular-nums">{plan.moves.length}</strong>{' '}
+            <span className="text-muted-foreground">条建议</span>
+          </span>
+          <span>
+            <strong className="font-semibold tabular-nums">{selectedCount}</strong>{' '}
+            <span className="text-muted-foreground">条已选</span>
+          </span>
+          <span>
+            <strong className="font-semibold tabular-nums">{plan.unchanged}</strong>{' '}
+            <span className="text-muted-foreground">条不变</span>
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -308,10 +294,12 @@ export default function ClassifyPreview({
               ['folder', '按文件夹'],
             ].map(([value, label]) => (
               <Button
+                aria-pressed={sortMode === value}
+                className={sortMode === value ? 'bg-muted text-foreground' : undefined}
                 key={value}
                 onClick={() => setSortMode(value as SortMode)}
                 size="sm"
-                variant={sortMode === value ? 'default' : 'outline'}
+                variant="outline"
               >
                 {label}
               </Button>
@@ -326,7 +314,7 @@ export default function ClassifyPreview({
               placeholder="搜索标题、URL 或目标文件夹"
               value={search}
             />
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[12px] text-muted-foreground">
               显示 {rows.length} / {plan.moves.length} 条
             </div>
           </div>
@@ -380,7 +368,7 @@ export default function ClassifyPreview({
             >
               <CardContent className="space-y-2 p-3">
                 {groupLabel ? (
-                  <div className="truncate text-[11px] font-medium text-muted-foreground">
+                  <div className="truncate text-[12px] font-medium text-muted-foreground">
                     {groupLabel}
                   </div>
                 ) : null}
@@ -396,14 +384,14 @@ export default function ClassifyPreview({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{move.bookmarkTitle}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">
+                    <div className="truncate text-[12px] text-muted-foreground">
                       {move.bookmarkUrl}
                     </div>
                   </div>
                 </div>
 
                 <div className={moveGridClass}>
-                  <span className="truncate rounded-md bg-muted px-2 py-1 text-[11px]">
+                  <span className="truncate rounded-md bg-muted px-2 py-1 text-[12px]">
                     {move.currentFolder || '根目录'}
                   </span>
                   <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -420,13 +408,16 @@ export default function ClassifyPreview({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge variant={move.reason === 'ai' ? 'default' : 'outline'}>
+                  <Badge
+                    className="text-[12px]"
+                    variant={move.reason === 'ai' ? 'default' : 'outline'}
+                  >
                     {move.reason === 'ai' ? 'AI' : (move.ruleName ?? '规则')}
                   </Badge>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span>
-                        <Badge variant={confidenceVariant(move.confidence)}>
+                        <Badge className="text-[12px]" variant={confidenceVariant(move.confidence)}>
                           {confidenceLabel(move.confidence)}
                         </Badge>
                       </span>
@@ -434,15 +425,36 @@ export default function ClassifyPreview({
                     <TooltipContent>置信度越高，表示 AI 或规则越确定这个分类。</TooltipContent>
                   </Tooltip>
                   <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                  {move.confidence < 0.6 ? <Badge variant="danger">需确认</Badge> : null}
+                  {move.confidence < 0.6 ? (
+                    <Badge className="text-[12px]" variant="danger">
+                      需确认
+                    </Badge>
+                  ) : null}
                   {plan.mode === 'full' && !move.selected ? (
-                    <Badge variant="warning">默认未选</Badge>
+                    <Badge className="text-[12px]" variant="warning">
+                      默认未选
+                    </Badge>
                   ) : null}
                 </div>
               </CardContent>
             </Card>
           )}
         />
+
+        <ActionBar label="整理建议操作">
+          <Button onClick={onCancel} disabled={busy} variant="ghost">
+            返回
+          </Button>
+          <Button
+            className="flex-1"
+            disabled={busy || applyDisabled || selectedCount === 0}
+            loading={busy}
+            onClick={onApply}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            应用选中
+          </Button>
+        </ActionBar>
       </section>
     </TooltipProvider>
   );
