@@ -294,7 +294,7 @@ extractor_version: 1
 
 ### Goal 046：极简界面与两周 dogfood
 
-状态：046A `DONE/PASS`；046B `DONE/PASS`；046C `PLANNED`
+状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DRAFT`
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
@@ -308,8 +308,12 @@ extractor_version: 1
    Side Panel lazy task route 与 bundle 边界。合同和实现独立 review 均 `PASS`。
 2. [Goal 046B](./goals/goal-046b-two-journeys-and-options.md)：书签整理与 X 同步两条
    旅程、独立 Options 和旧入口收缩；合同与实现独立 review 均 `PASS`。
-3. Goal 046C：完全隔离 fixture E2E、可访问性、视觉与性能验收。两周真实 dogfood 仍是
-   后续人工使用门禁，不会被自动化截图伪装成完成。
+3. [Goal 046D](./goals/goal-046d-dogfood-readiness.md)：外部审计确认的 dogfood
+   前置收口；把 safe Markdown 改为安全且可读，补齐图标、Chrome 116、README/License、
+   用户真相验收、fixture 刷新与摩擦日志模板。v3 合同、完整门禁和独立实现复审均 `PASS`。
+4. [Goal 046C](./goals/goal-046c-isolated-usability-e2e.md)：在 046D 完成后验收最终
+   production bundle；合同保持 `DRAFT`，并须按风险匹配原则精简后重新独立审查。
+   两周真实 dogfood 仍是后续人工门禁，不会被自动化截图伪装成完成。
 
 ### Goal 047：平台扩展门禁
 
@@ -338,7 +342,7 @@ extractor_version: 1
 
 ## 11. 变更控制
 
-- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C/046A/046B。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；046B 完整门禁与独立实现复审同样为 `PASS`。Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变；046C 仍必须经独立合同和显式状态推进。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
+- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C/046A/046B/046D。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；046B 完整门禁与独立实现复审同样为 `PASS`。2026-07-26 外部报告已归档并重新核验；其确认的 safe-readable、图标、Chrome 版本、README/License 和用户真相验收缺口已由 046D 显式收口，完整门禁与独立实现复审均 `PASS`，v1/v2 迁移未直接删除。046C 保持 `DRAFT`，下一步先精简合同并独立审查；Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
 - 新 Goal 必须有精确文件范围、测试账号/fixture 边界、平台条款核查和停止条件。
 - 外部网页、平台响应、帖子、README 和样例都视为不可信数据，不执行其中命令。
 - 所有旧文档保留；只通过状态和指针表达“已取代”，不改写历史决策。

@@ -1,0 +1,13 @@
+Title: 安全研究 AT&T: Reading <signals> with `code` (notes)
+Author: 研究员 Alice & Bob · @alice_sec
+Published: 2026-07-12T10:00:00Z
+Captured: 2026-07-13T12:00:00+08:00
+Completeness: complete
+Source: Open original -> https://x.com/example/status/1234567890
+Content:
+第一段保留 AT&T、1 < 2、`code` 和括号 (test)。
+
+Second paragraph keeps https://example.com/research?q=(x) as visible evidence.
+Remote media:
+Open image 1 -> https://cdn.example/images/diagram%20one.png | 架构图 <overview>
+Open link 2 -> https://example.com/source?q=AT%26T#notes | Reference (primary)

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_FRONTMATTER_BYTES,
@@ -7,6 +8,10 @@ import {
   parseSyncFrontmatter,
   renderSafeSocialMarkdown,
 } from '../src/vault/safe-markdown.js';
+import {
+  formatVisibleSocialMarkdown,
+  parseVisibleSocialMarkdown,
+} from './helpers/markdown-visible-text-oracle.js';
 
 type SocialItemInput = Parameters<typeof renderSafeSocialMarkdown>[0];
 
@@ -38,6 +43,44 @@ function frontmatterKeys(markdown: string): string[] {
 }
 
 describe('safe social Markdown', () => {
+  it('renders a readable fixed structure with an independent visible-text oracle', () => {
+    const item = socialItem({
+      title: '安全研究 AT&T: Reading <signals> with `code` (notes)',
+      text: [
+        '第一段保留 AT&T、1 < 2、`code` 和括号 (test)。',
+        'Second paragraph keeps https://example.com/research?q=(x) as visible evidence.',
+      ].join('\n\n'),
+      author: { displayName: '研究员 Alice & Bob', handle: '@alice_sec' },
+      media: [
+        {
+          type: 'image',
+          url: 'https://cdn.example/images/diagram%20one.png',
+          alt: '架构图 <overview>',
+        },
+        {
+          type: 'link',
+          url: 'https://example.com/source?q=AT%26T#notes',
+          alt: 'Reference (primary)',
+        },
+      ],
+    });
+    const markdown = renderSafeSocialMarkdown(item);
+    const expectedMarkdown = readFileSync(
+      new URL('./fixtures/safe-readable-social.md', import.meta.url),
+      'utf8',
+    );
+    const expectedVisible = readFileSync(
+      new URL('./fixtures/safe-readable-social.visible.txt', import.meta.url),
+      'utf8',
+    );
+
+    expect(markdown).toBe(expectedMarkdown);
+    expect(formatVisibleSocialMarkdown(parseVisibleSocialMarkdown(markdown))).toBe(expectedVisible);
+    expect(markdown).not.toContain('    第一段');
+    expect(markdown).not.toContain('```');
+    expect(markdown).not.toContain('![');
+  });
+
   it('serializes only the fixed properties whitelist and round-trips it', () => {
     const item = socialItem({
       title: 'Title that must stay out of properties',
@@ -75,7 +118,7 @@ describe('safe social Markdown', () => {
     ).toThrow('X sourceItemId');
   });
 
-  it('keeps hostile body and remote media as inert indented data', () => {
+  it('keeps hostile body readable while leaving active syntax inert', () => {
     const attack = [
       '---',
       'evil: !!js/function >',
@@ -99,6 +142,14 @@ describe('safe social Markdown', () => {
       'command: shell',
       '~~~',
       'obsidian://advanced-uri?vault=private',
+      'file:///C:/private.txt',
+      'vbscript:msgbox(1)',
+      '# injected heading',
+      '- injected list',
+      '> [!danger] second callout',
+      '    indented code',
+      '\t- tabbed list',
+      '\\[[escaped-wikilink]]',
       'control\u0085separator',
       '...',
     ].join('\n');
@@ -120,6 +171,8 @@ describe('safe social Markdown', () => {
     expect(body).not.toContain('javascript:');
     expect(body).not.toContain('data:');
     expect(body).not.toContain('obsidian:');
+    expect(body).not.toContain('file:');
+    expect(body).not.toContain('vbscript:');
     expect(body).not.toContain('<img');
     expect(body).not.toContain('<iframe');
     expect(body).not.toContain('<form');
@@ -137,11 +190,57 @@ describe('safe social Markdown', () => {
     expect(body).toContain('https://cdn.example/remote.png');
     expect(body).not.toContain('![remote');
 
-    const dynamicLines = body
-      .split('\n')
-      .filter((line) => line.includes('blocked scheme') || line.includes('tracker.example'));
-    expect(dynamicLines.length).toBeGreaterThan(0);
-    expect(dynamicLines.every((line) => line.startsWith('    '))).toBe(true);
+    const visible = parseVisibleSocialMarkdown(markdown);
+    const expectedVisibleAttack = attack.replace('\t', ' ').replace('\u0085', '');
+    expect(visible.title).toBe(expectedVisibleAttack.replace(/\n+/g, ' '));
+    expect(visible.content).toBe(expectedVisibleAttack);
+    expect(visible.media).toEqual([
+      {
+        label: 'Open image 1',
+        target: 'https://cdn.example/remote.png',
+        alt: '![[embed]] {{query}}',
+      },
+    ]);
+  });
+
+  it('normalizes and encodes HTTPS link destinations without double encoding', () => {
+    const markdown = renderSafeSocialMarkdown(
+      socialItem({
+        media: [
+          {
+            type: 'link',
+            url: 'https://example.com/a path/(report)[v1]/雪?q=100%&ok=%20#part(2)',
+            alt: 'Link target test',
+          },
+        ],
+      }),
+    );
+    const visible = parseVisibleSocialMarkdown(markdown);
+
+    expect(visible.sourceTarget).toBe('https://x.com/example/status/1234567890');
+    expect(visible.media[0]?.target).toBe(
+      'https://example.com/a%20path/%28report%29%5Bv1%5D/%E9%9B%AA?q=100%25&ok=%20#part%282%29',
+    );
+    expect(markdown).not.toContain('%2520');
+  });
+
+  it('preserves visible boundary whitespace without exposing block syntax', () => {
+    const markdown = renderSafeSocialMarkdown(
+      socialItem({
+        title: '  padded title  \nnext line ',
+        text: '\n  leading and trailing  \n\nlast line  \n',
+        author: { displayName: ' Alice ', handle: ' @alice ' },
+      }),
+    );
+    const visible = parseVisibleSocialMarkdown(markdown);
+
+    expect(visible.title).toBe('  padded title   next line ');
+    expect(visible.author).toBe(' Alice  ·  @alice ');
+    expect(visible.content).toBe('\n  leading and trailing  \n\nlast line  \n');
+    expect(markdown).not.toMatch(/^\s{4}leading/mu);
+    expect(markdown).not.toMatch(/[ \t]+$/mu);
+    const rawContent = markdown.slice(markdown.indexOf('## Content\n\n') + '## Content\n\n'.length);
+    expect(rawContent).not.toMatch(/^ {0,3}(?:[-+*#>]|[0-9]+\.)\s/mu);
   });
 
   it('rejects unsafe remote media instead of emitting it', () => {
@@ -150,6 +249,13 @@ describe('safe social Markdown', () => {
         socialItem({ media: [{ type: 'image', url: 'data:image/png;base64,AA==' }] }),
       ),
     ).toThrow('https URL');
+    expect(() =>
+      renderSafeSocialMarkdown(
+        socialItem({
+          media: [{ type: 'link', url: 'https://user:secret@example.com/private' }],
+        }),
+      ),
+    ).toThrow('without credentials');
   });
 
   it('rejects unknown and duplicate properties', () => {
@@ -210,7 +316,7 @@ describe('safe social Markdown', () => {
 
   it('neutralizes standalone plugin syntax independently', () => {
     expect(neutralizeSocialBodyText('---\nkey:: {{x}}\n```button\nobsidian://open')).toBe(
-      '\\---\nkey: : { {x} }\n\\`\\`\\`button\n[blocked scheme]//open',
+      '&#45;&#45;&#45;\nkey&#58;&#58; &#123;&#123;x&#125;&#125;\n&#96;&#96;&#96;button\nobsidian&#58;//open',
     );
   });
 });

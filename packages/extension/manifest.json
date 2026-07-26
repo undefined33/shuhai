@@ -1,9 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "ShuHai Bookmark Organizer",
+  "name": "ShuHai",
+  "short_name": "ShuHai",
   "version": "0.1.0",
+  "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzVH54/jlOqx4H3Dds99QtxyzwYGjNMZeG0zSWWu77bz9Jy2khABHbHdTQKKOLAZoden/xzl3vLQUJ/hHZm4zkjjc1uE1bwWfwpXx+lbsMMWBBmU5f0gFNbW+u+6gi4Bi8RUxObM83L0jdGlHZ4bwjSFN+m/YUsi7RDKr1muSKw2IMUfYdQ9s9NZ617JjY/HvoI+QPuXi7nPtbeJ1oX0tzSJx3e2BUk73qqu9ceXuC1Ldn4tS4dPk5Qqhe8jic+GIJxWd7BdpqKK8+V2k3HV8vH6Y9mtY78c51pgBqhh5IrT55YwCypguJ+8beeFkpcfGO0Lruz1OwEiioC+I6Txz1QIDAQAB",
-  "description": "Organize Chrome bookmarks with local rules and optional AI review.",
+  "description": "Organize Chrome bookmarks and save reviewed X favorites to Obsidian. AI review is optional.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": ["bookmarks", "storage", "contextMenus", "sidePanel", "activeTab", "scripting"],
   "optional_host_permissions": [
     "https://x.com/*",
@@ -13,7 +21,13 @@
   ],
   "action": {
     "default_popup": "popup/index.html",
-    "default_title": "ShuHai"
+    "default_title": "ShuHai",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "side_panel": {
     "default_path": "sidepanel/index.html"
