@@ -1,20 +1,11 @@
 import type { KeyboardEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Folder, HelpCircle, Link2, RefreshCw, Sparkles, Undo2 } from 'lucide-react';
-import type { BookmarkItem, ClassificationMode, FolderItem } from '../../shared/bookmark-types.js';
+import { ChevronRight, Folder, Link2, RefreshCw } from 'lucide-react';
+import type { BookmarkItem, FolderItem } from '../../shared/bookmark-types.js';
 import { VirtualList } from '../../components/VirtualList.js';
 import { Badge } from '../../components/ui/badge.js';
 import { Button } from '../../components/ui/button.js';
-import { Card, CardContent } from '../../components/ui/card.js';
 import { Command, CommandInput } from '../../components/ui/command.js';
-import { Label } from '../../components/ui/label.js';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../../components/ui/select.js';
 import {
   Tooltip,
   TooltipContent,
@@ -26,13 +17,7 @@ interface BookmarkTreeProps {
   bookmarks: BookmarkItem[];
   folders: FolderItem[];
   busy: boolean;
-  canUndo: boolean;
-  classifyMode: ClassificationMode;
-  onClassifyModeChange(mode: ClassificationMode): void;
-  onCreatePlan(mode: ClassificationMode): void;
   onRefresh(): void;
-  onUndo(): void;
-  showSummary?: boolean;
   surface?: 'popup' | 'sidepanel';
 }
 
@@ -153,13 +138,7 @@ export default function BookmarkTree({
   bookmarks,
   folders,
   busy,
-  canUndo,
-  classifyMode,
-  onClassifyModeChange,
-  onCreatePlan,
   onRefresh,
-  onUndo,
-  showSummary = true,
   surface = 'popup',
 }: BookmarkTreeProps) {
   const [query, setQuery] = useState('');
@@ -218,91 +197,34 @@ export default function BookmarkTree({
   return (
     <TooltipProvider>
       <section className="flex h-full min-h-0 flex-col gap-3">
-        {showSummary ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Card>
-              <CardContent className="p-3">
-                <div className="text-2xl font-semibold leading-none">{bookmarks.length}</div>
-                <div className="mt-1 text-xs text-muted-foreground">书签</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-3">
-                <div className="text-2xl font-semibold leading-none">{folders.length}</div>
-                <div className="mt-1 text-xs text-muted-foreground">文件夹</div>
-              </CardContent>
-            </Card>
-          </div>
-        ) : null}
-
-        <Card>
-          <CardContent className="space-y-3 p-3">
-            <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Label>整理模式</Label>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      安全模式只整理根目录或未分类书签；全量模式会重新审视所有书签。
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Select
-                  onValueChange={(value) => onClassifyModeChange(value as ClassificationMode)}
-                  value={classifyMode}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="safe">仅整理未分类</SelectItem>
-                    <SelectItem value="full">重新整理全部</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+        <div className="flex items-center gap-2">
+          <Command className="min-w-0 flex-1">
+            <CommandInput
+              data-shuhai-search
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索标题、URL 或文件夹"
+              value={query}
+            />
+          </Command>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
-                disabled={busy || bookmarks.length === 0}
-                loading={busy}
-                onClick={() => onCreatePlan(classifyMode)}
-              >
-                <Sparkles className="h-4 w-4" />
-                生成
-              </Button>
-            </div>
-
-            <div className="flex gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button disabled={busy} onClick={onRefresh} size="icon" variant="outline">
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>刷新书签</TooltipContent>
-              </Tooltip>
-              <Button
-                className="flex-1"
-                disabled={busy || !canUndo}
-                onClick={onUndo}
+                aria-label="刷新 Chrome 书签"
+                disabled={busy}
+                onClick={onRefresh}
+                size="icon"
                 variant="outline"
               >
-                <Undo2 className="h-4 w-4" />
-                撤销上次整理
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />
               </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Command>
-          <CommandInput
-            data-shuhai-search
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索标题、URL 或文件夹"
-            value={query}
-          />
-        </Command>
+            </TooltipTrigger>
+            <TooltipContent>刷新 Chrome 书签</TooltipContent>
+          </Tooltip>
+        </div>
+        <p className="text-[12.5px] leading-5 text-muted-foreground">
+          {bookmarks.length.toLocaleString()} 个书签 · {folders.length.toLocaleString()} 个文件夹
+          {keyword ? ` · ${rows.length.toLocaleString()} 个匹配项` : ''}
+        </p>
 
         <VirtualList
           ariaLabel="Chrome 书签树"
@@ -311,7 +233,7 @@ export default function BookmarkTree({
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
               <Folder className="mx-auto h-7 w-7" />
               <p>{bookmarks.length === 0 ? '未检测到 Chrome 书签。' : '没有匹配的书签。'}</p>
-              <p className="text-xs">
+              <p className="text-[12px]">
                 {bookmarks.length === 0
                   ? '请确认当前浏览器中已有书签，然后点击刷新。'
                   : '可以换一个标题、URL 或文件夹关键词。'}
@@ -346,7 +268,9 @@ export default function BookmarkTree({
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {highlightedText(row.folder.path, keyword)}
                   </span>
-                  <Badge variant="secondary">{counts.get(row.folder.path) ?? row.count}</Badge>
+                  <Badge className="text-[12px]" variant="secondary">
+                    {counts.get(row.folder.path) ?? row.count}
+                  </Badge>
                 </button>
               );
             }
@@ -359,13 +283,13 @@ export default function BookmarkTree({
                     : 'ml-8 flex h-12 min-w-0 flex-col justify-center rounded-md border border-transparent px-2'
                 }
               >
-                <div className="flex items-center gap-1.5 truncate text-xs font-medium">
+                <div className="flex items-center gap-1.5 truncate text-[13px] font-medium">
                   <Link2 className="h-3 w-3 shrink-0 text-muted-foreground" />
                   <span className="truncate">
                     {highlightedText(row.bookmark.title || row.bookmark.url, keyword)}
                   </span>
                 </div>
-                <div className="truncate text-[11px] text-muted-foreground">
+                <div className="truncate text-[12px] text-muted-foreground">
                   {highlightedText(row.bookmark.url, keyword)}
                 </div>
               </div>

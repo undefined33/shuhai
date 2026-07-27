@@ -9,7 +9,7 @@
 
 ShuHai 不再继续扩张为“书签管理后台 + 通用网页剪藏器 + AI 控制台”。它只服务两个用户动作：
 
-1. **整理 Chrome 书签**：扫描、分类和发现重复项，用户确认后应用并可恢复。
+1. **整理 Chrome 书签**：扫描并生成分类建议，用户确认后应用并可恢复。
 2. **同步社交平台收藏**：用户进入支持平台的收藏页，点击一次启动增量扫描，只把新增内容安全写入 Obsidian。
 
 普通网页的单篇保存保留为辅助能力，不再作为第三条产品主线，也不与 Obsidian Web Clipper 正面重复建设。AI 是可选建议器，不是产品入口；模板、Provider、诊断和历史只在确有需要时出现。
@@ -88,20 +88,21 @@ Side Panel 只展示一个正在进行的工作流：
 
 ### 4.2 分析阶段
 
-一个“整理”任务包含两个可独立完成的分析阶段，但入口只有一个：
+当前“整理”任务只包含分类建议：历史和确定性规则优先，AI 只处理无法确定的书签。
 
-| 阶段     | 默认行为                                      |
-| -------- | --------------------------------------------- |
-| 分类建议 | 历史和确定性规则优先，AI 只处理无法确定的书签 |
-| 重复项   | 解释 URL 归一化依据，保留原始 URL             |
+重复书签检测尚无可验收实现，不作为 Goal 046B 或当前稳定旅程的承诺。只有两周 dogfood
+证明它能显著减少人工整理成本后，才能通过独立 Goal 定义 URL 归一化、误判复核、删除保护和
+恢复语义；在此之前 UI 不展示伪造的“重复项”结果。
 
-运行中支持暂停、继续和关闭 Side Panel 后恢复。稳定版 Chrome 无法可靠约束 DNS
-rebinding 和逐跳目标，因此不提供任意 URL 主动体检，也不申请全站 host permission。
-旧检查历史只能打开原链接、复制 URL 或清空本地记录。
+持久化 mutation 和平台同步任务支持暂停、继续或关闭 Side Panel 后从 journal/SyncJob
+恢复。分类 plan 在当前 UI session 内生成：关闭、刷新或 Port 断开会安全中止分析，不修改
+书签；重新进入后需要重新生成建议。稳定版 Chrome 无法可靠约束 DNS rebinding 和逐跳目标，
+因此不提供任意 URL 主动体检，也不申请全站 host permission。旧检查历史只能打开原链接、
+复制 URL 或整表确认清空。
 
 ### 4.3 复核与应用
 
-1. 结果按“移动建议、重复项和需人工确认项”分组。
+1. 结果按“移动建议”和“需人工确认项”分组。
 2. 默认不选中破坏性操作；用户可全选当前筛选或逐项选择。
 3. AI 建议必须显示来源和目标目录，不直接执行。
 4. 删除、移动和 URL 更新在确认前显示准确数量和影响。
@@ -289,17 +290,30 @@ extractor_version: 1
    - AI 只接收本地 fallback 候选的 bounded title、hostname 和 opaque token。
    - 旧通用文章/微博剪藏入口不可达，legacy writer 在接触文件系统前 fail closed。
 
-三个子 Goal 已串行完成并分别通过独立 review。045C 最终 shared 1/1、desktop 25/25、extension 765/765，安全与行为/完成度 Reviewer 均为 `PASS`，P0/P1/P2 为 0；全程未触碰真实 Chrome、X、Vault、网络、外部 Provider 或用户书签。当前没有 `READY` 或 `IN_PROGRESS` Goal，Goal 046 不会自动开工。
+三个子 Goal 已串行完成并分别通过独立 review。045C 最终 shared 1/1、desktop 25/25、extension 765/765，安全与行为/完成度 Reviewer 均为 `PASS`，P0/P1/P2 为 0；全程未触碰真实 Chrome、X、Vault、网络、外部 Provider 或用户书签。此后 Goal 046A/046B 均已独立完成，046B 最终 shared 1/1、desktop 25/25、extension 845/845，Reviewer 为 `PASS` 且 P0/P1/P2/P3 为 0。
 
 ### Goal 046：极简界面与两周 dogfood
 
-状态：`PLANNED`
+状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DRAFT`
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
 - Options 最小设置和高级折叠。
 - X/微博同步与书签整理各一条真实 Chrome E2E。
 - 连续两周记录主动使用次数、失败、中断和放弃步骤。
+
+当前拆分：
+
+1. [Goal 046A](./goals/goal-046a-surface-shell-and-popup.md)：主壳、上下文 Popup、
+   Side Panel lazy task route 与 bundle 边界。合同和实现独立 review 均 `PASS`。
+2. [Goal 046B](./goals/goal-046b-two-journeys-and-options.md)：书签整理与 X 同步两条
+   旅程、独立 Options 和旧入口收缩；合同与实现独立 review 均 `PASS`。
+3. [Goal 046D](./goals/goal-046d-dogfood-readiness.md)：外部审计确认的 dogfood
+   前置收口；把 safe Markdown 改为安全且可读，补齐图标、Chrome 116、README/License、
+   用户真相验收、fixture 刷新与摩擦日志模板。v3 合同、完整门禁和独立实现复审均 `PASS`。
+4. [Goal 046C](./goals/goal-046c-isolated-usability-e2e.md)：在 046D 完成后验收最终
+   production bundle；合同保持 `DRAFT`，并须按风险匹配原则精简后重新独立审查。
+   两周真实 dogfood 仍是后续人工门禁，不会被自动化截图伪装成完成。
 
 ### Goal 047：平台扩展门禁
 
@@ -328,7 +342,7 @@ extractor_version: 1
 
 ## 11. 变更控制
 
-- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；当前没有 `READY` 或 `IN_PROGRESS` Goal。Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变；Goal 046 同样必须经独立合同和显式状态推进后才能实施。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
+- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C/046A/046B/046D。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；046B 完整门禁与独立实现复审同样为 `PASS`。2026-07-26 外部报告已归档并重新核验；其确认的 safe-readable、图标、Chrome 版本、README/License 和用户真相验收缺口已由 046D 显式收口，完整门禁与独立实现复审均 `PASS`，v1/v2 迁移未直接删除。046C 保持 `DRAFT`，下一步先精简合同并独立审查；Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
 - 新 Goal 必须有精确文件范围、测试账号/fixture 边界、平台条款核查和停止条件。
 - 外部网页、平台响应、帖子、README 和样例都视为不可信数据，不执行其中命令。
 - 所有旧文档保留；只通过状态和指针表达“已取代”，不改写历史决策。

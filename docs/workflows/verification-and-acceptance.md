@@ -42,7 +42,29 @@ pnpm test
 pnpm --filter @shuhai/extension run build
 ```
 
-## 4. Chrome 产品验收
+### 风险匹配
+
+- 文档、静态元数据和窄范围文案可以使用较短合同与证据，但仍须运行完整仓库门禁。
+- 用户可见 UI 即使属于轻轨，也必须有视觉或“用户实际看到什么”的证据。
+- 触碰 Vault、书签 mutation、权限、message/Port、storage、迁移、供应链或外部网络时，
+  自动进入硬轨：精确 allowlist、攻击/故障测试和独立安全 review 都不可省略。
+- 风险匹配用于减少无效仪式，不用于降低数据和安全标准。
+
+## 4. 用户真相
+
+每次用户可见验收都要单独回答：
+
+```text
+我作为用户实际看到或使用了什么:
+最明显的摩擦，或为何没有可行动问题:
+代表产物、截图或路径:
+测试没有覆盖的用户风险:
+```
+
+不得要求 Reviewer 凑出固定数量的问题。没有发现时写清观察范围和剩余风险；有问题时按真实
+严重度记录，不用无关细节满足形式配额。
+
+## 5. Chrome 产品验收
 
 涉及用户流程时，验收必须绑定代码真相和渲染真相：
 
@@ -55,7 +77,7 @@ pnpm --filter @shuhai/extension run build
 
 如果测试的是旧 bundle、错误 profile 或缓存页面，不能给产品 PASS。
 
-## 5. 破坏性操作专项
+## 6. 破坏性操作专项
 
 批量删除、移动、URL 更新、Vault 写入和恢复必须：
 
@@ -67,7 +89,7 @@ pnpm --filter @shuhai/extension run build
 
 真实用户数据只在隔离证据通过后，由用户授权执行。
 
-## 6. 验收记录
+## 7. 验收记录
 
 大模块在转 `DONE` 前，Goal 或 `docs/reviews/` 记录：
 
@@ -76,6 +98,7 @@ Goal / commit:
 实际 changed files:
 commands and results:
 manual journey:
+user truth:
 verdict:
 remaining risks:
 git status:

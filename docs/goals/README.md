@@ -1,39 +1,46 @@
 # ShuHai Goal 状态索引
 
-> 最后更新：2026-07-18
-> 当前状态：Goal 041/042/043/045A/045B/045C 均已 `DONE/PASS`；当前没有 `READY` 或 `IN_PROGRESS` Goal
-> 执行规则：P0/P1 串行安全收口已经完成；下一 Goal 必须先完成独立合同并显式转为 `READY`。
-> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 仍为 `DRAFT`；Goal 046 仍为 `PLANNED`，不得自动实施。
+> 最后更新：2026-07-27
+> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D 均已 `DONE/PASS`；当前没有实施中的 Goal，046C 合同为 `DRAFT`
+> 执行规则：046D 已完成完整门禁和独立实现复审；下一步只精简 046C 合同并做独立合同审查，不直接实施。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B；当前门禁是最终产物的隔离 E2E、真实 Reading View 与视觉验收，不是继续增加 UI。
 
 ## 当前编排状态
 
-| Lane      | 状态                      | 说明                                     | 恢复条件                        |
-| --------- | ------------------------- | ---------------------------------------- | ------------------------------- |
-| Goal 032  | `PAUSED_BY_PRODUCT_RESET` | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
-| Goal 041  | `DONE`                    | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
-| Goal 042  | `DONE`                    | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
-| Goal 043  | `DONE`                    | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
-| Goal 045A | `DONE`                    | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
-| Goal 045B | `DONE`                    | 消息边界、storage 隔离和 URL 体检退役    | 独立 review PASS，P0/P1/P2 为 0 |
-| Goal 045C | `DONE`                    | 内容保存与 AI 隐私收口                   | 独立 review PASS，P0/P1/P2 为 0 |
-| 044/046   | `PLANNED`                 | 微博研究门禁、UI 与 dogfood              | 需要新合同和显式状态推进        |
-| Goal 047  | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| workflow  | `AUTO_ORCHESTRATION_IDLE` | P0/P1 安全收口已完成                     | 等待新 Goal 转为 `READY`        |
+| Lane      | 状态                        | 说明                                     | 恢复条件                        |
+| --------- | --------------------------- | ---------------------------------------- | ------------------------------- |
+| Goal 032  | `PAUSED_BY_PRODUCT_RESET`   | 候选实现保留在主工作区，尚未完成独立验收 | v4 确认后由 Goal 045 审计和收口 |
+| Goal 041  | `DONE`                      | X LIMITED_GO、微博 NO_GO                 | 四轮独立 review 最终 PASS       |
+| Goal 042  | `DONE`                      | 持久化同步、catalog 与 Vault 安全基础    | 独立 review PASS                |
+| Goal 043  | `DONE`                      | X 增量同步 MVP，`LIMITED_GO/batch-only`  | 独立 review 与真实 QA PASS      |
+| Goal 045A | `DONE`                      | 三类书签 mutation journal                | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045B | `DONE`                      | 消息边界、storage 隔离和 URL 体检退役    | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 045C | `DONE`                      | 内容保存与 AI 隐私收口                   | 独立 review PASS，P0/P1/P2 为 0 |
+| Goal 044  | `PLANNED`                   | 微博研究门禁                             | 需要新研究合同和显式状态推进    |
+| Goal 046A | `DONE`                      | 主壳拆分、上下文 Popup 与 bundle 边界    | 独立实现 review `PASS`          |
+| Goal 046B | `DONE`                      | 两条旅程、独立 Options 与旧入口收缩      | 独立实现 review `PASS`          |
+| Goal 046D | `DONE`                      | 可读笔记、发布卫生、验收与 dogfood 模板  | 独立实现 review `PASS`          |
+| Goal 046C | `DRAFT`                     | 最终隔离 E2E、Reading View 与视觉验收    | 精简合同 + 独立合同 review      |
+| Goal 047  | `RESEARCH_GATE`             | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
+| workflow  | `AUTO_ORCHESTRATION_ACTIVE` | 当前无实施 Goal；下一步只处理 046C 合同  | 046C 合同独立 review `PASS`     |
 
 ## v4 当前队列
 
-| Goal                                                   | 状态                      | 目的                                      | 前置条件                       |
-| ------------------------------------------------------ | ------------------------- | ----------------------------------------- | ------------------------------ |
-| [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现             | Goal 045 重新审计              |
-| [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性             | 独立 PASS                      |
-| [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础  | 独立 review PASS               |
-| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `DONE`                    | X 收藏增量同步 MVP                        | 独立 review 与真实 QA PASS     |
-| 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                      | 新研究门禁改变当前微博 `NO_GO` |
-| [045A](./goal-045a-bookmark-mutation-safety.md)        | `DONE`                    | 删除、URL 更新和分类移动 journal          | mock-only + 独立 review PASS   |
-| [045B](./goal-045b-extension-trust-boundary.md)        | `DONE`                    | 消息、storage、权限与 URL 体检退役        | mock-only + 独立 review PASS   |
-| [045C](./goal-045c-content-save-ai-privacy.md)         | `DONE`                    | 内容保存链路和 AI 隐私边界                | mock-only + 独立 review PASS   |
-| 046                                                    | `PLANNED`                 | Popup/Side Panel/Options 极简化和 dogfood | 042-045 核心能力可验收         |
-| 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                      | 两周真实使用数据               |
+| Goal                                                   | 状态                      | 目的                                     | 前置条件                       |
+| ------------------------------------------------------ | ------------------------- | ---------------------------------------- | ------------------------------ |
+| [032](./goal-032-transactional-bookmark-operations.md) | `PAUSED_BY_PRODUCT_RESET` | 书签批量操作 journal 候选实现            | Goal 045 重新审计              |
+| [041](./goal-041-social-sync-feasibility-spike.md)     | `DONE`                    | X/微博 API 与收藏页扫描可行性            | 独立 PASS                      |
+| [042](./goal-042-sync-vault-foundation.md)             | `DONE`                    | SyncJob、catalog、schema、Vault 安全基础 | 独立 review PASS               |
+| [043](./goal-043-x-bookmarks-incremental-sync.md)      | `DONE`                    | X 收藏增量同步 MVP                       | 独立 review 与真实 QA PASS     |
+| 044                                                    | `PLANNED`                 | 微博收藏增量同步 MVP                     | 新研究门禁改变当前微博 `NO_GO` |
+| [045A](./goal-045a-bookmark-mutation-safety.md)        | `DONE`                    | 删除、URL 更新和分类移动 journal         | mock-only + 独立 review PASS   |
+| [045B](./goal-045b-extension-trust-boundary.md)        | `DONE`                    | 消息、storage、权限与 URL 体检退役       | mock-only + 独立 review PASS   |
+| [045C](./goal-045c-content-save-ai-privacy.md)         | `DONE`                    | 内容保存链路和 AI 隐私边界               | mock-only + 独立 review PASS   |
+| [046A](./goal-046a-surface-shell-and-popup.md)         | `DONE`                    | Popup/Side Panel 主壳与按需加载          | 独立实现 review PASS           |
+| [046B](./goal-046b-two-journeys-and-options.md)        | `DONE`                    | 两条用户旅程与独立 Options               | 独立实现 review PASS           |
+| [046D](./goal-046d-dogfood-readiness.md)               | `DONE`                    | safe-readable、发布卫生与 dogfood 前置   | 独立实现 review PASS           |
+| [046C](./goal-046c-isolated-usability-e2e.md)          | `DRAFT`                   | 最终产物隔离 E2E、可用性与视觉验收       | 精简合同 + 独立合同 review     |
+| 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                     | 两周真实使用数据               |
 
 032-040 原队列不再按旧依赖链自动推进。Goal 033-040 的安全、持久化、提取和 UI 结论没有删除，但必须在 042-046 中按 v4 用户旅程重新写范围，不得直接沿用旧编号实施。
 

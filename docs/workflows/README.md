@@ -1,6 +1,6 @@
 # ShuHai Workflow
 
-> 最后更新：2026-07-18
+> 最后更新：2026-07-27
 > 适用范围：ShuHai 的规划、实施、审查、QA、提交与状态维护。
 
 ## 1. 为什么有这套流程
@@ -48,6 +48,7 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 - [命令与环境安全](./command-safety.md)
 - [危险命令硬禁止清单](./dangerous-command-denylist.md)
 - [验证与验收](./verification-and-acceptance.md)
+- [平台 Fixture 刷新](./fixture-refresh.md)
 
 ## 5. 当前大模块
 
@@ -58,6 +59,6 @@ ShuHai 使用“大模块 owner + 独立验收”模式：
 |    2 | 同步、catalog、Vault 与 schema 基础 | 042     | `DONE/PASS`                                         |
 |    3 | X 与微博增量同步                    | 043/044 | 043 `DONE/PASS`，044 `PLANNED`                      |
 |    4 | 书签整理安全收口                    | 045A-C  | 045A/045B/045C `DONE/PASS`                          |
-|    5 | 极简界面和两周 dogfood              | 046     | `PLANNED`                                           |
+|    5 | 极简界面和两周 dogfood              | 046     | 046A/046B/046D `DONE/PASS`；046C `DRAFT`            |
 
-Goal 043B 已完成最终真实 pause/resume、同一 X 标签 `tab_changed`、用户取消和 no-write 证据，独立完成审查为 `PASS`。X 仍是 `LIMITED_GO/batch-only`，不能用受界批次推导 feed 末尾或完整历史归档。Goal 045A 的 mock-only 书签 mutation 安全收口、Goal 045B 的 trust-boundary/URL-health 收口和 Goal 045C 的内容保存/AI 隐私收口均已独立 `PASS`。当前没有 `READY` 或 `IN_PROGRESS` Goal；Goal 044/046 保持 `PLANNED`，不得从旧快照或历史状态自动开工。当前队列始终以 [`docs/goals/README.md`](../goals/README.md) 为准。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此仍不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。
+Goal 043B 已完成最终真实 pause/resume、同一 X 标签 `tab_changed`、用户取消和 no-write 证据，独立完成审查为 `PASS`。X 仍是 `LIMITED_GO/batch-only`，不能用受界批次推导 feed 末尾或完整历史归档。Goal 045A 的 mock-only 书签 mutation 安全收口、Goal 045B 的 trust-boundary/URL-health 收口和 Goal 045C 的内容保存/AI 隐私收口均已独立 `PASS`。Goal 046A/046B 已完成主壳、两条用户旅程、独立 Options、按需加载和旧入口删除，完整门禁与独立实现 review 均为 `PASS`。外部战略报告已原样归档并经代码核验；046D 已完成 safe-readable、发布卫生和 dogfood 前置收口，完整门禁与独立实现复审均 `PASS`。当前没有实施中的 Goal；046C 保持 `DRAFT`，下一步只精简合同并独立审查。Goal 044 也保持 `PLANNED`，不得从旧快照或历史状态自动开工。当前队列始终以 [`docs/goals/README.md`](../goals/README.md) 为准。未来模块会共享 message、IndexedDB、Vault writer 和界面状态，因此仍不允许多个 writer 同时实施；平台只读研究、独立安全 review 和 fixture 设计可以并行。

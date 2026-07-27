@@ -6,6 +6,7 @@ import type {
   AiProviderTestResult,
   AppSettings,
   BookmarkItem,
+  BookmarkTaskSettings,
   ClassificationMode,
   ClassificationProgress,
   ClassificationSuggestion,
@@ -343,7 +344,7 @@ function buildFolderTargets(folders: FolderItem[]): FolderTarget[] {
 
 function selectAiCandidates(
   bookmarksInput: BookmarkItem[],
-  settings: AppSettings,
+  settings: Pick<BookmarkTaskSettings, 'customRules'>,
   mode: ClassificationMode,
 ): BookmarkItem[] {
   const bookmarks = bookmarksInput.map(cloneBookmark);
@@ -369,7 +370,7 @@ export interface AiClassificationCandidateInspection {
 
 export function inspectAiClassificationCandidates(
   bookmarksInput: BookmarkItem[],
-  settings: AppSettings,
+  settings: BookmarkTaskSettings,
   options: {
     mode?: ClassificationMode;
     folders?: FolderItem[];

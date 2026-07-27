@@ -13,15 +13,13 @@ import type {
   ClassificationSuggestion,
   ClassificationProgress,
   ClassificationMode,
-  ExtensionState,
-  StateSummary,
 } from '../shared/bookmark-types.js';
 import {
   parseBookmarkOperationCommand,
   parseBookmarkOperationCommandResponse,
 } from '../shared/bookmark-types.js';
 import { generateClassificationPlan } from '../shared/classifier.js';
-import { getLastMoveRecords, listBackups } from '../utils/backup.js';
+import { getBackupByKey, listBackupSummaries } from '../utils/backup.js';
 import { flattenBookmarkTree, getFullTree } from '../utils/chrome-bookmarks.js';
 import {
   BookmarkOperationCommandError,
@@ -40,12 +38,11 @@ import {
   clearUrlHealthRecords,
   discardLegacyAiConfiguration,
   getAiProviderSecretForUse,
-  getExportManifests,
+  getBookmarkTaskSettings,
   getOnboardingProgress,
   getSettings,
   inspectLegacyPendingCapture,
   normalizeSettings,
-  getOnboarded,
   getBookmarkOperations,
   getUrlHealthRecords,
   ensureTrustedLocalStorageAccess,
@@ -68,12 +65,33 @@ import {
   parseClassificationPortRequest,
   parseExtensionRequest,
   parseLegacyResponse,
+  isOptionsPageRequest,
   validateExtensionUiSender,
+  validateOptionsPageSender,
 } from '../shared/extension-messages.js';
+import {
+  SURFACE_INTENT_TTL_MS,
+  SURFACE_MAX_PENDING_INTENTS,
+  SURFACE_MAX_TOMBSTONES,
+  SURFACE_REGISTRY_KEY,
+  SURFACE_TOMBSTONE_TTL_MS,
+  emptySurfaceSessionRegistry,
+  hasSurfaceProtocol,
+  makeSurfaceError,
+  makeSurfaceSuccess,
+  parseSurfaceRequest,
+  parseSurfaceSessionRegistry,
+  type SurfaceActiveTask,
+  type SurfaceErrorCode,
+  type SurfaceLaunchIntent,
+  type SurfaceRequest,
+  type SurfaceResponse,
+  type SurfaceSessionRegistry,
+  type SurfaceSummary,
+} from '../shared/surface-contract.js';
 import { DEFAULT_PROVIDER_IDS, providerPermission } from '../shared/ai-providers.js';
 import { addXItemReviewActivity } from '../utils/activity-log.js';
 import { saveExtractorDiagnostic } from '../utils/extractor-diagnostics.js';
-import { getVaultHandle } from '../utils/vault-writer.js';
 import {
   X_BOOKMARKS_ADAPTER_VERSION,
   X_BOOKMARKS_CEILINGS,
@@ -1402,45 +1420,321 @@ function ensureXSyncRecovery(): Promise<{ readonly ok: boolean }> {
   return xSyncRecovery;
 }
 
-async function getState(): Promise<ExtensionState> {
+async function getBookmarkTaskSnapshot() {
   const tree = await getFullTree();
   const summary = flattenBookmarkTree(tree);
-  const backups = await listBackups();
-  const exportManifests = await getExportManifests();
-  const lastMoveRecords = await getLastMoveRecords();
-  const settings = await getSettings();
-  const urlHealthRecords = await getUrlHealthRecords();
-  const onboarded = await getOnboarded();
 
   return {
-    tree,
-    bookmarks: summary.bookmarks,
-    folders: summary.folders,
-    backups,
-    exportManifests,
-    urlHealthRecords,
-    bookmarkOperations: [],
-    lastMoveRecordCount: lastMoveRecords.length,
-    onboarded,
-    settings,
+    bookmarks: summary.bookmarks.map(({ dateAdded, ...bookmark }) => ({
+      ...bookmark,
+      ...(dateAdded === undefined ? {} : { dateAdded }),
+    })),
+    folders: summary.folders.map(({ parentId, ...folder }) => ({
+      ...folder,
+      ...(parentId === undefined ? {} : { parentId }),
+    })),
+    settings: await getBookmarkTaskSettings(),
   };
 }
 
-async function getStateSummary(): Promise<StateSummary> {
-  const tree = await getFullTree();
-  const summary = flattenBookmarkTree(tree);
-  const settings = await getSettings();
-  const exportManifests = await getExportManifests();
-  const vaultHandle = await getVaultHandle().catch(() => null);
+class SurfaceServiceError extends Error {
+  constructor(readonly code: SurfaceErrorCode) {
+    super(code);
+    this.name = 'SurfaceServiceError';
+  }
+}
+
+let surfaceRegistryQueue: Promise<void> = Promise.resolve();
+
+function withSurfaceRegistryLock<T>(operation: () => Promise<T>): Promise<T> {
+  const result = surfaceRegistryQueue.then(operation);
+  surfaceRegistryQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function getChromeWindow(windowId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!chrome.windows?.get) {
+      reject(new SurfaceServiceError('window_unavailable'));
+      return;
+    }
+    chrome.windows.get(windowId, () => {
+      if (chrome.runtime.lastError) {
+        reject(new SurfaceServiceError('window_unavailable'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function readSurfaceRegistry(): Promise<SurfaceSessionRegistry> {
+  return new Promise((resolve, reject) => {
+    if (!chrome.storage?.session) {
+      reject(new SurfaceServiceError('storage_unavailable'));
+      return;
+    }
+    chrome.storage.session.get(SURFACE_REGISTRY_KEY, (items) => {
+      if (chrome.runtime.lastError) {
+        reject(new SurfaceServiceError('storage_unavailable'));
+        return;
+      }
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(items, SURFACE_REGISTRY_KEY);
+        const value = descriptor && 'value' in descriptor ? descriptor.value : undefined;
+        resolve(
+          value === undefined ? emptySurfaceSessionRegistry() : parseSurfaceSessionRegistry(value),
+        );
+      } catch {
+        reject(new SurfaceServiceError('storage_unavailable'));
+      }
+    });
+  });
+}
+
+function writeSurfaceRegistry(registry: SurfaceSessionRegistry): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!chrome.storage?.session) {
+      reject(new SurfaceServiceError('storage_unavailable'));
+      return;
+    }
+    let validated: SurfaceSessionRegistry;
+    try {
+      validated = parseSurfaceSessionRegistry(registry);
+    } catch {
+      reject(new SurfaceServiceError('storage_unavailable'));
+      return;
+    }
+    chrome.storage.session.set({ [SURFACE_REGISTRY_KEY]: validated }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new SurfaceServiceError('storage_unavailable'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function pruneSurfaceRegistry(
+  registry: SurfaceSessionRegistry,
+  nowMs: number,
+): { registry: SurfaceSessionRegistry; changed: boolean } {
+  const pending = registry.pending.filter((intent) => intent.expiresAtMs > nowMs);
+  const tombstones = registry.tombstones
+    .filter((tombstone) => tombstone.expiresAtMs > nowMs)
+    .sort((left, right) => left.expiresAtMs - right.expiresAtMs)
+    .slice(-SURFACE_MAX_TOMBSTONES);
+  return {
+    registry: { version: 1, pending, tombstones },
+    changed:
+      pending.length !== registry.pending.length ||
+      tombstones.length !== registry.tombstones.length,
+  };
+}
+
+async function readPrunedSurfaceRegistry(nowMs: number): Promise<SurfaceSessionRegistry> {
+  const stored = await readSurfaceRegistry();
+  const pruned = pruneSurfaceRegistry(stored, nowMs);
+  if (pruned.changed) {
+    await writeSurfaceRegistry(pruned.registry);
+  }
+  return pruned.registry;
+}
+
+async function getActiveSurfaceTask(): Promise<SurfaceActiveTask | null> {
+  const store = await openSyncStore();
+  try {
+    const job = await store.getActiveJob('x');
+    if (!job) {
+      return null;
+    }
+    if (
+      !['prepared', 'scanning', 'paused', 'ready_for_review', 'writing', 'partial'].includes(
+        job.status,
+      )
+    ) {
+      return null;
+    }
+    return {
+      kind: job.id.startsWith('x-single-') ? 'x-single' : 'x-sync',
+      status: job.status as SurfaceActiveTask['status'],
+      updatedAt: job.updatedAt,
+    };
+  } finally {
+    store.close();
+  }
+}
+
+async function getSurfaceSummary(windowId: number): Promise<SurfaceSummary> {
+  let activeTask: SurfaceActiveTask | null;
+  try {
+    activeTask = await getActiveSurfaceTask();
+  } catch {
+    throw new SurfaceServiceError('summary_unavailable');
+  }
+
+  const registry = await withSurfaceRegistryLock(() => readPrunedSurfaceRegistry(Date.now()));
+  const pendingLaunch = registry.pending.find((intent) => intent.windowId === windowId) ?? null;
 
   return {
-    bookmarkCount: summary.bookmarks.length,
-    folderCount: summary.folders.length,
-    onboarded: await getOnboarded(),
-    hasVaultHandle: Boolean(vaultHandle),
-    hasAiProvider: settings.aiProviders.some((provider) => provider.enabled && provider.hasApiKey),
-    lastExportDate: exportManifests[0]?.exportedAt,
+    bookmarkCount: null,
+    folderCount: null,
+    vaultConfigured: null,
+    aiConfigured: null,
+    lastSavedAt: null,
+    activeTask,
+    pendingLaunch,
   };
+}
+
+async function createSurfaceLaunch(
+  windowId: number,
+  target: SurfaceLaunchIntent['target'],
+): Promise<SurfaceLaunchIntent> {
+  return withSurfaceRegistryLock(async () => {
+    const nowMs = Date.now();
+    const registry = await readPrunedSurfaceRegistry(nowMs);
+    const pending = registry.pending.filter((intent) => intent.windowId !== windowId);
+    if (pending.length >= SURFACE_MAX_PENDING_INTENTS) {
+      throw new SurfaceServiceError('storage_unavailable');
+    }
+    const randomId = globalThis.crypto?.randomUUID?.();
+    if (!randomId) {
+      throw new SurfaceServiceError('operation_failed');
+    }
+    const intent = {
+      intentId: `surface-${randomId}`,
+      target,
+      windowId,
+      expiresAtMs: nowMs + SURFACE_INTENT_TTL_MS,
+    } satisfies SurfaceLaunchIntent;
+    await writeSurfaceRegistry({
+      ...registry,
+      pending: [...pending, intent],
+    });
+    return intent;
+  });
+}
+
+async function acknowledgeSurfaceLaunch(
+  windowId: number,
+  intentId: string,
+): Promise<{ acknowledged: true; alreadyAcknowledged: boolean }> {
+  return withSurfaceRegistryLock(async () => {
+    const nowMs = Date.now();
+    const stored = await readSurfaceRegistry();
+    const expiredMatch = stored.pending.find(
+      (intent) =>
+        intent.windowId === windowId && intent.intentId === intentId && intent.expiresAtMs <= nowMs,
+    );
+    const pruned = pruneSurfaceRegistry(stored, nowMs).registry;
+    const priorAck = pruned.tombstones.find(
+      (tombstone) => tombstone.windowId === windowId && tombstone.intentId === intentId,
+    );
+    if (priorAck) {
+      if (pruned.pending.length !== stored.pending.length) {
+        await writeSurfaceRegistry(pruned);
+      }
+      return { acknowledged: true, alreadyAcknowledged: true };
+    }
+    if (expiredMatch) {
+      await writeSurfaceRegistry(pruned);
+      throw new SurfaceServiceError('intent_expired');
+    }
+    const pending = pruned.pending.find((intent) => intent.windowId === windowId);
+    if (!pending || pending.intentId !== intentId) {
+      if (
+        pruned.pending.length !== stored.pending.length ||
+        pruned.tombstones.length !== stored.tombstones.length
+      ) {
+        await writeSurfaceRegistry(pruned);
+      }
+      throw new SurfaceServiceError('intent_mismatch');
+    }
+    const tombstones = [
+      ...pruned.tombstones,
+      {
+        intentId,
+        windowId,
+        acknowledgedAtMs: nowMs,
+        expiresAtMs: nowMs + SURFACE_TOMBSTONE_TTL_MS,
+      },
+    ]
+      .sort((left, right) => left.expiresAtMs - right.expiresAtMs)
+      .slice(-SURFACE_MAX_TOMBSTONES);
+    await writeSurfaceRegistry({
+      version: 1,
+      pending: pruned.pending.filter((intent) => intent.intentId !== intentId),
+      tombstones,
+    });
+    return { acknowledged: true, alreadyAcknowledged: false };
+  });
+}
+
+async function executeSurfaceRequest(request: SurfaceRequest): Promise<SurfaceResponse> {
+  await getChromeWindow(request.windowId);
+  switch (request.type) {
+    case 'summary':
+      return makeSurfaceSuccess(request, await getSurfaceSummary(request.windowId));
+    case 'launch':
+      return makeSurfaceSuccess(
+        request,
+        await createSurfaceLaunch(request.windowId, request.target),
+      );
+    case 'ackLaunch':
+      return makeSurfaceSuccess(
+        request,
+        await acknowledgeSurfaceLaunch(request.windowId, request.intentId),
+      );
+  }
+}
+
+function readSurfaceRequestId(message: unknown): string {
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+    return 'invalid-request';
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(message, 'requestId');
+    return descriptor && 'value' in descriptor && typeof descriptor.value === 'string'
+      ? descriptor.value
+      : 'invalid-request';
+  } catch {
+    return 'invalid-request';
+  }
+}
+
+async function handleSurfaceMessage(
+  message: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<SurfaceResponse> {
+  const requestId = readSurfaceRequestId(message);
+  if (!validateExtensionUiSender(sender)) {
+    return makeSurfaceError(requestId, 'forbidden_sender');
+  }
+
+  let request: SurfaceRequest;
+  try {
+    request = parseSurfaceRequest(message);
+  } catch {
+    return makeSurfaceError(requestId, 'invalid_request');
+  }
+
+  const bootstrap = await securityBootstrap;
+  if (!bootstrap.ok) {
+    return makeSurfaceError(request.requestId, 'storage_unavailable');
+  }
+
+  try {
+    return await executeSurfaceRequest(request);
+  } catch (error) {
+    return makeSurfaceError(
+      request.requestId,
+      error instanceof SurfaceServiceError ? error.code : 'operation_failed',
+    );
+  }
 }
 
 async function createPlan(
@@ -1727,10 +2021,8 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
   switch (request.type) {
     case 'security:getBootstrapStatus':
       return { ok: true, data: { ready: true } };
-    case 'state:get':
-      return { ok: true, data: await getState() };
-    case 'state:summary':
-      return { ok: true, data: await getStateSummary() };
+    case 'bookmarkTask:getSnapshot':
+      return { ok: true, data: await getBookmarkTaskSnapshot() };
     case 'operations:getRecent':
       return { ok: true, data: { operations: await getBookmarkOperations() } };
     case 'plan:create':
@@ -1808,11 +2100,15 @@ async function executeLegacyRequest(request: ExtensionRequest): Promise<unknown>
       return { ok: true, data: { cleared: true } };
     case 'xSingle:start':
       return { ok: true, data: await startXSingleCapture() };
+    case 'health:listRecords':
+      return { ok: true, data: { records: await getUrlHealthRecords() } };
     case 'health:clearRecords':
       await clearUrlHealthRecords();
       return { ok: true, data: { cleared: true } };
-    case 'backups:list':
-      return { ok: true, data: await listBackups() };
+    case 'backups:listSummaries':
+      return { ok: true, data: { backups: await listBackupSummaries() } };
+    case 'backups:get':
+      return { ok: true, data: { backup: (await getBackupByKey(request.key)) ?? null } };
   }
 }
 
@@ -1831,14 +2127,22 @@ async function handleLegacyMessage(
   message: unknown,
   sender: chrome.runtime.MessageSender,
 ): Promise<LegacyResponse<ExtensionRequest>> {
-  if (!validateExtensionUiSender(sender)) {
-    return makeLegacyError('forbidden_sender');
-  }
   let request: ExtensionRequest;
   try {
     request = parseExtensionRequest(message);
   } catch {
     return makeLegacyError('invalid_request');
+  }
+  if (request.type === 'bookmarkTask:getSnapshot') {
+    if (!validateExtensionUiSender(sender, 'sidepanel')) {
+      return makeLegacyError('forbidden_sender');
+    }
+  } else if (validateOptionsPageSender(sender)) {
+    if (!isOptionsPageRequest(request)) {
+      return makeLegacyError('forbidden_sender');
+    }
+  } else if (!validateExtensionUiSender(sender)) {
+    return makeLegacyError('forbidden_sender');
   }
 
   const bootstrap = await securityBootstrap;
@@ -2179,6 +2483,10 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+  if (hasSurfaceProtocol(message)) {
+    void handleSurfaceMessage(message, sender).then(sendResponse);
+    return true;
+  }
   if (hasXSyncProtocolEnvelope(message)) {
     void handleXSyncUiMessage(message, sender).then(sendResponse);
     return true;

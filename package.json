@@ -2,7 +2,7 @@
   "name": "shuhai",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-driven bookmark knowledge management tool",
+  "description": "Local-first Chrome bookmark organizer and reviewed X-to-Obsidian sync tool",
   "author": "ShuHai Contributors",
   "license": "MIT",
   "engines": {

@@ -1,83 +1,68 @@
+@import '../design/tokens.css';
 @import 'tailwindcss';
 
-@theme {
-  --color-background: #faf8f5;
-  --color-foreground: #1c1917;
-  --color-card: #ffffff;
-  --color-card-foreground: #1c1917;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #1c1917;
-  --color-muted: #f5f1ea;
-  --color-muted-foreground: #57534e;
-  --color-border: #e7e1d6;
-  --color-input: #e7e1d6;
-  --color-primary: #146c5b;
-  --color-primary-foreground: #ffffff;
-  --color-ring: #146c5b;
-  --color-secondary: #efeae0;
-  --color-secondary-foreground: #1c1917;
-  --color-accent: #c2410c;
-  --color-accent-foreground: #ffffff;
-  --color-accent-soft: #fff1e6;
-  --color-destructive: #991b1b;
-  --color-destructive-foreground: #ffffff;
-  --radius: 0.5rem;
+@theme inline {
+  --color-background: var(--shuhai-background);
+  --color-foreground: var(--shuhai-foreground);
+  --color-card: var(--shuhai-surface);
+  --color-card-foreground: var(--shuhai-foreground);
+  --color-popover: var(--shuhai-surface);
+  --color-popover-foreground: var(--shuhai-foreground);
+  --color-muted: var(--shuhai-muted);
+  --color-muted-foreground: var(--shuhai-muted-foreground);
+  --color-border: var(--shuhai-border);
+  --color-input: var(--shuhai-border);
+  --color-primary: var(--shuhai-primary);
+  --color-primary-foreground: var(--shuhai-primary-foreground);
+  --color-ring: var(--shuhai-ring);
+  --color-secondary: var(--shuhai-secondary);
+  --color-secondary-foreground: var(--shuhai-secondary-foreground);
+  --color-accent: var(--shuhai-accent);
+  --color-accent-foreground: var(--shuhai-accent-foreground);
+  --color-accent-soft: var(--shuhai-accent-soft);
+  --color-destructive: var(--shuhai-destructive);
+  --color-destructive-foreground: var(--shuhai-destructive-foreground);
+  --radius-md: var(--shuhai-radius);
   --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', sans-serif;
   --font-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', ui-serif, serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: #14110d;
-    --color-foreground: #f5f1ea;
-    --color-card: #1f1b16;
-    --color-card-foreground: #f5f1ea;
-    --color-popover: #1f1b16;
-    --color-popover-foreground: #f5f1ea;
-    --color-muted: #1a1712;
-    --color-muted-foreground: #a8a29e;
-    --color-border: #2d2820;
-    --color-input: #2d2820;
-    --color-primary: #1a9a7a;
-    --color-secondary: #2d2820;
-    --color-secondary-foreground: #f5f1ea;
-    --color-accent: #ea580c;
-    --color-accent-foreground: #14110d;
-    --color-accent-soft: #2a1810;
-    --color-destructive: #dc2626;
-    --color-destructive-foreground: #ffffff;
-    --color-ring: #1a9a7a;
-  }
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--shuhai-background);
+}
+
 body {
   min-width: 420px;
   width: 420px;
+  height: 600px;
   min-height: 600px;
   margin: 0;
   overflow: hidden;
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
 }
 
 .shuhai-logomark {
   display: inline-flex;
-  height: 1.25rem;
-  width: 1.25rem;
+  height: 1.5rem;
+  width: 1.5rem;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--shuhai-radius);
   background: var(--color-primary);
   color: var(--color-primary-foreground);
   font-family: var(--font-serif);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
 }
@@ -85,6 +70,7 @@ body {
 body.shuhai-sidepanel {
   min-width: 360px;
   width: auto;
+  height: 100vh;
   min-height: 100vh;
   overflow: hidden;
 }
@@ -98,6 +84,15 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 24%, transparent);
 }
 
 @keyframes fade-in {
@@ -151,4 +146,15 @@ textarea {
 
 .animate-soft-rise {
   animation: soft-rise 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

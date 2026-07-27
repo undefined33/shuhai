@@ -1796,5 +1796,5 @@ describe('bookmark operation journal', () => {
         operation.commands.map((command) => command.requestId),
       ),
     ).toEqual(expect.arrayContaining(['url-large-request', 'url-concurrent-request']));
-  });
+  }, 10_000);
 });

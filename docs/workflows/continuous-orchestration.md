@@ -57,18 +57,16 @@ codefact -> implement -> unit/integration tests -> build -> manual journey -> ha
 
 ## 5. 当前执行队列
 
-当前队列的唯一真相在 `docs/goals/README.md`。用户已授权按前置条件串行完成前三个模块：
+当前队列、状态和前置条件只在 [`docs/goals/README.md`](../goals/README.md) 维护。本文件不复制
+具体 Goal 快照，避免旧的 `IN_PROGRESS` 或 `PLANNED` 文本在路线推进后继续误导 agent。
 
-```text
-Goal 032 paused
-Goal 041 done / independent pass
-Goal 042 in progress
-Goal 043 planned, waits for 041/042
-```
+选择下一条 lane 时仍须遵守：
 
-- Goal 041 没有得到平台 `GO/LIMITED_GO` 前，不写生产社交同步代码。
-- Goal 032 的候选实现只能由 Goal 045 显式接管，不能在旧 Goal 中自行恢复。
-- 不插入视觉装饰、Provider 扩张、任意网页全文抓取、Electron 或 companion 工作。
+- 当前看板最多一个 `READY`/`IN_PROGRESS` 实施 Goal。
+- 平台只有通过独立 `GO/LIMITED_GO` 研究门禁后才能接生产 adapter。
+- 旧 Goal 的候选代码只能由当前路线显式接管，不能自行恢复。
+- 不插入未被当前 Goal 授权的视觉装饰、Provider 扩张、任意网页全文抓取、Electron 或
+  companion 工作。
 
 ## 6. 无动作时的处理
 

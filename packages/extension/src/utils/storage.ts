@@ -9,6 +9,7 @@ import type {
   BookmarkOperationItem,
   BookmarkOperationJournalEnvelope,
   BookmarkOperationStorageErrorCode,
+  BookmarkTaskSettings,
   CapturedContent,
   ClassificationMode,
   CustomRule,
@@ -34,6 +35,7 @@ import {
   UrlHealthRecordSchema,
   cloneBoundedStructuredValue,
 } from '../shared/extension-messages.js';
+import type { StructuredInputLimits } from '../shared/extension-messages.js';
 import type { OnboardingProgress } from './onboarding.js';
 import type { LegacyPendingSummary } from '../shared/extension-messages.js';
 import {
@@ -78,6 +80,53 @@ const SETTINGS_INPUT_LIMITS = Object.freeze({
   maxDepth: 32,
   maxNodes: 20_000,
   maxStringBytes: 256 * 1_024,
+});
+
+interface BookmarkTaskFieldLimits extends StructuredInputLimits {
+  readonly maxArrayLength?: number;
+}
+
+const BOOKMARK_TASK_FIELD_LIMITS: Readonly<
+  Record<keyof BookmarkTaskSettings, BookmarkTaskFieldLimits>
+> = Object.freeze({
+  useAi: Object.freeze({
+    maxBytes: 16,
+    maxDepth: 1,
+    maxNodes: 2,
+    maxStringBytes: 8,
+  }),
+  activeProviderId: Object.freeze({
+    maxBytes: 256,
+    maxDepth: 1,
+    maxNodes: 2,
+    maxStringBytes: 128,
+  }),
+  aiProviders: Object.freeze({
+    maxBytes: 32 * 1_024,
+    maxDepth: 6,
+    maxNodes: 256,
+    maxStringBytes: 4_096,
+    maxArrayLength: AI_PROVIDER_TYPES.length,
+  }),
+  aiLegacySummary: Object.freeze({
+    maxBytes: 4 * 1_024,
+    maxDepth: 4,
+    maxNodes: 32,
+    maxStringBytes: 128,
+  }),
+  customRules: Object.freeze({
+    maxBytes: 512 * 1_024,
+    maxDepth: 8,
+    maxNodes: 100_000,
+    maxStringBytes: 4_096,
+    maxArrayLength: 10_000,
+  }),
+  defaultClassifyMode: Object.freeze({
+    maxBytes: 32,
+    maxDepth: 1,
+    maxNodes: 2,
+    maxStringBytes: 16,
+  }),
 });
 
 interface StoredPublicSettings {
@@ -246,6 +295,44 @@ function objectRecord(value: unknown): Record<string, unknown> {
 
 function arrayOrEmpty<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function ownDataProperty(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function bookmarkTaskSettingsSource(raw: unknown): unknown {
+  return ownDataProperty(raw, 'version') === AI_PUBLIC_SETTINGS_VERSION
+    ? ownDataProperty(raw, 'settings')
+    : raw;
+}
+
+function readBookmarkTaskField<K extends keyof BookmarkTaskSettings>(
+  source: unknown,
+  key: K,
+): unknown {
+  const value = ownDataProperty(source, key);
+  const limits = BOOKMARK_TASK_FIELD_LIMITS[key];
+  if (
+    limits.maxArrayLength !== undefined &&
+    Array.isArray(value) &&
+    value.length > limits.maxArrayLength
+  ) {
+    return undefined;
+  }
+  try {
+    return cloneBoundedStructuredValue(value, limits);
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeClassifyMode(value: unknown): ClassificationMode {
@@ -555,6 +642,38 @@ export async function getSettings(): Promise<AppSettings> {
     normalizePublicSettingsRecord(safeSettingsRecord(cloned.settings)),
     envelope,
   );
+}
+
+export async function getBookmarkTaskSettings(): Promise<BookmarkTaskSettings> {
+  const raw = await getLocalValue<unknown>(SETTINGS_KEY, {});
+  const source = bookmarkTaskSettingsSource(raw);
+  const secrets = await readAiProviderSecretsForPublicState();
+  const secretProviders = new Set(secrets.providers.map((secret) => secret.provider));
+  const providers = providersWithDefaults(
+    arrayOrEmpty<unknown>(readBookmarkTaskField(source, 'aiProviders'))
+      .map(normalizePublicProvider)
+      .filter((provider): provider is AiProviderConfig => Boolean(provider)),
+  ).map((provider) => ({
+    ...provider,
+    hasApiKey: secretProviders.has(provider.provider),
+  }));
+  const activeProviderIdValue = readBookmarkTaskField(source, 'activeProviderId');
+  const activeProviderId =
+    typeof activeProviderIdValue === 'string' &&
+    providers.some((provider) => provider.id === activeProviderIdValue)
+      ? activeProviderIdValue
+      : DEFAULT_SETTINGS.activeProviderId;
+
+  return {
+    useAi: readBookmarkTaskField(source, 'useAi') === true,
+    activeProviderId,
+    aiProviders: providers,
+    aiLegacySummary: normalizeLegacySummary(readBookmarkTaskField(source, 'aiLegacySummary')),
+    customRules: normalizeCustomRules(readBookmarkTaskField(source, 'customRules')),
+    defaultClassifyMode: normalizeClassifyMode(
+      readBookmarkTaskField(source, 'defaultClassifyMode'),
+    ),
+  };
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

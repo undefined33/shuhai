@@ -5,7 +5,7 @@ import type {
   AiProviderSecretsEnvelope,
   AiProviderTemplate,
   AiProviderType,
-  AppSettings,
+  BookmarkTaskSettings,
 } from './bookmark-types.js';
 import { PROVIDER_TEMPLATES } from './bookmark-types.js';
 
@@ -90,7 +90,9 @@ export function createDefaultAiProviders(): AiProviderConfig[] {
   return PROVIDER_TEMPLATES.map((template) => createProviderFromTemplate(template));
 }
 
-export function getActiveProvider(settings: AppSettings): AiProviderConfig | undefined {
+export function getActiveProvider(
+  settings: Pick<BookmarkTaskSettings, 'activeProviderId' | 'aiProviders'>,
+): AiProviderConfig | undefined {
   return settings.aiProviders.find(
     (provider) => provider.id === settings.activeProviderId && provider.enabled,
   );

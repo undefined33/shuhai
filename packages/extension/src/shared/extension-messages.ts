@@ -7,19 +7,18 @@ import type {
   AiProviderType,
   AppSettings,
   BackupRecord,
+  BackupSummary,
   BookmarkItem,
   BookmarkNode,
   BookmarkOperation,
   BookmarkOperationCommandResponse,
+  BookmarkTaskSettings,
   ClassificationPlan,
   ClassificationProgress,
   CustomRule,
-  ExportManifest,
-  ExtensionState,
   FolderItem,
   MarkdownTemplate,
   OnboardingProgressState,
-  StateSummary,
   UrlHealthRecord,
 } from './bookmark-types.js';
 import {
@@ -353,21 +352,23 @@ const markdownTemplateSchema: z.ZodType<MarkdownTemplate> = z.strictObject({
   body: boundedText(2 * 1_024 * 1_024),
 });
 
+const aiProvidersSettingsSchema = z
+  .array(aiProviderSchema)
+  .length(AI_PROVIDER_TYPES.length)
+  .superRefine((providers, context) => {
+    const types = new Set(providers.map((provider) => provider.provider));
+    if (
+      types.size !== AI_PROVIDER_TYPES.length ||
+      AI_PROVIDER_TYPES.some((provider) => !types.has(provider))
+    ) {
+      context.addIssue({ code: 'custom', message: 'Provider set mismatch' });
+    }
+  });
+
 const appSettingsSchema: z.ZodType<AppSettings> = z.strictObject({
   useAi: z.boolean(),
   activeProviderId: boundedText(128, 1),
-  aiProviders: z
-    .array(aiProviderSchema)
-    .length(AI_PROVIDER_TYPES.length)
-    .superRefine((providers, context) => {
-      const types = new Set(providers.map((provider) => provider.provider));
-      if (
-        types.size !== AI_PROVIDER_TYPES.length ||
-        AI_PROVIDER_TYPES.some((provider) => !types.has(provider))
-      ) {
-        context.addIssue({ code: 'custom', message: 'Provider set mismatch' });
-      }
-    }),
+  aiProviders: aiProvidersSettingsSchema,
   aiLegacySummary: aiLegacySummarySchema,
   customRules: z.array(customRuleSchema).max(10_000),
   templates: z.array(markdownTemplateSchema).max(128),
@@ -379,6 +380,15 @@ const appSettingsSchema: z.ZodType<AppSettings> = z.strictObject({
   }),
   defaultClassifyMode: z.enum(['safe', 'full']),
   exportDirectory: boundedText(4_096, 1),
+});
+
+const bookmarkTaskSettingsSchema: z.ZodType<BookmarkTaskSettings> = z.strictObject({
+  useAi: z.boolean(),
+  activeProviderId: boundedText(128, 1),
+  aiProviders: aiProvidersSettingsSchema,
+  aiLegacySummary: aiLegacySummarySchema,
+  customRules: z.array(customRuleSchema).max(10_000),
+  defaultClassifyMode: z.enum(['safe', 'full']),
 });
 
 const bookmarkItemSchema: z.ZodType<BookmarkItem> = z.strictObject({
@@ -466,44 +476,32 @@ export function isSafeHistoricalHealthUrl(value: string): boolean {
   );
 }
 
-const exportManifestSchema: z.ZodType<ExportManifest> = z.strictObject({
-  id: boundedText(512, 1),
-  exportedAt: boundedText(64, 1),
-  vaultPath: boundedText(8_192),
-  files: z.array(boundedText(8_192)).max(100_000),
-  fileLabels: z.array(boundedText(8_192)).max(100_000).optional(),
-  bookmarkCount: nonNegativeInteger,
-  type: z.enum(['bookmark-index', 'capture', 'activity']).optional(),
-  sourceLabel: boundedText(1_024).optional(),
-});
+const backupKeySchema = z.string().regex(/^backup_[0-9]{1,16}$/u);
+const backupTimestampSchema = boundedText(64, 1).refine((value) => {
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
+}, 'Invalid backup timestamp');
 
 const backupRecordSchema: z.ZodType<BackupRecord> = z.strictObject({
-  key: boundedText(1_024, 1),
-  createdAt: boundedText(64, 1),
+  key: backupKeySchema,
+  createdAt: backupTimestampSchema,
   bookmarkCount: nonNegativeInteger,
   tree: z.array(bookmarkNodeSchema).max(100_000),
 });
 
-const extensionStateSchema: z.ZodType<ExtensionState> = z.strictObject({
-  tree: z.array(bookmarkNodeSchema).max(100_000),
+const backupSummarySchema: z.ZodType<BackupSummary> = z.strictObject({
+  key: backupKeySchema,
+  createdAt: backupTimestampSchema,
+  bookmarkCount: nonNegativeInteger,
+});
+
+const bookmarkTaskSnapshotSchema = z.strictObject({
   bookmarks: z.array(bookmarkItemSchema).max(100_000),
   folders: z.array(folderItemSchema).max(100_000),
-  backups: z.array(backupRecordSchema).max(100),
-  exportManifests: z.array(exportManifestSchema).max(1_000),
-  urlHealthRecords: z.array(UrlHealthRecordSchema).max(10_000),
-  bookmarkOperations: z.array(BookmarkOperationSchema).max(0),
-  lastMoveRecordCount: nonNegativeInteger,
-  onboarded: z.boolean(),
-  settings: appSettingsSchema,
-});
-
-const stateSummarySchema: z.ZodType<StateSummary> = z.strictObject({
-  bookmarkCount: nonNegativeInteger,
-  folderCount: nonNegativeInteger,
-  onboarded: z.boolean(),
-  hasVaultHandle: z.boolean(),
-  hasAiProvider: z.boolean(),
-  lastExportDate: boundedText(64).optional(),
+  settings: bookmarkTaskSettingsSchema,
 });
 
 const onboardingProgressSchema: z.ZodType<OnboardingProgressState> = z.strictObject({
@@ -659,8 +657,7 @@ const legacyPendingSummarySchema: z.ZodType<LegacyPendingSummary> = z.strictObje
 
 export const LegacyRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('security:getBootstrapStatus') }),
-  z.strictObject({ type: z.literal('state:get') }),
-  z.strictObject({ type: z.literal('state:summary') }),
+  z.strictObject({ type: z.literal('bookmarkTask:getSnapshot') }),
   z.strictObject({ type: z.literal('operations:getRecent') }),
   z.strictObject({
     type: z.literal('plan:create'),
@@ -699,16 +696,27 @@ export const LegacyRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('xSingle:start'),
     requestId: requestIdSchema,
   }),
-  z.strictObject({ type: z.literal('health:clearRecords') }),
-  z.strictObject({ type: z.literal('backups:list') }),
+  z.strictObject({ type: z.literal('health:listRecords') }),
+  z.strictObject({
+    type: z.literal('health:clearRecords'),
+    confirmed: z.literal(true),
+  }),
+  z.strictObject({ type: z.literal('backups:listSummaries') }),
+  z.strictObject({
+    type: z.literal('backups:get'),
+    key: backupKeySchema,
+  }),
 ]);
 
 export type ExtensionRequest = z.infer<typeof LegacyRequestSchema>;
 
 export interface LegacySuccessDataByType {
   'security:getBootstrapStatus': { ready: true };
-  'state:get': ExtensionState;
-  'state:summary': StateSummary;
+  'bookmarkTask:getSnapshot': {
+    bookmarks: BookmarkItem[];
+    folders: FolderItem[];
+    settings: BookmarkTaskSettings;
+  };
   'operations:getRecent': { operations: BookmarkOperation[] };
   'plan:create': ClassificationPlan;
   'settings:get': AppSettings;
@@ -727,8 +735,10 @@ export interface LegacySuccessDataByType {
     classification: 'new' | 'existing' | 'changed' | 'incomplete' | 'error';
     noWriteCandidate: boolean;
   };
-  'health:clearRecords': { cleared: boolean };
-  'backups:list': BackupRecord[];
+  'health:listRecords': { records: UrlHealthRecord[] };
+  'health:clearRecords': { cleared: true };
+  'backups:listSummaries': { backups: BackupSummary[] };
+  'backups:get': { backup: BackupRecord | null };
 }
 
 export type LegacySuccessData<R extends ExtensionRequest> = LegacySuccessDataByType[R['type']];
@@ -797,8 +807,7 @@ const legacyErrorSchema = z
 
 const successDataSchemas: Record<ExtensionRequest['type'], z.ZodType> = {
   'security:getBootstrapStatus': z.strictObject({ ready: z.literal(true) }),
-  'state:get': extensionStateSchema,
-  'state:summary': stateSummarySchema,
+  'bookmarkTask:getSnapshot': bookmarkTaskSnapshotSchema,
   'operations:getRecent': z.strictObject({
     operations: z.array(BookmarkOperationSchema).max(100),
   }),
@@ -819,8 +828,14 @@ const successDataSchemas: Record<ExtensionRequest['type'], z.ZodType> = {
     classification: z.enum(['new', 'existing', 'changed', 'incomplete', 'error']),
     noWriteCandidate: z.boolean(),
   }),
-  'health:clearRecords': z.strictObject({ cleared: z.boolean() }),
-  'backups:list': z.array(backupRecordSchema).max(100),
+  'health:listRecords': z.strictObject({
+    records: z.array(UrlHealthRecordSchema).max(10_000),
+  }),
+  'health:clearRecords': z.strictObject({ cleared: z.literal(true) }),
+  'backups:listSummaries': z.strictObject({
+    backups: z.array(backupSummarySchema).max(5),
+  }),
+  'backups:get': z.strictObject({ backup: backupRecordSchema.nullable() }),
 };
 
 function responseLimits(request: ExtensionRequest): StructuredInputLimits {
@@ -836,6 +851,26 @@ export function parseExtensionRequest(value: unknown): ExtensionRequest {
     throw new StructuredInputError('invalid_message');
   }
   return parsed.data;
+}
+
+const OPTIONS_REQUEST_TYPES: ReadonlySet<ExtensionRequest['type']> = new Set([
+  'security:getBootstrapStatus',
+  'settings:get',
+  'settings:set',
+  'ai:secret:set',
+  'ai:secret:clear',
+  'ai:legacy:discard',
+  'ai:testConnection',
+  'legacyPending:inspect',
+  'legacyPending:clear',
+  'backups:listSummaries',
+  'backups:get',
+  'health:listRecords',
+  'health:clearRecords',
+]);
+
+export function isOptionsPageRequest(request: ExtensionRequest): boolean {
+  return OPTIONS_REQUEST_TYPES.has(request.type);
 }
 
 export function makeLegacyError(errorCode: LegacyErrorCode): LegacyErrorResponse {
@@ -988,10 +1023,9 @@ export interface ValidatedExtensionUiSender {
   readonly surface: ExtensionUiSurface;
 }
 
-export function validateExtensionUiSender(
+function validateExactExtensionPageSender(
   sender: chrome.runtime.MessageSender | undefined,
-  expectedSurface?: ExtensionUiSurface,
-): ValidatedExtensionUiSender | undefined {
+): string | undefined {
   if (!sender || !extensionIdPattern.test(chrome.runtime.id)) {
     return undefined;
   }
@@ -1038,17 +1072,33 @@ export function validateExtensionUiSender(
     if (senderOrigin !== undefined && senderOrigin !== extensionOrigin) {
       return undefined;
     }
-    const surface =
-      senderUrl.pathname === '/popup/index.html'
-        ? 'popup'
-        : senderUrl.pathname === '/sidepanel/index.html'
-          ? 'sidepanel'
-          : undefined;
-    if (!surface || (expectedSurface !== undefined && surface !== expectedSurface)) {
-      return undefined;
-    }
-    return { surface };
+    return senderUrl.pathname;
   } catch {
     return undefined;
   }
+}
+
+export function validateExtensionUiSender(
+  sender: chrome.runtime.MessageSender | undefined,
+  expectedSurface?: ExtensionUiSurface,
+): ValidatedExtensionUiSender | undefined {
+  const pathname = validateExactExtensionPageSender(sender);
+  const surface =
+    pathname === '/popup/index.html'
+      ? 'popup'
+      : pathname === '/sidepanel/index.html'
+        ? 'sidepanel'
+        : undefined;
+  if (!surface || (expectedSurface !== undefined && surface !== expectedSurface)) {
+    return undefined;
+  }
+  return { surface };
+}
+
+export function validateOptionsPageSender(
+  sender: chrome.runtime.MessageSender | undefined,
+): { readonly surface: 'options' } | undefined {
+  return validateExactExtensionPageSender(sender) === '/options/index.html'
+    ? { surface: 'options' }
+    : undefined;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   initializeXSyncPageProtectedResources,
+  invokeXSyncExitAdapter,
   requestXSyncSecurityBootstrap,
   XSyncSecurityBootstrapFailureNotice,
   type XSyncBootstrapStatusSender,
@@ -10,6 +11,14 @@ import {
 import { X_SYNC_SECURITY_BOOTSTRAP_FAILED_MESSAGE } from '../src/popup/pages/x-sync-ui-model.js';
 
 describe('X sync page security bootstrap', () => {
+  it('uses the new surface exit adapter without changing the legacy fallback', () => {
+    const onExit = vi.fn();
+
+    expect(invokeXSyncExitAdapter(onExit)).toBe(true);
+    expect(onExit).toHaveBeenCalledOnce();
+    expect(invokeXSyncExitAdapter(undefined)).toBe(false);
+  });
+
   function protectedDependencies(requestBootstrapStatus: () => Promise<void>): {
     dependencies: XSyncProtectedResourceDependencies;
     connectPort: ReturnType<typeof vi.fn>;

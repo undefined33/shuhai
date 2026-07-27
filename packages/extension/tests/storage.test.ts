@@ -21,6 +21,7 @@ import {
   clearLegacyPendingCapture,
   discardLegacyAiConfiguration,
   getAiProviderSecretForUse,
+  getBookmarkTaskSettings,
   getBookmarkOperationJournal,
   getBookmarkOperationReserveBytes,
   getOnboarded,
@@ -225,6 +226,162 @@ describe('storage helpers', () => {
     expect(getStorageMocks().set).not.toHaveBeenCalled();
     expect(getStorageMocks().remove).not.toHaveBeenCalled();
   });
+
+  it.each(['stored', 'legacy'] as const)(
+    'reads only bookmark classification fields from %s settings without migration',
+    async (format) => {
+      const taskFields = {
+        useAi: true,
+        activeProviderId: 'kimi-default',
+        aiProviders: structuredClone(DEFAULT_SETTINGS.aiProviders),
+        aiLegacySummary: {
+          builtInConflicts: ['glm'],
+          customState: 'disabled_no_key',
+        },
+        customRules: [
+          {
+            id: 'rule-1',
+            type: 'domain',
+            pattern: 'example.com',
+            category: 'Research',
+            tags: ['reference'],
+          },
+        ],
+        defaultClassifyMode: 'full',
+      };
+      const publicSettings = {
+        ...taskFields,
+        templates: [{ body: 'x'.repeat(600 * 1_024) }, null],
+        activeTemplateIds: { bookmark: { malformed: true } },
+        exportDirectory: { malformed: true },
+      };
+      const storedSettings =
+        format === 'stored'
+          ? { version: AI_PUBLIC_SETTINGS_VERSION, settings: publicSettings }
+          : publicSettings;
+      setStorageSnapshot({
+        [SETTINGS_KEY]: storedSettings,
+        [AI_PROVIDER_SECRETS_KEY]: {
+          version: 1,
+          providers: [
+            {
+              provider: 'kimi',
+              origin: 'https://api.moonshot.cn',
+              apiKey: 'private-kimi-key',
+            },
+          ],
+        },
+      });
+      const before = getStorageSnapshot();
+
+      await expect(getBookmarkTaskSettings()).resolves.toEqual({
+        ...taskFields,
+        aiProviders: expect.arrayContaining([
+          expect.objectContaining({ provider: 'deepseek', hasApiKey: false }),
+          expect.objectContaining({ provider: 'kimi', hasApiKey: true }),
+          expect.objectContaining({ provider: 'glm', hasApiKey: false }),
+        ]),
+        customRules: [
+          expect.objectContaining({
+            id: 'rule-1',
+            pattern: 'example.com',
+            category: 'Research',
+          }),
+        ],
+      });
+      expect(JSON.stringify(await getBookmarkTaskSettings())).not.toContain('private-kimi-key');
+      expect(getStorageSnapshot()).toEqual(before);
+      expect(getStorageMocks().set).not.toHaveBeenCalled();
+      expect(getStorageMocks().remove).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['stored', 'legacy'] as const)(
+    'isolates byte, depth, and array budget failures for %s bookmark settings',
+    async (format) => {
+      const validFields = {
+        useAi: true,
+        activeProviderId: 'kimi-default',
+        aiProviders: structuredClone(DEFAULT_SETTINGS.aiProviders),
+        aiLegacySummary: {
+          builtInConflicts: ['glm'],
+          customState: 'disabled_no_key',
+        },
+        customRules: [
+          {
+            id: 'rule-budget',
+            type: 'domain',
+            pattern: 'example.com',
+            category: 'Research',
+            tags: ['reference'],
+          },
+        ],
+        defaultClassifyMode: 'full',
+      };
+      const cases = [
+        {
+          field: 'activeProviderId',
+          value: 'x'.repeat(129),
+          expected: { activeProviderId: DEFAULT_SETTINGS.activeProviderId },
+        },
+        {
+          field: 'aiLegacySummary',
+          value: {
+            builtInConflicts: [[[[[['glm']]]]]],
+            customState: 'disabled_no_key',
+          },
+          expected: { aiLegacySummary: DEFAULT_SETTINGS.aiLegacySummary },
+        },
+        {
+          field: 'customRules',
+          value: Array.from({ length: 10_001 }, () => validFields.customRules[0]),
+          expected: { customRules: [] },
+        },
+      ] as const;
+
+      for (const budgetCase of cases) {
+        const publicSettings = {
+          ...validFields,
+          [budgetCase.field]: budgetCase.value,
+          templates: ['unrelated-template-data'],
+          activeTemplateIds: { bookmark: 'unrelated-template' },
+          exportDirectory: 'Unrelated',
+        };
+        const storedSettings =
+          format === 'stored'
+            ? { version: AI_PUBLIC_SETTINGS_VERSION, settings: publicSettings }
+            : publicSettings;
+        setStorageSnapshot({ [SETTINGS_KEY]: storedSettings });
+        const before = getStorageSnapshot();
+
+        const result = await getBookmarkTaskSettings();
+        expect(result).toMatchObject({
+          useAi: true,
+          aiProviders: expect.arrayContaining([
+            expect.objectContaining({ provider: 'deepseek' }),
+            expect.objectContaining({ provider: 'kimi' }),
+            expect.objectContaining({ provider: 'glm' }),
+          ]),
+          defaultClassifyMode: 'full',
+          ...budgetCase.expected,
+        });
+        if (budgetCase.field !== 'activeProviderId') {
+          expect(result.activeProviderId).toBe('kimi-default');
+        }
+        if (budgetCase.field !== 'aiLegacySummary') {
+          expect(result.aiLegacySummary).toEqual(validFields.aiLegacySummary);
+        }
+        if (budgetCase.field !== 'customRules') {
+          expect(result.customRules).toEqual([
+            expect.objectContaining({ id: 'rule-budget', category: 'Research' }),
+          ]);
+        }
+        expect(getStorageSnapshot()).toEqual(before);
+        expect(getStorageMocks().set).not.toHaveBeenCalled();
+        expect(getStorageMocks().remove).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it('migrates one valid legacy DeepSeek key into the isolated secret envelope', async () => {
     await setLocalValues({

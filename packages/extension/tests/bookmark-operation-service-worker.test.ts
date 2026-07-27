@@ -17,8 +17,8 @@ const operationMocks = vi.hoisted(() => ({
 const stateMocks = vi.hoisted(() => ({
   ensureTrustedLocalStorageAccess: vi.fn(async () => undefined),
   getBookmarkOperations: vi.fn(async () => []),
-  getLastMoveRecords: vi.fn(async () => []),
-  listBackups: vi.fn(async () => []),
+  getBackupByKey: vi.fn(async () => undefined),
+  listBackupSummaries: vi.fn(async () => []),
   getFullTree: vi.fn(async () => []),
   flattenBookmarkTree: vi.fn(() => ({ bookmarks: [], folders: [] })),
 }));
@@ -51,8 +51,8 @@ vi.mock('../src/utils/bookmark-operations.js', () => {
 });
 
 vi.mock('../src/utils/backup.js', () => ({
-  getLastMoveRecords: stateMocks.getLastMoveRecords,
-  listBackups: stateMocks.listBackups,
+  getBackupByKey: stateMocks.getBackupByKey,
+  listBackupSummaries: stateMocks.listBackupSummaries,
 }));
 
 vi.mock('../src/utils/chrome-bookmarks.js', () => ({
@@ -73,6 +73,17 @@ vi.mock('../src/utils/storage.js', () => {
     clearUrlHealthRecords: vi.fn(async () => undefined),
     ensureTrustedLocalStorageAccess: stateMocks.ensureTrustedLocalStorageAccess,
     getBookmarkOperations: stateMocks.getBookmarkOperations,
+    getBookmarkTaskSettings: vi.fn(async () => ({
+      useAi: false,
+      activeProviderId: 'deepseek-default',
+      aiProviders: [],
+      aiLegacySummary: {
+        builtInConflicts: [],
+        customState: 'absent',
+      },
+      customRules: [],
+      defaultClassifyMode: 'safe',
+    })),
     getExportManifests: vi.fn(async () => []),
     getOnboarded: vi.fn(async () => false),
     getOnboardingProgress: vi.fn(async () => undefined),
@@ -490,19 +501,22 @@ describe('bookmark operation service worker boundary', () => {
   it('keeps operation recovery independent from state:get', async () => {
     const harness = await loadServiceWorker();
 
-    const stateResponse = (await send(
+    const stateResponse = await send(
       harness.getMessageListener(),
       { type: 'state:get' },
       sender('sidepanel'),
-    )) as { ok: true; data: { bookmarkOperations: unknown[] } };
+    );
     const operationsResponse = await send(
       harness.getMessageListener(),
       { type: 'operations:getRecent' },
       sender('sidepanel'),
     );
 
-    expect(stateResponse.ok).toBe(true);
-    expect(stateResponse.data.bookmarkOperations).toEqual([]);
+    expect(stateResponse).toEqual({
+      ok: false,
+      error: 'Extension request rejected',
+      errorCode: 'invalid_request',
+    });
     expect(operationsResponse).toEqual({ ok: true, data: { operations: [] } });
     expect(stateMocks.getBookmarkOperations).toHaveBeenCalledTimes(1);
     expect(operationMocks.reconcile).not.toHaveBeenCalled();

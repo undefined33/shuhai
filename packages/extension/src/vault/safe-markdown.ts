@@ -23,9 +23,36 @@ export const SAFE_SOCIAL_PROPERTY_KEYS = [
 ] as const;
 
 const PROPERTY_KEY_SET = new Set<string>(SAFE_SOCIAL_PROPERTY_KEYS);
-const UNSAFE_URL_SCHEME =
-  /\b(?:java\s*script|vbscript|data|file|obsidian)\s*(?::|&colon;|&#0*58;|&#x0*3a;)/gi;
-const EVENT_HANDLER = /\bon([a-z][a-z0-9_-]*)\s*=/gi;
+const DISPLAY_SYNTAX_CODE_POINTS = new Set([
+  0x21, // !
+  0x22, // "
+  0x23, // #
+  0x24, // $
+  0x25, // %
+  0x26, // &
+  0x27, // '
+  0x28, // (
+  0x29, // )
+  0x2a, // *
+  0x2b, // +
+  0x2d, // -
+  0x2e, // .
+  0x3a, // :
+  0x3c, // <
+  0x3d, // =
+  0x3e, // >
+  0x5b, // [
+  0x5c, // \
+  0x5d, // ]
+  0x5e, // ^
+  0x5f, // _
+  0x60, // `
+  0x7b, // {
+  0x7c, // |
+  0x7d, // }
+  0x7e, // ~
+]);
+const RAW_URL_DESTINATION_CHARACTER = /^[A-Za-z0-9:/?#@!$&'*+,;=._~-]$/u;
 
 export interface SafeSocialProperties {
   schemaVersion: 1;
@@ -65,12 +92,9 @@ function isControlCharacter(character: string): boolean {
 }
 
 function normalizeUntrustedText(value: string): string {
-  return Array.from(value.normalize('NFC').replace(/\r\n?/g, '\n'))
-    .filter(
-      (character) => character === '\n' || character === '\t' || !isControlCharacter(character),
-    )
-    .join('')
-    .trim();
+  return Array.from(value.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\t/g, ' '))
+    .filter((character) => character === '\n' || !isControlCharacter(character))
+    .join('');
 }
 
 function propertiesFromItem(item: SocialItem): SafeSocialProperties {
@@ -112,72 +136,139 @@ function serializeProperties(properties: SafeSocialProperties): string {
   return frontmatter;
 }
 
+function encodeDisplayLine(value: string): string {
+  let encoded = '';
+  let leadingWhitespace = true;
+  const characters = Array.from(value);
+  let lastNonSpace = -1;
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    if (characters[index] !== ' ') {
+      lastNonSpace = index;
+      break;
+    }
+  }
+
+  for (const [index, character] of characters.entries()) {
+    const codePoint = character.codePointAt(0) as number;
+    if (character === ' ' && (leadingWhitespace || index > lastNonSpace)) {
+      encoded += '&#32;';
+      continue;
+    }
+    leadingWhitespace = false;
+    encoded += DISPLAY_SYNTAX_CODE_POINTS.has(codePoint) ? `&#${codePoint};` : character;
+  }
+
+  return encoded;
+}
+
 /**
- * Dynamic content is emitted only inside indented code blocks. The replacements
- * also keep raw-file processors such as Templater and Dataview from recognizing
- * their command syntax before Markdown rendering.
+ * Encode dynamic display text without changing the characters a Markdown
+ * reader shows. Decimal character references are resolved after block parsing,
+ * so hostile text remains readable without becoming Markdown or HTML syntax.
  */
 export function neutralizeSocialBodyText(value: string): string {
-  return normalizeUntrustedText(value)
-    .replace(UNSAFE_URL_SCHEME, '[blocked scheme]')
-    .replace(EVENT_HANDLER, 'event-$1=')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\{\{/g, '{ {')
-    .replace(/\}\}/g, '} }')
-    .replace(/!\s*\[\s*\[/g, '! [ [')
-    .replace(/\[\s*\[/g, '[ [')
-    .replace(/\]\s*\]/g, '] ]')
-    .replace(/!\s*\[/g, '! [')
-    .replace(/::/g, ': :')
-    .replace(/`/g, '\\`')
-    .replace(/~{3,}/g, (run) => Array.from(run).join(' '))
-    .replace(/^(\s*)(?:---|\.\.\.)(\s*)$/gm, '$1\\---$2');
+  return normalizeUntrustedText(value).split('\n').map(encodeDisplayLine).join('\n');
 }
 
-function indentedDataBlock(value: string): string {
-  const safe = neutralizeSocialBodyText(value);
-  return safe
+function renderInlineDisplayText(value: string): string {
+  return neutralizeSocialBodyText(value.replace(/\r\n?/g, '\n').replace(/\n+/g, ' '));
+}
+
+function renderBlockDisplayText(value: string): string {
+  return neutralizeSocialBodyText(value)
     .split('\n')
-    .map((line) => `    ${line}`)
-    .join('\n');
+    .map((line) => (line === '' ? '&#10;' : line))
+    .join('\\\n');
 }
 
-function appendDataSection(parts: string[], heading: string, value: string | undefined): void {
-  if (!value) {
-    return;
+function percentEncodeUtf8(value: string): string {
+  return Array.from(
+    new TextEncoder().encode(value),
+    (byte) => `%${byte.toString(16).toUpperCase().padStart(2, '0')}`,
+  ).join('');
+}
+
+function encodeMarkdownLinkDestination(value: string): string {
+  let encoded = '';
+
+  for (let index = 0; index < value.length; ) {
+    const character = String.fromCodePoint(value.codePointAt(index) as number);
+    index += character.length;
+
+    if (
+      character === '%' &&
+      index + 1 < value.length &&
+      /^[0-9A-Fa-f]{2}$/u.test(value.slice(index, index + 2))
+    ) {
+      encoded += `%${value.slice(index, index + 2)}`;
+      index += 2;
+      continue;
+    }
+
+    encoded += RAW_URL_DESTINATION_CHARACTER.test(character)
+      ? character
+      : percentEncodeUtf8(character);
   }
 
-  const normalized = normalizeUntrustedText(value);
-  if (!normalized) {
-    return;
+  return encoded;
+}
+
+function renderSafeHttpsLink(label: string, value: string): string {
+  const validated = HttpsUrlSchema.parse(value);
+  const parsed = new URL(validated);
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.hostname === ''
+  ) {
+    throw new Error('Expected a safe HTTPS link destination');
   }
 
-  parts.push(`## ${heading}`, '', indentedDataBlock(normalized), '');
+  return `[${label}](${encodeMarkdownLinkDestination(parsed.href)})`;
 }
 
 export function renderSafeSocialMarkdown(item: SocialItem): string {
   const parsedItem = parseSocialItem(item);
   const properties = propertiesFromItem(parsedItem);
-  const parts = ['# ShuHai social item', ''];
-
-  appendDataSection(parts, 'Title', parsedItem.title);
-  appendDataSection(parts, 'Author', parsedItem.author?.displayName);
-  appendDataSection(parts, 'Author handle', parsedItem.author?.handle);
-  appendDataSection(parts, 'Published at', parsedItem.publishedAt);
-  appendDataSection(parts, 'Source URL', parsedItem.canonicalUrl);
-  appendDataSection(parts, 'Content', parsedItem.text);
+  const fallbackTitle = parsedItem.source === 'x' ? 'Saved X item' : 'Saved Weibo item';
+  const title = parsedItem.title
+    ? renderInlineDisplayText(parsedItem.title)
+    : renderInlineDisplayText(fallbackTitle);
+  const authorParts = [parsedItem.author?.displayName, parsedItem.author?.handle].filter(
+    (value): value is string => Boolean(value),
+  );
+  const author =
+    authorParts.length > 0 ? authorParts.map(renderInlineDisplayText).join(' · ') : 'Not available';
+  const publishedAt = parsedItem.publishedAt
+    ? renderInlineDisplayText(parsedItem.publishedAt)
+    : 'Not available';
+  const content = parsedItem.text ? renderBlockDisplayText(parsedItem.text) : 'No captured text.';
+  const parts = [
+    `# ${title}`,
+    '',
+    `- Author: ${author}`,
+    `- Published: ${publishedAt}`,
+    `- Captured: ${renderInlineDisplayText(parsedItem.capturedAt)}`,
+    `- Completeness: ${renderInlineDisplayText(parsedItem.completeness)}`,
+    `- Source: ${renderSafeHttpsLink('Open original', parsedItem.canonicalUrl)}`,
+    '',
+    '## Content',
+    '',
+    content,
+    '',
+  ];
 
   if (parsedItem.media.length > 0) {
-    const mediaLines = parsedItem.media.map((media) => {
-      const alt = media.alt ? ` | ${normalizeUntrustedText(media.alt)}` : '';
-      return `${media.type}: ${media.url}${alt}`;
+    const mediaLines = parsedItem.media.map((media, index) => {
+      const label = `Open ${media.type} ${index + 1}`;
+      const alt = media.alt ? ` — ${renderInlineDisplayText(media.alt)}` : '';
+      return `- ${renderSafeHttpsLink(label, media.url)}${alt}`;
     });
-    parts.push('## Remote media', '', indentedDataBlock(mediaLines.join('\n')), '');
+    parts.push('## Remote media', '', ...mediaLines, '');
   }
 
-  return `${serializeProperties(properties)}\n${parts.join('\n').trimEnd()}\n`;
+  return `${serializeProperties(properties)}\n${parts.join('\n')}`;
 }
 
 function parseJsonString(value: string): string | null {
