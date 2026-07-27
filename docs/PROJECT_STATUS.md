@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
-> 最后更新：2026-07-27
-> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D 均已 `DONE/PASS`；当前没有实施中的 Goal，Goal 046C 为下一份待精简和独立审查的 `DRAFT`
+> 最后更新：2026-07-28
+> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C 均已 `DONE/PASS`；当前没有 `READY/IN_PROGRESS` Goal
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -37,8 +37,13 @@ ShuHai 是一个纯 Chrome Extension，只服务两个用户动作：
 | Options Page  | 一次配置/维护    | Vault、平台权限、可选 AI；高级设置默认折叠                       |
 
 Goal 046B 已完成两条任务旅程和独立 Options 切换；Popup、Side Panel 与 Options 不再共用
-旧 `App.tsx`。真实挂载、200% 缩放、深浅主题、焦点、ActionBar 遮挡和多 viewport 仍须由
-Goal 046C 的完全隔离浏览器 E2E 验收，不能以 jsdom 或实现者自述代替。
+旧 `App.tsx`。Goal 046C 已用全新测试 profile 验收 production dist 身份和 fail-closed
+挂载，并以 strict fixture 覆盖窄宽度、深浅主题、焦点、ActionBar、长文本与
+`root-rem 2x stress`。Round 8 发现的 teardown、run-root ownership 与持久 diagnostics
+三个 P2 已限域修复；`final-20260728-02` 为 13/13 PASS，Round 9 独立复审为 `PASS`，
+P0/P1/P2 为 0。
+真实 toolbar、Chrome zoom、Windows scaling 和 Obsidian Reading View 仍属于 owner
+dogfood，自动化不得冒充。
 
 ## 4. 当前代码事实
 
@@ -83,10 +88,10 @@ Goal 045A 已通过当前门禁的模块：
 尚未完成或验证：
 
 - 微博收藏页仍只有 `NO_GO` 研究结论，没有生产枚举。
-- 实际 Obsidian Reading View、最终 production bundle 的隔离浏览器旅程、窄 Side Panel
-  和深浅主题视觉仍属于 Goal 046C；自动化 oracle 不冒充这些用户真相。
+- 实际 Obsidian Reading View、真实 toolbar user gesture、Chrome zoom 和 Windows display
+  scaling 仍未验证；Goal 046C 的 direct extension page 与 strict fixture 证据不冒充这些用户真相。
 - Goal 046A/046B 已完成 Popup/Side Panel 主壳、两条用户旅程、独立 Options、旧入口删除、
-  按需状态加载和 bundle 硬门禁；隔离浏览器 E2E 仍属于后续 046C。
+  按需状态加载和 bundle 硬门禁；Goal 046C 最终隔离 E2E 和独立实现审查均已通过。
 - 现有实现没有可验收的重复书签检测算法；该能力不会混入 046B UI 重构，只有在 dogfood
   证明需要后才能以独立算法 Goal 重新进入队列。
 - extension build 已不再出现单个 UI chunk `>500 kB` warning；Popup 初始静态 JS 为
@@ -117,10 +122,10 @@ Goal 045A 已通过当前门禁的模块：
 |    8 | Goal 046A | `DONE`                    | 主壳拆分、上下文 Popup 与 bundle 边界    |
 |    9 | Goal 046B | `DONE`                    | 两条用户旅程与独立 Options               |
 |   10 | Goal 046D | `DONE`                    | 可读笔记、发布卫生与 dogfood 前置收口    |
-|   11 | Goal 046C | `DRAFT`                   | 046D 后的隔离 E2E、可用性与视觉验收      |
+|   11 | Goal 046C | `DONE`                    | 046D 后的隔离 E2E、可用性与视觉验收      |
 |   12 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
-用户已确认 v4；041/042/043/045A/045B/045C/046A/046B 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；045B 的 message、storage、权限和 URL 体检收口也已通过 mock-only 完整门禁与独立复审；045C 的单条内容保存收敛、legacy fail-closed 与 AI 隐私边界同样通过完整门禁和两名独立 Reviewer。046A 的主壳、surface protocol、bundle、isolated fixture visual 均通过完整门禁与独立复审。046B 完成两条旅程、独立 Options 与旧入口删除；最终 shared `1/1`、desktop `25/25`、extension `845/845`，Reviewer Locke 给出 `PASS` 且 P0/P1/P2/P3 为 0。2026-07-26 的外部战略报告已原样归档并逐项重新核验；Goal 046D v3 经三轮合同审查后完成实现，最终 shared `1/1`、desktop `25/25`、extension `850/850`，独立实现复审 `PASS` 且 P0/P1/P2/P3 为 0。当前没有实施中的 Goal；Goal 046C 保持 `DRAFT`，下一步只允许先精简合同并独立审查。Goal 044 仍受微博 `NO_GO` 阻塞；032-040 的旧队列继续停止自动编排。
+用户已确认 v4；041/042/043/045A/045B/045C/046A/046B 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；045B 的 message、storage、权限和 URL 体检收口也已通过 mock-only 完整门禁与独立复审；045C 的单条内容保存收敛、legacy fail-closed 与 AI 隐私边界同样通过完整门禁和两名独立 Reviewer。046A 的主壳、surface protocol、bundle、isolated fixture visual 均通过完整门禁与独立复审。046B 完成两条旅程、独立 Options 与旧入口删除；最终 shared `1/1`、desktop `25/25`、extension `845/845`，Reviewer Locke 给出 `PASS` 且 P0/P1/P2/P3 为 0。2026-07-26 的外部战略报告已原样归档并逐项重新核验；Goal 046D v3 经三轮合同审查后完成实现，最终 shared `1/1`、desktop `25/25`、extension `850/850`，独立实现复审 `PASS` 且 P0/P1/P2/P3 为 0。Goal 046C v10 的合同与 amendment 均独立 `PASS`；shared `1/1`、desktop `25/25`、extension `851/851`，production build 和 `final-20260728-02` 的 13/13 隔离场景通过。运行发现并限域修复了整理建议 checkbox、规则测试输入的 accessible name、360px 排序工具栏和 Windows golden 换行；真实书签摘要、X 权限与 Vault 句柄前后不变。Round 8 的 teardown 诚实性、run-root ownership 与持久 diagnostics 三个 P2 已修复并以全新 run 验证；Round 9 独立复审为 `PASS`，P0/P1/P2 为 0，Goal 046C 正式 `DONE`。唯一 P3 是 `docs/workflows/README.md` 的既有瞬时状态漂移，留待独立文档卫生收口，不改变当前高优先级状态源。Goal 044 仍受微博 `NO_GO` 阻塞；032-040 的旧队列继续停止自动编排。
 
 ## 7. 平台判断
 
@@ -149,9 +154,10 @@ Goal 045A 已通过当前门禁的模块：
 3. 第一轮 disposable Vault 因用户误保留全部选择而实际创建 5 个文件；Side Panel 与文件数量/大小一致，作为首次写入功能证据通过，同时记录 1-3 条 QA 范围偏差，不删除、不修改。
 4. 修复版第二次 incremental 已固定 `maxCandidates=10 + maxScrollActions=5`，在 `6/10` 候选与 7 条 existing observations 时因安全预算暂停；复核页确认 7 条 existing 未进入可写候选、5 条 incomplete 未选、只有 1 条 new 默认选中，测试 Vault 仍保持 5 个文件且大小不变，没有再次保存。
 5. 最终真实门禁已通过：任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6；同一标签切离 `/i/bookmarks` 后以 `tab_changed` 暂停，随后由用户取消，Vault 聚合保持不变。
-6. Goal 045A/045B/045C/046A/046B/046D 已完成完整门禁并通过独立审查。Goal 044 在微博
-   `NO_GO` 结论被独立研究门禁改变前不得接生产枚举；046C 保持 `DRAFT`，下一步先精简其
-   隔离验收合同并通过独立合同审查，不能直接进入实现或真实 Chrome/Vault 验收。
+6. Goal 045A/045B/045C/046A/046B/046D/046C 已完成完整门禁并通过独立审查。Goal 044
+   在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举；046C 的 Round 8 三项 P2
+   已修复，`final-20260728-02` 与 Round 9 均通过，但不等于真实 Chrome/Vault 或两周
+   dogfood 已完成。
 
 ## 10. 当前文档
 

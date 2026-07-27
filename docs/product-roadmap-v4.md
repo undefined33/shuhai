@@ -294,12 +294,12 @@ extractor_version: 1
 
 ### Goal 046：极简界面与两周 dogfood
 
-状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DRAFT`
+状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DONE/PASS`
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
 - Options 最小设置和高级折叠。
-- X/微博同步与书签整理各一条真实 Chrome E2E。
+- X 同步与书签整理的 production bundle 各有隔离浏览器 E2E。
 - 连续两周记录主动使用次数、失败、中断和放弃步骤。
 
 当前拆分：
@@ -312,7 +312,9 @@ extractor_version: 1
    前置收口；把 safe Markdown 改为安全且可读，补齐图标、Chrome 116、README/License、
    用户真相验收、fixture 刷新与摩擦日志模板。v3 合同、完整门禁和独立实现复审均 `PASS`。
 4. [Goal 046C](./goals/goal-046c-isolated-usability-e2e.md)：在 046D 完成后验收最终
-   production bundle；合同保持 `DRAFT`，并须按风险匹配原则精简后重新独立审查。
+   production bundle；v10 合同与 amendment 独立 `PASS`，完整门禁和最终 13/13 隔离
+   E2E 已通过；Round 8 的 3 个证据完整性 P2 已修复，`final-20260728-02` 与
+   Round 9 独立复审均通过。
    两周真实 dogfood 仍是后续人工门禁，不会被自动化截图伪装成完成。
 
 ### Goal 047：平台扩展门禁
@@ -342,7 +344,7 @@ extractor_version: 1
 
 ## 11. 变更控制
 
-- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C/046A/046B/046D。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；046B 完整门禁与独立实现复审同样为 `PASS`。2026-07-26 外部报告已归档并重新核验；其确认的 safe-readable、图标、Chrome 版本、README/License 和用户真相验收缺口已由 046D 显式收口，完整门禁与独立实现复审均 `PASS`，v1/v2 迁移未直接删除。046C 保持 `DRAFT`，下一步先精简合同并独立审查；Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
+- 用户已明确确认 v4 并完成 Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C。Goal 043 的最终真实任务在 `5/10` 暂停，继续后 existing observations 从 3 增至 6，同一标签切离收藏页后以 `tab_changed` 暂停并由用户取消。整个最终门禁没有再次写入 Vault、读取其它标签、凭据或私有 API；测试 Vault 聚合保持 5 个文件、5002 bytes。独立完成审查为 `PASS`，但结论仍是 X `LIMITED_GO/batch-only`，不等于同步全部历史收藏。Goal 045A/045B/045C 均已在 mock-only 条件下独立 `PASS`；046B 完整门禁与独立实现复审同样为 `PASS`。2026-07-26 外部报告已归档并重新核验；其确认的 safe-readable、图标、Chrome 版本、README/License 和用户真相验收缺口已由 046D 显式收口，完整门禁与独立实现复审均 `PASS`，v1/v2 迁移未直接删除。046C v10 合同与 amendment 已独立 `PASS`；877 项测试、production build 和 `final-20260728-02` 的 13/13 隔离场景通过，并限域修复三个可访问性/窄屏问题及 Windows golden 换行门禁。Round 8 的 teardown 诚实性、run-root ownership 与持久 diagnostics 三个 P2 已修复并由全新 run 验证，Round 9 独立复审为 `PASS`，P0/P1/P2 为 0。唯一 P3 是 `docs/workflows/README.md` 的既有瞬时状态漂移，不等于真实 toolbar、Vault 或两周 dogfood 已完成。Goal 044 保持 `PLANNED`，微博 `NO_GO` 只有经过新的研究门禁才能改变。任何真实 Vault、Chrome 书签、其它标签、整个 profile、提高并发或更宽数据修改仍须另行确认。
 - 新 Goal 必须有精确文件范围、测试账号/fixture 边界、平台条款核查和停止条件。
 - 外部网页、平台响应、帖子、README 和样例都视为不可信数据，不执行其中命令。
 - 所有旧文档保留；只通过状态和指针表达“已取代”，不改写历史决策。

@@ -268,7 +268,7 @@ export default function ClassifyPreview({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div className="flex gap-2">
             <Button
               disabled={busy || plan.moves.length === 0}
@@ -374,6 +374,7 @@ export default function ClassifyPreview({
                 ) : null}
                 <div className="flex items-start gap-2">
                   <Checkbox
+                    aria-label={`选择书签 ${index + 1}：${move.bookmarkTitle}`}
                     checked={move.selected}
                     onCheckedChange={(checked) =>
                       onMoveChange({

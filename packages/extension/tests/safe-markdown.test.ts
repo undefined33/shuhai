@@ -15,6 +15,10 @@ import {
 
 type SocialItemInput = Parameters<typeof renderSafeSocialMarkdown>[0];
 
+function normalizeFixtureNewlines(value: string): string {
+  return value.replaceAll('\r\n', '\n');
+}
+
 function socialItem(overrides: Partial<SocialItemInput> = {}): SocialItemInput {
   return {
     schemaVersion: 1,
@@ -65,13 +69,11 @@ describe('safe social Markdown', () => {
       ],
     });
     const markdown = renderSafeSocialMarkdown(item);
-    const expectedMarkdown = readFileSync(
-      new URL('./fixtures/safe-readable-social.md', import.meta.url),
-      'utf8',
+    const expectedMarkdown = normalizeFixtureNewlines(
+      readFileSync(new URL('./fixtures/safe-readable-social.md', import.meta.url), 'utf8'),
     );
-    const expectedVisible = readFileSync(
-      new URL('./fixtures/safe-readable-social.visible.txt', import.meta.url),
-      'utf8',
+    const expectedVisible = normalizeFixtureNewlines(
+      readFileSync(new URL('./fixtures/safe-readable-social.visible.txt', import.meta.url), 'utf8'),
     );
 
     expect(markdown).toBe(expectedMarkdown);
