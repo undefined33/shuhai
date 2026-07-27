@@ -222,6 +222,8 @@ describe('bookmark task UI', () => {
     expect(markup).toContain('应用选中');
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*应用选中/u);
     expect(markup).toContain('aria-label="整理建议操作"');
+    expect(markup).toContain('aria-label="选择书签 1：Research article"');
+    expect(markup).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2');
     expect(markup.indexOf('aria-label="整理建议列表"')).toBeLessThan(
       markup.indexOf('aria-label="整理建议操作"'),
     );

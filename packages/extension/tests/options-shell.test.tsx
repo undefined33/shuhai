@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import OptionsApp, { loadOptionsBootstrap } from '../src/options/OptionsApp.js';
+import RulesEditor from '../src/popup/pages/RulesEditor.js';
 import {
   isSafeHistoricalHealthUrl,
   openHistoricalHealthUrl,
@@ -25,6 +26,13 @@ describe('independent Options shell', () => {
 
     expect(markup).toContain('正在读取本地设置');
     expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('gives the rule test inputs stable accessible names', () => {
+    const markup = renderToStaticMarkup(<RulesEditor onChange={vi.fn()} rules={[]} />);
+
+    expect(markup).toContain('aria-label="测试 URL"');
+    expect(markup).toContain('aria-label="测试标题"');
   });
 
   it('bootstraps only settings, Vault state, and the explicit X permission', async () => {

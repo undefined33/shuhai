@@ -358,8 +358,16 @@ export default function RulesEditor({ rules, onChange }: RulesEditorProps) {
         <div className="space-y-2 rounded-md border border-border bg-muted/30 p-2">
           <div className="text-sm font-medium">测试规则</div>
           <div className="grid grid-cols-2 gap-2">
-            <Input onChange={(event) => setTestUrl(event.target.value)} value={testUrl} />
-            <Input onChange={(event) => setTestTitle(event.target.value)} value={testTitle} />
+            <Input
+              aria-label="测试 URL"
+              onChange={(event) => setTestUrl(event.target.value)}
+              value={testUrl}
+            />
+            <Input
+              aria-label="测试标题"
+              onChange={(event) => setTestTitle(event.target.value)}
+              value={testTitle}
+            />
           </div>
           <Button onClick={testRules} size="sm" variant="secondary">
             <TestTube2 className="h-4 w-4" />
