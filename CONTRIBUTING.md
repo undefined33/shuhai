@@ -22,11 +22,17 @@ pnpm install
 pnpm --filter @shuhai/extension run build
 ```
 
-在 `chrome://extensions` 加载 `packages/extension/dist`。开发时运行：
+在 `chrome://extensions` 加载 `packages/extension/dist`。这个 mutable 目录只用于开发，
+不能作为长期 dogfood release。开发时运行：
 
 ```bash
 pnpm --filter @shuhai/extension run dev
 ```
+
+长期加载使用版本化、不可覆盖的 release 目录，并按
+[`docs/dogfood/release-guide.md`](./docs/dogfood/release-guide.md) 校验。创建 release
+必须遵守当前 `READY/IN_PROGRESS` Goal；不能从 dirty checkout、过期 remote-tracking ref
+或未合并分支手工复制 `dist` 冒充发布。
 
 ## 3. 工作流
 

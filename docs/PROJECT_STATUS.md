@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-07-28
-> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C 均已 `DONE/PASS`；当前没有 `READY/IN_PROGRESS` Goal
+> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C 均已 `DONE/PASS`；Goal 046E Implementation Review Round 2 `PASS`，当前为唯一 `READY_FOR_REVIEW` Goal
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -123,7 +123,8 @@ Goal 045A 已通过当前门禁的模块：
 |    9 | Goal 046B | `DONE`                    | 两条用户旅程与独立 Options               |
 |   10 | Goal 046D | `DONE`                    | 可读笔记、发布卫生与 dogfood 前置收口    |
 |   11 | Goal 046C | `DONE`                    | 046D 后的隔离 E2E、可用性与视觉验收      |
-|   12 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
+|   12 | Goal 046E | `READY_FOR_REVIEW`        | 版本化、固定 ID、可校验 dogfood release  |
+|   13 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
 用户已确认 v4；041/042/043/045A/045B/045C/046A/046B 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；045B 的 message、storage、权限和 URL 体检收口也已通过 mock-only 完整门禁与独立复审；045C 的单条内容保存收敛、legacy fail-closed 与 AI 隐私边界同样通过完整门禁和两名独立 Reviewer。046A 的主壳、surface protocol、bundle、isolated fixture visual 均通过完整门禁与独立复审。046B 完成两条旅程、独立 Options 与旧入口删除；最终 shared `1/1`、desktop `25/25`、extension `845/845`，Reviewer Locke 给出 `PASS` 且 P0/P1/P2/P3 为 0。2026-07-26 的外部战略报告已原样归档并逐项重新核验；Goal 046D v3 经三轮合同审查后完成实现，最终 shared `1/1`、desktop `25/25`、extension `850/850`，独立实现复审 `PASS` 且 P0/P1/P2/P3 为 0。Goal 046C v10 的合同与 amendment 均独立 `PASS`；shared `1/1`、desktop `25/25`、extension `851/851`，production build 和 `final-20260728-02` 的 13/13 隔离场景通过。运行发现并限域修复了整理建议 checkbox、规则测试输入的 accessible name、360px 排序工具栏和 Windows golden 换行；真实书签摘要、X 权限与 Vault 句柄前后不变。Round 8 的 teardown 诚实性、run-root ownership 与持久 diagnostics 三个 P2 已修复并以全新 run 验证；Round 9 独立复审为 `PASS`，P0/P1/P2 为 0，Goal 046C 正式 `DONE`。唯一 P3 是 `docs/workflows/README.md` 的既有瞬时状态漂移，留待独立文档卫生收口，不改变当前高优先级状态源。Goal 044 仍受微博 `NO_GO` 阻塞；032-040 的旧队列继续停止自动编排。
 
@@ -157,7 +158,9 @@ Goal 045A 已通过当前门禁的模块：
 6. Goal 045A/045B/045C/046A/046B/046D/046C 已完成完整门禁并通过独立审查。Goal 044
    在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举；046C 的 Round 8 三项 P2
    已修复，`final-20260728-02` 与 Round 9 均通过，但不等于真实 Chrome/Vault 或两周
-   dogfood 已完成。
+   dogfood 已完成。Goal 046E 实现 review 已 `PASS` 且 P0/P1/P2 为 0，当前继续完成
+   PR/CI/merge、detached release、隔离 Chromium acceptance 与最终 evidence review；
+   在这些证据完成前不把 release 写成已生成，也不冒充两周真实使用。
 
 ## 10. 当前文档
 
@@ -173,6 +176,7 @@ Goal 045A 已通过当前门禁的模块：
 - [Goal 046B 执行合同](./goals/goal-046b-two-journeys-and-options.md)
 - [Goal 046D dogfood 前置合同](./goals/goal-046d-dogfood-readiness.md)
 - [Goal 046C 隔离验收合同](./goals/goal-046c-isolated-usability-e2e.md)
+- [Goal 046E 版本化 Dogfood Release 合同](./goals/goal-046e-versioned-dogfood-release.md)
 - [2026-07-26 外部战略建议核验](./audits/2026-07-26-external-strategy-review.md)
 - [Goal 状态索引](./goals/README.md)
 - [产品路线图 v3（历史）](./product-roadmap-v3.md)

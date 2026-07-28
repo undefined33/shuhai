@@ -294,7 +294,8 @@ extractor_version: 1
 
 ### Goal 046：极简界面与两周 dogfood
 
-状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DONE/PASS`
+状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DONE/PASS`；
+046E `READY_FOR_REVIEW`（Implementation Review Round 2 `PASS`）
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
@@ -316,6 +317,11 @@ extractor_version: 1
    E2E 已通过；Round 8 的 3 个证据完整性 P2 已修复，`final-20260728-02` 与
    Round 9 独立复审均通过。
    两周真实 dogfood 仍是后续人工门禁，不会被自动化截图伪装成完成。
+5. [Goal 046E](./goals/goal-046e-versioned-dogfood-release.md)：把会被下一次 build
+   覆盖的开发 `dist` 转换为版本化、不可覆盖、固定 ID、逐文件可校验的长期 dogfood
+   release；实现门禁与独立复审已通过，继续完成 PR/CI/merge、detached release 和最终
+   evidence review。只使用隔离 Chromium 和全新项目 profile，不接触真实
+   Chrome/X/Vault/书签。
 
 ### Goal 047：平台扩展门禁
 

@@ -7,5 +7,5 @@
     "rootDir": ".",
     "types": ["chrome", "vitest"]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*", "scripts/**/*"]
 }

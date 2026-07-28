@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "test": "vitest run",
-    "lint": "eslint src/ tests/ vite.config.ts",
+    "lint": "eslint src/ tests/ scripts/ vite.config.ts",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
