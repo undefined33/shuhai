@@ -69,11 +69,15 @@ pnpm install
 pnpm --filter @shuhai/extension run build
 ```
 
-在 `chrome://extensions` 启用开发者模式，选择“加载已解压的扩展程序”，加载：
+在 `chrome://extensions` 启用开发者模式，选择“加载已解压的扩展程序”，开发调试时加载：
 
 ```text
 packages/extension/dist
 ```
+
+这个目录会被下一次 build 重建，不是长期 dogfood 路径。长期使用只加载 Goal 046E 生成
+并通过校验的版本化 `dogfood/releases/.../extension`；具体绝对路径、固定 ID 校验、升级
+和回退见 [Dogfood Release 使用说明](./docs/dogfood/release-guide.md)。
 
 开发模式：
 
@@ -120,7 +124,9 @@ docs/
 - Goal 046A/046B：Popup、Side Panel、两条旅程和独立 Options，已完成并独立验收。
 - Goal 046D：可读安全 Markdown、发布卫生和 dogfood 前置收口，已完成并独立复审
   `PASS`。
-- Goal 046C：最终隔离 E2E 与可用性验收，保持 `DRAFT`，下一步先精简合同并独立审查。
+- Goal 046C：最终隔离 E2E 与可用性验收，已完成并通过 Round 9 独立复审。
+- Goal 046E：版本化、固定 ID、可校验的本地 dogfood release，当前已通过实现复审并进入
+  集成与最终发布证据阶段。
 - 两周真实 dogfood：只会在 046D/046C 完成且 owner 明确启动后开始。
 
 参见：
