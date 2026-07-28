@@ -17,6 +17,7 @@ import {
   AcceptanceMetadataSchema,
   BUILD_COMMAND,
   EXPECTED_EXTENSION_ID,
+  PRODUCTION_RELEASE_RUNTIME,
   RELEASES_ROOT,
   ReleaseMetadataSchema,
   WORKTREE_ROOT,
@@ -279,6 +280,10 @@ function rewriteReleaseInventory(release: VerifiedRelease): void {
 }
 
 describe('dogfood source identity and CLI boundaries', () => {
+  it('launches the production pnpm runner on the current platform', () => {
+    expect(PRODUCTION_RELEASE_RUNTIME.readPnpmVersion()).toMatch(/^\d+\.\d+\.\d+$/u);
+  });
+
   it('requires an exact clean detached source OID', () => {
     expect(() =>
       validateSourceIdentity({

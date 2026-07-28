@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { createHash, createPublicKey, randomUUID } from 'node:crypto';
 import {
   constants as fsConstants,
@@ -419,12 +419,8 @@ function sourceIdentity(expectedOid: string): SourceIdentity {
   };
 }
 
-function pnpmExecutable(): string {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-}
-
 function pnpmVersion(): string {
-  return execFileSync(pnpmExecutable(), ['--version'], {
+  return execSync('pnpm --version', {
     cwd: WORKTREE_ROOT,
     encoding: 'utf8',
     windowsHide: true,
@@ -442,7 +438,7 @@ function viteVersion(runtime: ReleaseRuntime): string {
 }
 
 function runBuild(): void {
-  execFileSync(pnpmExecutable(), ['--filter', '@shuhai/extension', 'run', 'build'], {
+  execSync(BUILD_COMMAND, {
     cwd: WORKTREE_ROOT,
     stdio: 'inherit',
     windowsHide: true,

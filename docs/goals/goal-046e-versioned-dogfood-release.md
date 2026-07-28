@@ -427,3 +427,32 @@ DRAFT
 这里仍未声称最终 dogfood release 已创建。PR、远端 CI、实现合并、detached release
 worktree、合并后完整门禁、隔离 Chromium acceptance、最终 evidence review 和 closure PR
 仍按第 9 节顺序执行。
+
+### 11.1 Implementation PR 与首轮 detached release 证据
+
+- Implementation commit `ca4559724eb38b07b0057f6d14a44cc485144533` 已通过 PR #9
+  的远端 `check`，并以 merge commit
+  `90aa55e9f711b15af2276557360f7cd24d44cbb5` 合入 `main`；fetch 后的
+  `origin/main` 与该 OID 完全相同。
+- 首轮版本化 detached worktree 为
+  `C:\Projects\ShuHai\.worktrees\dogfood-release-90aa55e9f711`。它使用
+  `pnpm install --offline --frozen-lockfile --ignore-scripts` 完成离线依赖复用，并通过
+  lint、typecheck、896 项全量测试和 production build。
+- 随后的 production `dogfood:create` 在第一次内部 build 之前以
+  `spawnSync pnpm.cmd EINVAL` 失败。失败 worktree 仍为 detached、洁净状态，
+  `dogfood/releases` 从未创建，也没有 release 或 acceptance 产物；该 worktree
+  保留为失败证据，不得复用为最终 release。
+
+### 11.2 Windows runner 热修候选
+
+- 隔离热修分支 `codex/goal-046e-windows-spawn-fix` 只调整
+  `packages/extension/scripts/dogfood-release.ts` 的两个固定 pnpm 调用，并新增一条
+  production runner 回归测试。Git/OID 校验仍使用 `execFileSync` 参数数组；shell
+  只接收固定字面量 `pnpm --version` 和既有固定 `BUILD_COMMAND`，没有 OID、release
+  ID、路径、环境变量或其它不可信输入进入命令字符串。
+- 当前候选已通过 lint、typecheck、production build 和全量测试；shared `1`、
+  desktop `25`、extension `871`，共 `897` 项。定向 release transaction/security
+  测试为 `20/20 PASS`，且直接 production `runBuild()` smoke 已在 Windows 上完成
+  Vite `6.4.3` build。
+- 在独立 hotfix review、精确提交、远端 CI、合并和新 merge OID 上的全新 detached
+  release 全链路完成前，本节仍只是热修候选证据，不表示最终 dogfood release 已生成。

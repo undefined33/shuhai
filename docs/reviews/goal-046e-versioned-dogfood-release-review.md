@@ -647,3 +647,81 @@ PASS；仅输出既有 LF/CRLF 转换提示
 这些内容仍必须在 Goal 046E 后续完整质量门禁、合并后版本化 detached checkout 和最终隔离
 release 阶段真实验证。本轮只修改本 review 文件，没有修改实现、Goal/status 文档或其它
 路径，也没有执行 Git stage、commit、push 或其它 Git 写操作。
+
+## Hotfix Review: Windows pnpm runner
+
+- Reviewer：Codex（独立聚焦复审）
+- 日期：2026-07-28
+- 精确 cwd：`C:\Projects\ShuHai\.worktrees\goal-046e-windows-spawn-fix`
+- 结论：**PASS**
+- 严重度统计：**P0 = 0，P1 = 0，P2 = 0，P3 = 0**
+
+### 审查范围
+
+本轮只审查 PR #9 merge OID
+`90aa55e9f711b15af2276557360f7cd24d44cbb5` 之上的 Windows pnpm runner
+热修候选，聚焦 shell 输入边界、Git/OID 调用方式、Windows 回归测试、跨平台行为和失败
+产物记录。没有扩大到 Goal 046E 已通过 Round 2 的其它发布、acceptance 或浏览器逻辑。
+
+### 直接证据与发现
+
+1. `BUILD_COMMAND` 是模块级固定字面量
+   `pnpm --filter @shuhai/extension run build`；版本命令也是固定字面量
+   `pnpm --version`。两个 `execSync()` 调用都没有字符串插值、拼接或动态参数，OID、
+   release ID、路径、环境变量和其它外部输入均未进入 shell 命令字符串。
+2. 动态 source identity 查询仍由 `execFileSync('git', [...args])` 执行。`HEAD`、status
+   和 branch 查询使用固定参数数组；expected OID 只进入 TypeScript 比较逻辑，不进入
+   shell。
+3. 新增测试直接调用 `PRODUCTION_RELEASE_RUNTIME.readPnpmVersion()`，因此真实穿过
+   production `pnpmVersion()` 和 Windows shell runner，而不是测试副本或 mock。定向测试
+   在当前 Windows runner 上通过，并会使旧的直接执行 `pnpm.cmd` 路径重新暴露失败。
+4. 测试没有直接执行 production `runBuild()`。这不构成阻塞：两个 pnpm 调用使用同一
+   `execSync()` 启动机制，差异仅为固定命令字面量和 build 的继承 stdio；为了单元回归而
+   每次执行完整 Vite build 会扩大测试成本。最终 detached release 仍必须实际覆盖内部
+   build。
+5. 命令依赖当前进程 `PATH` 解析 `pnpm`，与原实现的工具解析信任边界相同；没有新增可控
+   shell 输入。固定命令在 Windows 通过命令解释器解析 `.cmd`，在 POSIX 通过默认 shell
+   解析 `pnpm`，未发现注入、引号或参数语义回归。
+6. Goal 记录首轮 detached release 在第一次内部 build 前以
+   `spawnSync pnpm.cmd EINVAL` 失败，并明确记载 `dogfood/releases` 从未创建。当前允许
+   检查的 hotfix worktree 中 `dogfood` 与 `dogfood/releases` 均不存在，与“没有误带入
+   release 产物”一致。由于本轮禁止触碰其它 worktree，未直接读取保留的失败 worktree，
+   因而不把其洁净状态或目录内容冒充为独立复核结果。
+
+### 额外测试与风险判断
+
+未发现需要新增阻塞性负向测试的输入面：shell 字符串完全静态，动态 Git 数据不经过
+shell。若以后允许自定义 package manager、build command、cwd 或环境覆盖，必须恢复参数
+隔离并补充注入与路径负向测试；当前实现不应为假设性扩展增加通用 command runner。
+
+### 独立命令与结果
+
+```text
+git status --short --branch --untracked-files=all
+PASS：分支为 codex/goal-046e-windows-spawn-fix；审查前仅 Goal、runner 脚本和测试有改动
+
+git show -s --format="%H%n%P%n%D%n%s" HEAD
+PASS：HEAD 与 PR #9 merge OID 90aa55e9f711b15af2276557360f7cd24d44cbb5 一致
+
+git diff -- docs/goals/goal-046e-versioned-dogfood-release.md packages/extension/scripts/dogfood-release.ts packages/extension/tests/dogfood-release.test.ts
+PASS：热修实现仅替换两个固定 pnpm 调用并新增 production runner 测试；Goal 追加失败证据
+
+pnpm --filter @shuhai/extension exec vitest run tests/dogfood-release.test.ts
+PASS：1 file，20 tests；新增 production pnpm runner 用例在 Windows 上通过
+
+Test-Path dogfood
+False
+
+Test-Path dogfood/releases
+False
+```
+
+### 未验证项
+
+本轮按限制没有运行 production build、release create/accept、全量门禁、浏览器、网络或
+最终 detached release，也没有读取保留在其它 worktree 的失败现场。实现者关于 lint、
+typecheck、全量测试、production build 和 production `runBuild()` smoke 的自述未被当作
+本轮独立证据。最终合并后必须在新的 detached OID 上重新运行真实 create/verify 流程。
+
+本轮唯一修改为本 review 文件；没有修改实现、Goal/status 或其它文件，也没有执行 Git
+stage、commit、push 或其它 Git 写操作。
