@@ -8,7 +8,8 @@
 packages/extension/dist
 ```
 
-它会被下一次 `pnpm --filter @shuhai/extension run build` 删除并重建，只适合开发调试，
+它会被下一次
+`node scripts/host-command/shuhai-command.cjs extension-build` 删除并重建，只适合开发调试，
 不要作为长期加载路径。
 
 Dogfood release：
@@ -40,8 +41,8 @@ build 不会触碰这个路径。
 在对应的版本化 release worktree 根目录运行：
 
 ```text
-pnpm dogfood:verify -- <release-id>
-pnpm dogfood:verify-accepted -- <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-verify <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-verify-accepted <release-id>
 ```
 
 基础校验会重新检查 source commit、lockfile、manifest public key、固定 ID、文件集合、

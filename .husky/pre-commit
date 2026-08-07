@@ -1,1 +1,1 @@
-pnpm lint-staged
+node scripts/host-command/shuhai-command.cjs husky-lint-staged

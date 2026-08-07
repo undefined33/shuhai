@@ -36,11 +36,16 @@ Review 先列问题，按数据损坏、安全、行为回归、缺测、体验�
 所有业务 Goal 仍须通过：
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
+
+本地证据必须同时记录 bounded receipt 的 operation ID、reason、digest、limits、`JobEmpty`
+和 owned PID/TCP/UDP count。不得直接运行 pnpm/tool raw command 补证；heavy lane busy 是
+fail-closed 结果，不是绕过理由。文档-only 格式门禁使用 `prettier-check` named operation 和
+精确 repo-relative 文件参数。
 
 ### 风险匹配
 

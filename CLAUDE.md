@@ -26,16 +26,16 @@ Toolbar Popup 每次只有一个上下文主动作；Side Panel 显示当前任�
 ## Commands
 
 ```bash
-pnpm install
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
-pnpm test:coverage
-pnpm test:e2e
+node scripts/host-command/shuhai-command.cjs root-install
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
+node scripts/host-command/shuhai-command.cjs root-test-coverage
+node scripts/host-command/shuhai-command.cjs root-test-e2e
 ```
 
-基础业务质量门禁是 lint、typecheck、test 和 extension build；涉及 UI、安全或用户旅程时还要执行 Goal 指定的组件/E2E/手工验证。
+这些 named operation 是本地唯一声明入口；不要直接运行 pnpm/tool raw command。Windows local 由 bounded runner 限制输出、时间、Job tree 和 heavy concurrency；非 Windows interactive fail closed，CI 兼容入口要求 `CI=true`。基础业务质量门禁是 lint、typecheck、test 和 extension build；涉及 UI、安全或用户旅程时还要执行 Goal 指定的组件/E2E/手工验证。
 
 ## Safety Boundaries
 

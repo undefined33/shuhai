@@ -65,8 +65,8 @@ Popup 不加载完整书签树、历史记录或高级设置。
 - pnpm `>=9.0.0`。
 
 ```bash
-pnpm install
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-install
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
 
 在 `chrome://extensions` 启用开发者模式，选择“加载已解压的扩展程序”，开发调试时加载：
@@ -82,7 +82,7 @@ packages/extension/dist
 开发模式：
 
 ```bash
-pnpm --filter @shuhai/extension run dev
+node scripts/host-command/shuhai-command.cjs extension-dev
 ```
 
 构建内容改变后，需要在 `chrome://extensions` 对已加载扩展执行重新加载。
@@ -90,11 +90,15 @@ pnpm --filter @shuhai/extension run dev
 ## 质量门禁
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
+
+本地命令只能使用 registry 中的 named operation。Windows local 统一经过 bounded runner；
+heavy lane busy、session 未 sealed 或 operation 未注册时均在目标 child 启动前失败。不要直接运行
+pnpm/tool raw command；项目不猜测 `.codex` hook，任意外部 shell 仍依赖使用者遵守本规则。
 
 平台 fixture 必须是合成或脱敏数据。真实 Chrome、X、Vault 或书签操作需要对应 Goal 明确
 授权，不能用日常用户环境替代首次隔离验证。

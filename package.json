@@ -10,19 +10,20 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel run dev",
-    "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
-    "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
-    "dogfood:create": "tsx packages/extension/scripts/dogfood-release.ts create",
-    "dogfood:verify": "tsx packages/extension/scripts/dogfood-release.ts verify",
-    "dogfood:verify-accepted": "tsx packages/extension/scripts/dogfood-release.ts verify-accepted",
-    "dogfood:accept": "tsx packages/extension/scripts/dogfood-acceptance.ts",
-    "lint": "pnpm -r run lint",
-    "typecheck": "pnpm --filter @shuhai/shared exec tsc -b --force && pnpm -r run typecheck",
-    "clean": "pnpm -r run clean",
-    "prepare": "husky"
+    "preinstall": "node scripts/host-command/assert-session.cjs root-preinstall-raw",
+    "prepare": "node scripts/host-command/assert-session.cjs root-prepare-raw",
+    "dev": "node scripts/host-command/shuhai-command.cjs root-dev",
+    "build": "node scripts/host-command/shuhai-command.cjs root-build",
+    "test": "node scripts/host-command/shuhai-command.cjs root-test",
+    "test:coverage": "node scripts/host-command/shuhai-command.cjs root-test-coverage",
+    "test:e2e": "node scripts/host-command/shuhai-command.cjs root-test-e2e",
+    "dogfood:create": "node scripts/host-command/shuhai-command.cjs dogfood-create",
+    "dogfood:verify": "node scripts/host-command/shuhai-command.cjs dogfood-verify",
+    "dogfood:verify-accepted": "node scripts/host-command/shuhai-command.cjs dogfood-verify-accepted",
+    "dogfood:accept": "node scripts/host-command/shuhai-command.cjs dogfood-accept",
+    "lint": "node scripts/host-command/shuhai-command.cjs root-lint",
+    "typecheck": "node scripts/host-command/shuhai-command.cjs root-typecheck",
+    "clean": "node scripts/host-command/shuhai-command.cjs blocked-clean"
   },
   "devDependencies": {
     "@eslint/js": "9.27.0",
@@ -44,11 +45,10 @@
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
+      "node scripts/host-command/assert-session.cjs lint-staged-ts-raw"
     ],
     "*.{json,md,yml,yaml}": [
-      "prettier --write"
+      "node scripts/host-command/assert-session.cjs lint-staged-docs-raw"
     ]
   }
 }
