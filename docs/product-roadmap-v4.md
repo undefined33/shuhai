@@ -295,7 +295,7 @@ extractor_version: 1
 ### Goal 046：极简界面与两周 dogfood
 
 状态：046A `DONE/PASS`；046B `DONE/PASS`；046D `DONE/PASS`；046C `DONE/PASS`；
-046E v5 `READY_FOR_REVIEW`（runner profile recovery 完整门禁已通过）
+046E v5 `DONE/PASS`（版本化 release 与隔离 acceptance 已通过）
 
 - Popup 上下文单动作。
 - Side Panel 当前任务工作台。
@@ -320,9 +320,10 @@ extractor_version: 1
 5. [Goal 046E](./goals/goal-046e-versioned-dogfood-release.md)：把会被下一次 build
    覆盖的开发 `dist` 转换为版本化、不可覆盖、固定 ID、逐文件可校验的长期 dogfood
    release。v4 replay 已合入 main，但合并后新 release 的首次 canonical verify 暴露 Windows
-   runner process cap 并 fail closed；当前 v5 quick/e2e 最小预算修复、完整门禁与两路独立实现
-   复审已通过，等待 PR/CI/merge，再从新的 merge OID 完成 verify、隔离 Chromium acceptance 与
-   最终 evidence review。旧 release 冻结，不接触真实 Chrome/X/Vault/书签。
+   runner process cap 并 fail closed；v5 已以 quick=`8`、e2e=`20` 完成最小预算修复、PR #14
+   CI/merge、新 OID release、verify、隔离 Chromium acceptance、verify-accepted 与两路最终
+   evidence review。旧失败 release 继续冻结；新 release 可加载，但仍不接触或证明真实
+   Chrome/X/Vault/书签与两周 dogfood。
 
 ### Goal 047：平台扩展门禁
 
