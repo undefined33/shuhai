@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-08-07
-> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E v4 是唯一 `READY_FOR_REVIEW`，新 main replay 与完整门禁已通过，等待独立复审
+> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E v5 是唯一 `READY_FOR_REVIEW`，runner profile recovery 完整门禁已通过
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,15 +15,22 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-2026-08-07 Goal 048 implementation PR #11 与 closure PR #12 均通过 CI 并合并；当前远端
-`main` 为 `e415e03a4a7c059f4c0e89c01fbb0a8528074ad3`，Goal 048 正式 `DONE`。Goal 046E
-首轮 detached acceptance 曾以 `ReferenceError: __name is not defined` fail closed，未写
-`acceptance.json`；对应三文件修复继续在旧 `goal-046e-acceptance-evaluate-fix` worktree 中
-byte-for-byte 只读冻结。当前 v4 replay 位于 `codex/goal-046e-replay` 和独立 worktree，基于上述
-新 main，精确 tracked manifest 为 Goal/两份状态源/acceptance 实现/测试共 5 文件。唯一一次
-offline install 与 lint/typecheck/test/build/Prettier 门禁均通过，runner cleanup proof 完整；旧修复
-worktree 与主 checkout 均不触碰。当前等待独立 replay 实现/安全复审，新 release 只能在复审与
-implementation PR 合并后生成。
+2026-08-07 Goal 048 implementation PR #11 与 closure PR #12 均通过 CI 并合并，正式 `DONE`。
+Goal 046E v4 replay PR #13 也通过 CI，并以
+`b8a4e7e5f97f40fb64fe99730e9d9c894ad2a1f3` 合入 main。基于该 OID 的全新 detached release
+已通过 offline install、完整门禁和 `dogfood-create`，但首次 canonical `dogfood-verify` 因
+`quick.processCount=4` 小于 Windows pnpm/tsx/esbuild/Git 实际进程树而 fail closed；没有写
+`acceptance.json`，未运行 accept。该 release、失败 receipt、detached worktree、旧 replay 与
+更早的三文件 fix worktree全部原样冻结。
+
+当前唯一恢复 checkout 为
+`C:\Projects\ShuHai\.worktrees\goal-046e-runner-profile-recovery`，分支
+`codex/goal-046e-runner-profile-recovery`，基于上述 `b8a4e7e5f97f...`。Goal 046E v5 合同 Round 2
+已独立 `PASS`，quick=`8`、e2e=`20` 与 named `root-test` 回归已按 exact7 实施；
+offline install、lint、typecheck、全量 test、build、Prettier 和 diff 门禁均通过，状态现为
+`READY_FOR_REVIEW`。Goal 048 的 PowerShell suite 10/10 只保留为历史基线；该 suite 没有
+named-operation 入口，本轮未重跑也不冒充当前证据。两路独立实现复审均已 `PASS`；PR/CI/merge
+前不生成新 release，旧 b8 release 继续冻结。
 
 Goal 043 已完成最终真实 Chrome 门禁。用户在唯一获准的日常 `https://x.com/i/bookmarks` 标签启动新的受界 no-Vault 任务并于 `5/10` 候选、3 条 catalog-existing observations 时暂停；继续后至少完成一批处理，existing observations 增至 6。用户随后只在同一标签离开收藏页，Side Panel 以 `tab_changed` 显示“收藏页已切换”并保持暂停，没有读取新页面；用户最终取消任务。全程未触碰其它标签、Cookie、token、私有 API、真实 Vault 或平台收藏数据。worktree disposable Vault 在前后核对中始终为 5 个文件、总计 5002 bytes、单文件 865-1200 bytes，没有新增写入。独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 给出 `PASS`，P0/P1/P2 均为 0，因此 Goal 041/042/043 正式完成。X 结论仍严格限定为 `LIMITED_GO/batch-only`：没有稳定 feed end marker，不能宣称同步全部历史收藏。Goal 044 仍为 `PLANNED`，且微博当前为 `NO_GO`，不得自动进入生产实施。disposable 测试 Vault 内现有 5 个文件不删除、不修改；v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
@@ -133,7 +140,7 @@ Goal 045A 已通过当前门禁的模块：
 |    9 | Goal 046B | `DONE`                    | 两条用户旅程与独立 Options               |
 |   10 | Goal 046D | `DONE`                    | 可读笔记、发布卫生与 dogfood 前置收口    |
 |   11 | Goal 046C | `DONE`                    | 046D 后的隔离 E2E、可用性与视觉验收      |
-|   12 | Goal 046E | `READY_FOR_REVIEW`        | 版本化、固定 ID、可校验 dogfood release  |
+|   12 | Goal 046E | `READY_FOR_REVIEW`        | runner profile recovery 与新 OID release |
 |   13 | Goal 048  | `DONE`                    | receipt ownership/proof 与 schema 收口   |
 |   14 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
@@ -169,10 +176,11 @@ Goal 045A 已通过当前门禁的模块：
 6. Goal 045A/045B/045C/046A/046B/046D/046C 已完成完整门禁并通过独立审查。Goal 044
    在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举；046C 的 Round 8 三项 P2
    已修复，`final-20260728-02` 与 Round 9 均通过，但不等于真实 Chrome/Vault 或两周
-   dogfood 已完成。Goal 046E 首轮隔离 acceptance 暴露 `__name` worker serialization 缺陷并
-   fail closed；v4 已在新 main 以 5 文件 manifest 重放独立预审的修复并通过完整门禁。独立
-   实现复审、新 PR/CI/merge、detached release、隔离 Chromium acceptance 与最终 evidence
-   review 完成前，不把 release 写成已生成，也不冒充两周真实使用。
+   dogfood 已完成。Goal 046E 的 `__name` 修复已由 v4 replay 合入 main；其后全新 release 的
+   create 通过，但首次 canonical verify 暴露 runner process cap 并 fail closed。当前 v5 合同
+   Round 2 已独立 `PASS`，quick=`8`、e2e=`20` 的最小 profile recovery、完整门禁与两路实现复审
+   均已通过；新 PR/CI/merge、新 OID detached release、canonical verify/accept/verify-accepted 与
+   最终 evidence review 完成前，不把 release 写成可加载或已验收，也不冒充两周真实使用。
 
 ## 10. 当前文档
 
