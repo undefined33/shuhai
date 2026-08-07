@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import { Script } from 'node:vm';
 
 import { describe, expect, it } from 'vitest';
 
@@ -40,6 +41,7 @@ import {
   type VerifiedRelease,
 } from '../scripts/dogfood-release.js';
 import {
+  ACCEPTANCE_WORKER_EXPRESSIONS,
   acceptRelease,
   parseAcceptanceCliArguments,
   type AcceptanceObservation,
@@ -280,6 +282,13 @@ function rewriteReleaseInventory(release: VerifiedRelease): void {
 }
 
 describe('dogfood source identity and CLI boundaries', () => {
+  it('keeps acceptance worker expressions parseable and free of transpiler helpers', () => {
+    for (const expression of Object.values(ACCEPTANCE_WORKER_EXPRESSIONS)) {
+      expect(expression).not.toContain('__name');
+      expect(() => new Script(`void (${expression});`)).not.toThrow();
+    }
+  });
+
   it('launches the production pnpm runner on the current platform', () => {
     expect(PRODUCTION_RELEASE_RUNTIME.readPnpmVersion()).toMatch(/^\d+\.\d+\.\d+$/u);
   });

@@ -28,6 +28,55 @@ const ACCEPTANCE_CACHE_ROOT = path.join(
   'shuhai-dogfood-acceptance',
 );
 
+export const ACCEPTANCE_WORKER_EXPRESSIONS = {
+  serviceWorkerBundleHash: `(async () => {
+    const response = await fetch(chrome.runtime.getURL('background/service-worker.js'), {
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('service_worker_bundle_unavailable');
+    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
+    return [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('');
+  })()`,
+  bookmarkDigest: `(async () => {
+    const tree = await new Promise((resolve, reject) => {
+      chrome.bookmarks.getTree((nodes) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error('bookmark_digest_unavailable'));
+          return;
+        }
+        resolve(nodes);
+      });
+    });
+    const rows = [];
+    const visit = (nodes, parent = '') => {
+      for (const node of nodes) {
+        rows.push(
+          JSON.stringify([parent, node.id, node.index ?? null, node.title, node.url ?? null]),
+        );
+        visit(node.children ?? [], node.id);
+      }
+    };
+    visit(tree);
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(rows.join('\\n')),
+    );
+    return {
+      digest: [...new Uint8Array(digest)]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join(''),
+      nodeCount: rows.length,
+    };
+  })()`,
+  xPermissionGranted: `new Promise((resolve) => {
+    chrome.permissions.contains({ origins: ['https://x.com/*'] }, (granted) => {
+      resolve(!chrome.runtime.lastError && granted === true);
+    });
+  })`,
+} as const;
+
 export interface AcceptanceObservation {
   readonly chromiumVersion: string;
   readonly serviceWorkerSha256: string;
@@ -74,58 +123,19 @@ async function extensionWorker(context: BrowserContext): Promise<Worker> {
 }
 
 async function serviceWorkerBundleHash(worker: Worker): Promise<string> {
-  return worker.evaluate(async () => {
-    const response = await fetch(chrome.runtime.getURL('background/service-worker.js'), {
-      cache: 'no-store',
-    });
-    if (!response.ok) throw new Error('service_worker_bundle_unavailable');
-    const digest = await crypto.subtle.digest('SHA-256', await response.arrayBuffer());
-    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
-  });
+  return worker.evaluate<string>(ACCEPTANCE_WORKER_EXPRESSIONS.serviceWorkerBundleHash);
 }
 
 async function bookmarkDigest(
   worker: Worker,
 ): Promise<{ readonly digest: string; readonly nodeCount: number }> {
-  return worker.evaluate(async () => {
-    const tree = await new Promise<chrome.bookmarks.BookmarkTreeNode[]>((resolve, reject) => {
-      chrome.bookmarks.getTree((nodes) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error('bookmark_digest_unavailable'));
-          return;
-        }
-        resolve(nodes);
-      });
-    });
-    const rows: string[] = [];
-    const visit = (nodes: readonly chrome.bookmarks.BookmarkTreeNode[], parent = ''): void => {
-      for (const node of nodes) {
-        rows.push(
-          JSON.stringify([parent, node.id, node.index ?? null, node.title, node.url ?? null]),
-        );
-        visit(node.children ?? [], node.id);
-      }
-    };
-    visit(tree);
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rows.join('\n')));
-    return {
-      digest: [...new Uint8Array(digest)]
-        .map((value) => value.toString(16).padStart(2, '0'))
-        .join(''),
-      nodeCount: rows.length,
-    };
-  });
+  return worker.evaluate<{ readonly digest: string; readonly nodeCount: number }>(
+    ACCEPTANCE_WORKER_EXPRESSIONS.bookmarkDigest,
+  );
 }
 
 function xPermissionGranted(worker: Worker): Promise<boolean> {
-  return worker.evaluate(
-    () =>
-      new Promise<boolean>((resolve) => {
-        chrome.permissions.contains({ origins: ['https://x.com/*'] }, (granted) => {
-          resolve(!chrome.runtime.lastError && granted === true);
-        });
-      }),
-  );
+  return worker.evaluate<boolean>(ACCEPTANCE_WORKER_EXPRESSIONS.xPermissionGranted);
 }
 
 export async function runChromiumAcceptance(

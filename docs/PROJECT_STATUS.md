@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-08-07
-> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E 保持冻结的 `READY_FOR_REVIEW`，下一步在 Goal 048 后的新 main 语义重放
+> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E v4 是唯一 `READY_FOR_REVIEW`，新 main replay 与完整门禁已通过，等待独立复审
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,21 +15,15 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-2026-08-07 Goal 048 集成后远端 `main` 为
-`8ab9f82dc57773b4a7b0b7a0ba1b564c0d47edb0`。Goal 048 的旧候选与独立 re-audit 基于
-`13402ca`；它在 replay 开始时落后当时 main 51 commits，未被直接集成。current-base replay 在隔离 worktree 覆盖 main 新增的
-Goal 046E offline install 和 dogfood command surfaces。v2 的 `10/10 PASS` 因 independent final
-review 发现 fixed pending ownership、持久 receipt proof 自举和 release/pnpm schema authority 三个
-P2，继续只作 superseded normal-path evidence。v3 已完成限域修复、两路独立实现复审与全套静态
-门禁；新的固定 suite 首次且唯一一次运行即 `10/10 PASS`，receipt/Job/ledger/PID/port/test-temp/
-Heavy Lane/30-file manifest 全部洁净。全新的 security 与 evidence/ownership final review 均为
-`PASS` 且 P0/P1/P2=`0/0/0`；共同唯一 P3 是 allowlist 外 `docs/workflows/README.md:64` 的既有
-瞬时状态漂移。exact commit `2633e68` 经 PR #11 的 CI `check` 成功后，以 merge commit
-`8ab9f82` 集成；Goal 048 正式 `DONE`。Goal 046E 可在新的 main 隔离 worktree 中恢复语义重放，
-其旧三文件 worktree 在重放前继续冻结。
-Goal 046E 的 3 文件 acceptance 修复在独立 `goal-046e-acceptance-evaluate-fix` worktree 中继续
-byte-for-byte 只读冻结。Goal 048 只可在自己的 branch 修改同名 Goal 文档 base copy 的 command
-wording，集成后再由 046E 语义重放修复；主 checkout Goal 032/048 混合 dirty 不触碰。
+2026-08-07 Goal 048 implementation PR #11 与 closure PR #12 均通过 CI 并合并；当前远端
+`main` 为 `e415e03a4a7c059f4c0e89c01fbb0a8528074ad3`，Goal 048 正式 `DONE`。Goal 046E
+首轮 detached acceptance 曾以 `ReferenceError: __name is not defined` fail closed，未写
+`acceptance.json`；对应三文件修复继续在旧 `goal-046e-acceptance-evaluate-fix` worktree 中
+byte-for-byte 只读冻结。当前 v4 replay 位于 `codex/goal-046e-replay` 和独立 worktree，基于上述
+新 main，精确 tracked manifest 为 Goal/两份状态源/acceptance 实现/测试共 5 文件。唯一一次
+offline install 与 lint/typecheck/test/build/Prettier 门禁均通过，runner cleanup proof 完整；旧修复
+worktree 与主 checkout 均不触碰。当前等待独立 replay 实现/安全复审，新 release 只能在复审与
+implementation PR 合并后生成。
 
 Goal 043 已完成最终真实 Chrome 门禁。用户在唯一获准的日常 `https://x.com/i/bookmarks` 标签启动新的受界 no-Vault 任务并于 `5/10` 候选、3 条 catalog-existing observations 时暂停；继续后至少完成一批处理，existing observations 增至 6。用户随后只在同一标签离开收藏页，Side Panel 以 `tab_changed` 显示“收藏页已切换”并保持暂停，没有读取新页面；用户最终取消任务。全程未触碰其它标签、Cookie、token、私有 API、真实 Vault 或平台收藏数据。worktree disposable Vault 在前后核对中始终为 5 个文件、总计 5002 bytes、单文件 865-1200 bytes，没有新增写入。独立完成审查 Dalton (`019f6d79-e33c-7301-9fe1-d1504adda2cc`) 给出 `PASS`，P0/P1/P2 均为 0，因此 Goal 041/042/043 正式完成。X 结论仍严格限定为 `LIMITED_GO/batch-only`：没有稳定 feed end marker，不能宣称同步全部历史收藏。Goal 044 仍为 `PLANNED`，且微博当前为 `NO_GO`，不得自动进入生产实施。disposable 测试 Vault 内现有 5 个文件不删除、不修改；v1-v3、Goal 002-040 和旧 spec 全部保留用于复盘，但不能自动恢复实施。
 
@@ -175,9 +169,10 @@ Goal 045A 已通过当前门禁的模块：
 6. Goal 045A/045B/045C/046A/046B/046D/046C 已完成完整门禁并通过独立审查。Goal 044
    在微博 `NO_GO` 结论被独立研究门禁改变前不得接生产枚举；046C 的 Round 8 三项 P2
    已修复，`final-20260728-02` 与 Round 9 均通过，但不等于真实 Chrome/Vault 或两周
-   dogfood 已完成。Goal 046E 实现 review 已 `PASS` 且 P0/P1/P2 为 0，当前继续完成
-   PR/CI/merge、detached release、隔离 Chromium acceptance 与最终 evidence review；
-   在这些证据完成前不把 release 写成已生成，也不冒充两周真实使用。
+   dogfood 已完成。Goal 046E 首轮隔离 acceptance 暴露 `__name` worker serialization 缺陷并
+   fail closed；v4 已在新 main 以 5 文件 manifest 重放独立预审的修复并通过完整门禁。独立
+   实现复审、新 PR/CI/merge、detached release、隔离 Chromium acceptance 与最终 evidence
+   review 完成前，不把 release 写成已生成，也不冒充两周真实使用。
 
 ## 10. 当前文档
 
