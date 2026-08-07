@@ -1,14 +1,14 @@
 ---
 id: goal-046e
 title: Versioned Dogfood Release
-status: READY_FOR_REVIEW
+status: DONE
 version: 5
 updated: 2026-08-07
 depends_on:
   - goal-046c
   - goal-046d
-branch: codex/goal-046e-runner-profile-recovery
-base_commit: b8a4e7e5f97f40fb64fe99730e9d9c894ad2a1f3
+branch: codex/goal-046e-runner-profile-recovery-close
+base_commit: fcb3485096f26f7f1a5ecedf3ee53a13de931d6f
 worktree: C:\Projects\ShuHai\.worktrees\goal-046e-runner-profile-recovery
 contract_review:
   verdict: PASS
@@ -79,6 +79,24 @@ runner_profile_recovery_implementation_review:
       reviewed_at: 2026-08-07
       verdict: PASS
       summary: 第二路确认 exact7、44 operations、48 rawOperations、canonical hashes、状态、receipt 与旧 release 冻结一致，P0/P1/P2/P3 为 0。
+runner_profile_recovery_evidence_review:
+  verdict: PASS
+  rounds:
+    - reviewer: independent release integrity reviewer
+      reviewed_at: 2026-08-07
+      verdict: PASS
+      summary: 新 OID、39/39 inventory、release/acceptance 跨字段、三段 canonical runner 与旧 b8 冻结均通过，P0/P1/P2/P3 为 0。
+    - reviewer: independent process-cap recovery evidence reviewer
+      reviewed_at: 2026-08-07
+      verdict: PASS
+      summary: 独立复算固定 ID、lockfile、hash、strict schema、隔离结果与覆盖式 receipt 边界，P0/P1/P2/P3 为 0。
+runner_profile_recovery_closure_review:
+  verdict: PASS
+  rounds:
+    - reviewer: independent v5 closure reviewer
+      reviewed_at: 2026-08-07
+      verdict: PASS
+      summary: exact5 closure、DONE 状态、PR/merge/release evidence、owner dogfood 限制与代码零混入均一致，P0/P1/P2/P3 为 0。
 ---
 
 # Goal 046E：版本化 Dogfood Release
@@ -308,6 +326,22 @@ docs/workflows/README.md
 当前 `DRAFT` 合同阶段只允许上述五份文档 dirty；独立合同复审通过并转入 `IN_PROGRESS` 后，
 才可修改 registry 与 dogfood Vitest。固定 PowerShell suite、其它 tracked/untracked 文件一律
 禁止修改。
+
+### 5.6 v5 docs-only closure tracked manifest
+
+implementation PR 合并且最终 evidence review `PASS` 后，closure 只允许修改以下 5 个 tracked
+文件：
+
+```text
+docs/goals/goal-046e-versioned-dogfood-release.md
+docs/goals/README.md
+docs/PROJECT_STATUS.md
+docs/product-roadmap-v4.md
+docs/workflows/README.md
+```
+
+closure 不再修改 registry、测试、runner、release 或 acceptance；其它 tracked/untracked 文件
+一律禁止修改。
 
 ## 6. Release 合同
 
@@ -709,3 +743,46 @@ worktree、合并后完整门禁、隔离 Chromium acceptance、最终 evidence 
 - 两路独立实现/安全复审均为 `PASS`：第一路 P0/P1/P2=`0` 的唯一措辞 P3 已机械修正，第二路
   P0/P1/P2/P3=`0`。当前状态保持 `READY_FOR_REVIEW`；implementation PR 的 CI/merge 完成前不
   创建新 release，旧 b8 release 继续冻结。
+
+### 11.7 v5 merge、release 与最终 evidence review
+
+- implementation commit `942d60cef4ff3acab9ed46d11e0fc832a5ea1b61` 经 PR #14 的唯一 CI
+  `check` 成功后，以 merge commit `fcb3485096f26f7f1a5ecedf3ee53a13de931d6f` 合入 main；fetch 后
+  `refs/remotes/origin/main` 与 merge OID 完全相同。
+- 全新 detached、clean worktree 为
+  `C:\Projects\ShuHai\.worktrees\dogfood-release-fcb3485096f2`。唯一一次 offline install 以及
+  post-merge lint、typecheck、全量 test、build 均 target=`0`；stdout SHA-256 依次为
+  `717d1ea042c70e2a91fb1dcfecdfaeaa9f0f577d66ba56fea4428449bbacae35`、
+  `a08a3cf571d415fe30a1d929ed5bd813cb1a49737ecc713d95005a1281f21b28`、
+  `a08a3cf571d415fe30a1d929ed5bd813cb1a49737ecc713d95005a1281f21b28`、
+  `593432b0882157736d2f92737c9f9080b3b4e295137ed52684b23b10468de6a7`、
+  `a77cf9955c775b2915fb9b42ae815dd1d2ffec33e587347d800db625da4b11e3`。
+- canonical `dogfood-create` 以 standard/12 与 Heavy Lane 创建
+  `shuhai-v0.1.0-fcb3485096f2`；首次 `dogfood-verify` 以 quick/8 成功，`dogfood-accept` 以 e2e/20
+  和 Heavy Lane 成功，`dogfood-verify-accepted` 再以 quick/8 成功。四次 target 均为 `0`，
+  `JobEmpty=true`、最终 owned PID/TCP/UDP=`0/0/0`、reader/handle/ledger proof 完整、无 secondary
+  cleanup error；stdout SHA-256 依次为
+  `5c855f1087679fe36f449213ae50ff96a15b3e061d2f59e6d8227be0bc7b9167`、
+  `8f9cb792b2fa30881cef1a59a629869d2f80ecc404bf34adf93ef24ac0f67944`、
+  `26d41464df3927e46153bf3170b884f0eb854988740cdeae28c63de9c5849115`、
+  `26d41464df3927e46153bf3170b884f0eb854988740cdeae28c63de9c5849115`。
+- 最终 release 根恰有 `extension`、`release.json`、`acceptance.json`；39/39 文件路径、bytes 与
+  SHA-256 全量匹配，无重复、额外、逃逸或 reparse。`release.json` SHA-256 为
+  `b4b8cd564089aec14c192ea39e34915e4cba68032e7d45ed4f385989bc5bda52`，`acceptance.json`
+  SHA-256 为 `9148ccf04c717abf4bc1a0777555094a2621e5361ed8bd7b5b052a6d441d818b`；lockfile SHA-256 为
+  `85f84a67f1ffca9fa7fa80d37f0ac98c21c0e194e9a123163b674f106fd792b3`，service worker SHA-256 为
+  `98e63388034d514ea9a3680ef0d5d71b4f1e397d0a66477fb40ac2c2b6a8fda5`，固定 extension ID 为
+  `jdjmpeogiojjhdabdjmpeclcbjcekbje`。
+- acceptance 使用 Chromium `148.0.7778.96`、`fresh-project-owned`、`offline=true`；bookmark digest
+  与 node count `3→3` 不变，X permission `false→false`，页面观测 network
+  `observed/aborted/failures=0/0/0`，console/page errors=`0/0`，overall=`PASS`。两路独立最终证据
+  复审均为 `PASS`，P0/P1/P2/P3 为 0。
+- runner 的覆盖式设计使磁盘只保留最后一次 verify-accepted receipt；create、首次 verify 与 accept
+  由本线程的原始 canonical tool-output JSON 保留。合同未授权另写历史副本，两路 Reviewer 均
+  判定这是非阻断的证据持久性边界。旧 b8 release、失败 receipt 和无 `acceptance.json` 状态仍
+  原样冻结，不能作为加载路径。
+- 可加载目录固定为
+  `C:\Projects\ShuHai\.worktrees\dogfood-release-fcb3485096f2\dogfood\releases\shuhai-v0.1.0-fcb3485096f2\extension`。
+  该证据只覆盖隔离 Chromium 与项目自有 profile，不覆盖日常 Chrome、真实 X/Vault/书签、Windows
+  scaling、Chrome zoom、Obsidian Reading View 或两周 dogfood；页面网络计数也不是 OS 级全部
+  网络证明。上述 owner 门禁继续保留，但不阻止 Goal 046E 版本化 release 流程本身转为 `DONE`。
