@@ -1,7 +1,7 @@
 # ShuHai 项目状态
 
 > 最后更新：2026-08-07
-> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C 均已 `DONE/PASS`；Goal 046E 保持冻结的 `READY_FOR_REVIEW`；Goal 048 v3 已完成固定重验与两路 final review，保持 `READY_FOR_REVIEW` 待集成
+> 状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E 保持冻结的 `READY_FOR_REVIEW`，下一步在 Goal 048 后的新 main 语义重放
 > 当前有效路线：[产品路线图 v4](./product-roadmap-v4.md)
 
 ## 1. 当前唯一事实入口
@@ -15,17 +15,18 @@
 5. [`goals/README.md`](./goals/README.md)。
 6. 若存在，唯一 `READY`/`IN_PROGRESS` Goal 及其引用资料。
 
-2026-08-07 live 核对确认远端 `main` 仍为
-`6157ed9ca138510b23431e42c41196fb4badcfd4`。Goal 048 的旧候选与独立 re-audit 基于
-`13402ca`，落后 51 commits，不能直接集成；当前 replay 已在隔离 worktree 覆盖 main 新增的
+2026-08-07 Goal 048 集成后远端 `main` 为
+`8ab9f82dc57773b4a7b0b7a0ba1b564c0d47edb0`。Goal 048 的旧候选与独立 re-audit 基于
+`13402ca`；它在 replay 开始时落后当时 main 51 commits，未被直接集成。current-base replay 在隔离 worktree 覆盖 main 新增的
 Goal 046E offline install 和 dogfood command surfaces。v2 的 `10/10 PASS` 因 independent final
 review 发现 fixed pending ownership、持久 receipt proof 自举和 release/pnpm schema authority 三个
 P2，继续只作 superseded normal-path evidence。v3 已完成限域修复、两路独立实现复审与全套静态
 门禁；新的固定 suite 首次且唯一一次运行即 `10/10 PASS`，receipt/Job/ledger/PID/port/test-temp/
 Heavy Lane/30-file manifest 全部洁净。全新的 security 与 evidence/ownership final review 均为
 `PASS` 且 P0/P1/P2=`0/0/0`；共同唯一 P3 是 allowlist 外 `docs/workflows/README.md:64` 的既有
-瞬时状态漂移。Goal 048 保持 `READY_FOR_REVIEW`，现只授权 exact stage/commit/PR/CI/merge 门禁；
-Goal 046E 继续冻结。
+瞬时状态漂移。exact commit `2633e68` 经 PR #11 的 CI `check` 成功后，以 merge commit
+`8ab9f82` 集成；Goal 048 正式 `DONE`。Goal 046E 可在新的 main 隔离 worktree 中恢复语义重放，
+其旧三文件 worktree 在重放前继续冻结。
 Goal 046E 的 3 文件 acceptance 修复在独立 `goal-046e-acceptance-evaluate-fix` worktree 中继续
 byte-for-byte 只读冻结。Goal 048 只可在自己的 branch 修改同名 Goal 文档 base copy 的 command
 wording，集成后再由 046E 语义重放修复；主 checkout Goal 032/048 混合 dirty 不触碰。
@@ -139,7 +140,7 @@ Goal 045A 已通过当前门禁的模块：
 |   10 | Goal 046D | `DONE`                    | 可读笔记、发布卫生与 dogfood 前置收口    |
 |   11 | Goal 046C | `DONE`                    | 046D 后的隔离 E2E、可用性与视觉验收      |
 |   12 | Goal 046E | `READY_FOR_REVIEW`        | 版本化、固定 ID、可校验 dogfood release  |
-|   13 | Goal 048  | `READY_FOR_REVIEW`        | receipt ownership/proof 与 schema 收口   |
+|   13 | Goal 048  | `DONE`                    | receipt ownership/proof 与 schema 收口   |
 |   14 | Goal 047  | `RESEARCH_GATE`           | 根据真实使用决定下一平台                 |
 
 用户已确认 v4；041/042/043/045A/045B/045C/046A/046B 均已完成并独立验收。043B 的离线代码、生产接线、固定扩展 ID、受界真实 X 扫描、复核、disposable Vault 逐项写入、catalog 去重、pause/resume、同标签 `tab_changed`、取消和 no-write 均有证据。首轮原定只写 1-3 条但实际误选 5 条的 QA 范围偏差已保留，不据此扩大授权。045A 的三类书签 mutation 已通过 mock-only 数据安全门；045B 的 message、storage、权限和 URL 体检收口也已通过 mock-only 完整门禁与独立复审；045C 的单条内容保存收敛、legacy fail-closed 与 AI 隐私边界同样通过完整门禁和两名独立 Reviewer。046A 的主壳、surface protocol、bundle、isolated fixture visual 均通过完整门禁与独立复审。046B 完成两条旅程、独立 Options 与旧入口删除；最终 shared `1/1`、desktop `25/25`、extension `845/845`，Reviewer Locke 给出 `PASS` 且 P0/P1/P2/P3 为 0。2026-07-26 的外部战略报告已原样归档并逐项重新核验；Goal 046D v3 经三轮合同审查后完成实现，最终 shared `1/1`、desktop `25/25`、extension `850/850`，独立实现复审 `PASS` 且 P0/P1/P2/P3 为 0。Goal 046C v10 的合同与 amendment 均独立 `PASS`；shared `1/1`、desktop `25/25`、extension `851/851`，production build 和 `final-20260728-02` 的 13/13 隔离场景通过。运行发现并限域修复了整理建议 checkbox、规则测试输入的 accessible name、360px 排序工具栏和 Windows golden 换行；真实书签摘要、X 权限与 Vault 句柄前后不变。Round 8 的 teardown 诚实性、run-root ownership 与持久 diagnostics 三个 P2 已修复并以全新 run 验证；Round 9 独立复审为 `PASS`，P0/P1/P2 为 0，Goal 046C 正式 `DONE`。唯一 P3 是 `docs/workflows/README.md` 的既有瞬时状态漂移，留待独立文档卫生收口，不改变当前高优先级状态源。Goal 044 仍受微博 `NO_GO` 阻塞；032-040 的旧队列继续停止自动编排。

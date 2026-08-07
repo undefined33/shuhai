@@ -1,6 +1,6 @@
 # Goal 048 v3 implementation report
 
-- Status: `READY_FOR_REVIEW`
+- Status: `DONE`
 - Goal: `048 Host Command Incident Containment v3`
 - Generated: `2026-08-07` on the replay checkout
 - Branch: `codex/goal-048-host-command-replay`
@@ -13,7 +13,9 @@ The current-main replay provides one bounded Windows host-command entry for loca
 build, lint, typecheck, test, coverage, E2E, Husky, Prettier, and dogfood workflows. Five dogfood
 operations now have exact profiles, sealed raw routes, fixed argv, and strict lowercase scalar
 policies. `dogfood-create` keeps one Heavy Lane lease while its nested extension builds run through
-the sealed dispatcher. No real package tool, release command, or browser has been run by Goal 048.
+the sealed dispatcher. During implementation and acceptance before integration, Goal 048 ran no
+real package tool, release command, or browser; post-merge closure-only offline/Prettier operations
+are recorded separately in the integration result below.
 
 The replay also preserves current Chrome-extension product boundaries, Goal 041-046E facts,
 dependency sections, the shared-first typecheck route, extension script lint coverage, and the
@@ -181,6 +183,24 @@ current-base inheritance, status-only updates, and foreign ownership:
 
 Their only shared P3 is the pre-existing transient status text at
 `docs/workflows/README.md:64`, outside the Goal 048 allowlist. It does not affect runtime or
-ownership acceptance. No stage, commit, push, PR, real package tool, dogfood operation, or browser
-action has occurred. Unique next gate: exact 30-path stage, contract-authorized no-Husky commit,
-then PR/CI/merge.
+ownership acceptance. At final-review time, no stage, commit, push, PR, real package tool,
+dogfood operation, or browser action had occurred; the next gate was the exact 30-path
+stage/commit/PR sequence recorded below.
+
+## Integration result
+
+- Exact 30-path commit: `2633e68c344a2770fa79528336e182001fe1b8bf`.
+- Push: `codex/goal-048-host-command-replay` to `origin`.
+- PR: [#11](https://github.com/undefined33/shuhai/pull/11), non-draft.
+- CI: `check` completed successfully in 1m56s.
+- Merge: merge commit `8ab9f82dc57773b4a7b0b7a0ba1b564c0d47edb0` is the live remote
+  `main`.
+
+The fresh closure worktree initially had no linked package executables, so its first exact
+`prettier-check`/`prettier-write` attempts failed with target exit `1` while runner cleanup stayed
+fully proven. The canonical `dogfood-install-offline` operation then completed successfully using
+`--offline --frozen-lockfile --ignore-scripts`; exact four-file `prettier-write` and
+`prettier-check` both passed afterward. No build, test, dogfood release, or browser ran.
+
+Goal 048 is complete. The frozen Goal 046E three-file fix was not mixed into this PR and may now
+be semantically replayed on the new main in a separate branch/worktree.

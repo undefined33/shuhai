@@ -1,8 +1,8 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-08-07
-> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C 均已 `DONE/PASS`；Goal 046E 保持冻结的 `READY_FOR_REVIEW`；Goal 048 v3 已完成固定重验与两路 final review，保持 `READY_FOR_REVIEW` 待集成
-> 执行规则：Goal 048 v3 的两路 final review 均为 `PASS` 且 P0/P1/P2=`0/0/0`，现仅进入 exact stage/commit/PR/CI/merge 门禁。Goal 046E 三文件 acceptance 修复继续在独立 worktree 中 byte-for-byte 冻结，待 048 集成后再语义重放。
+> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E 保持冻结的 `READY_FOR_REVIEW`，下一步在 Goal 048 后的新 main 语义重放
+> 执行规则：Goal 048 已由 PR #11 经 CI 成功并以 merge commit `8ab9f82` 集成。Goal 046E 三文件 acceptance 修复仍在旧独立 worktree 中 byte-for-byte 冻结，只可在新的 main 隔离 worktree 中语义重放。
 > UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B；当前门禁是最终产物的隔离 E2E，真实 toolbar/zoom、Reading View 与两周使用仍属于 owner dogfood。
 
 ## 当前编排状态
@@ -23,8 +23,8 @@
 | Goal 046C | `DONE`                    | 最终隔离 E2E、可用性与视觉验收           | Round 9 独立复审 PASS             |
 | Goal 047  | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求         |
 | Goal 046E | `READY_FOR_REVIEW`        | 版本化 Dogfood Release                   | PR、CI、merge 与 detached release |
-| Goal 048  | `READY_FOR_REVIEW`        | receipt ownership/proof 与 schema 收口   | exact commit、PR、CI 与 merge     |
-| workflow  | `AUTO_ORCHESTRATION`      | 先收口 048，再恢复 046E                  | 048 新基线验收与集成完成          |
+| Goal 048  | `DONE`                    | receipt ownership/proof 与 schema 收口   | PR #11 CI 与 merge PASS           |
+| workflow  | `AUTO_ORCHESTRATION`      | Goal 048 已收口，恢复 046E               | 新 main 语义重放与独立验收        |
 
 ## v4 当前队列
 
@@ -43,7 +43,7 @@
 | [046D](./goal-046d-dogfood-readiness.md)               | `DONE`                    | safe-readable、发布卫生与 dogfood 前置   | 独立实现 review PASS           |
 | [046C](./goal-046c-isolated-usability-e2e.md)          | `DONE`                    | 最终产物隔离 E2E、可用性与视觉验收       | Round 9 独立复审 PASS          |
 | [046E](./goal-046e-versioned-dogfood-release.md)       | `READY_FOR_REVIEW`        | 版本化、固定 ID、可校验 dogfood release  | 实现 review PASS；待发布证据   |
-| [048](./goal-048-host-command-incident-containment.md) | `READY_FOR_REVIEW`        | bounded runner 与全部当前命令路由        | exact commit、PR、CI 与 merge  |
+| [048](./goal-048-host-command-incident-containment.md) | `DONE`                    | bounded runner 与全部当前命令路由        | PR #11 CI 与 merge PASS        |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                     | 两周真实使用数据               |
 
 032-040 原队列不再按旧依赖链自动推进。Goal 033-040 的安全、持久化、提取和 UI 结论没有删除，但必须在 042-046 中按 v4 用户旅程重新写范围，不得直接沿用旧编号实施。
