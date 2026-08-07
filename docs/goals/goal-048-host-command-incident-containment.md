@@ -1,7 +1,7 @@
 ---
 id: goal-048
 title: Host Command Incident Containment
-status: READY_FOR_REVIEW
+status: DONE
 version: 3
 updated: 2026-08-07
 base_commit: 6157ed9ca138510b23431e42c41196fb4badcfd4
@@ -152,7 +152,7 @@ main 上语义重放上述 3-file dirty diff；若同一 Goal 文档发生冲突
   才取得 receipt reservation，因为该路径不再可能启动 target。
 - Runner 从 exclusive create 成功起持有 receipt mutex、pending ownership 与 pending file，直到
   target cleanup proof 已最终确定并完成 publication。publisher 必须按 `write -> Flush(true) ->
-  dispose pending stream -> atomic replace/move` 的顺序执行，stream dispose 后仍持有 receipt mutex
+dispose pending stream -> atomic replace/move` 的顺序执行，stream dispose 后仍持有 receipt mutex
   与 pending path ownership。既有普通 pending、目录或 reparse 一律不得
   覆盖。runner 也只可清理本 invocation 成功 CreateNew 的 pending；任意 future invocation 不得
   自动删除既有 pending。receipt reservation 会使并发 quick operation fail closed，而不是绕过
@@ -173,13 +173,13 @@ main 上语义重放上述 3-file dirty diff；若同一 Goal 文档发生冲突
 
 Registry 必须新增并静态证明以下固定入口：
 
-| Public operation | Profile/class | 动态参数 | 固定 raw 语义 |
-| --- | --- | --- | --- |
-| `dogfood-install-offline` | `install` / heavy | 无 | `pnpm install --offline --frozen-lockfile --ignore-scripts` |
-| `dogfood-create` | `standard` / heavy | 恰 1 个小写 40 位 Git OID | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts create <oid>` |
-| `dogfood-verify` | `quick` | 恰 1 个严格 release ID | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts verify <id>` |
-| `dogfood-verify-accepted` | `quick` | 恰 1 个严格 release ID | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts verify-accepted <id>` |
-| `dogfood-accept` | `e2e` / heavy | 恰 1 个严格 release ID | `pnpm exec tsx packages/extension/scripts/dogfood-acceptance.ts <id>` |
+| Public operation          | Profile/class      | 动态参数                  | 固定 raw 语义                                                                      |
+| ------------------------- | ------------------ | ------------------------- | ---------------------------------------------------------------------------------- |
+| `dogfood-install-offline` | `install` / heavy  | 无                        | `pnpm install --offline --frozen-lockfile --ignore-scripts`                        |
+| `dogfood-create`          | `standard` / heavy | 恰 1 个小写 40 位 Git OID | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts create <oid>`         |
+| `dogfood-verify`          | `quick`            | 恰 1 个严格 release ID    | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts verify <id>`          |
+| `dogfood-verify-accepted` | `quick`            | 恰 1 个严格 release ID    | `pnpm exec tsx packages/extension/scripts/dogfood-release.ts verify-accepted <id>` |
+| `dogfood-accept`          | `e2e` / heavy      | 恰 1 个严格 release ID    | `pnpm exec tsx packages/extension/scripts/dogfood-acceptance.ts <id>`              |
 
 OID policy 只接受 40-byte ASCII `^[0-9a-f]{40}$`。Release policy 最长 38-byte，只接受
 ASCII `^shuhai-v[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}-[0-9a-f]{12}$`。两者均拒绝缺失、
@@ -373,3 +373,8 @@ DRAFT -> independent contract review PASS -> READY -> IN_PROGRESS
   `docs/workflows/README.md:64` 的既有瞬时状态漂移，不影响运行时与 ownership 结论。实现与 receipt
   哈希未变化；现仅授权 exact 30-path stage、无 Husky 的合同提交、PR/CI/merge 门禁，仍不表示
   commit、PR、CI 或 merge 已发生。
+- `2026-08-07 DONE`：exact 30-path commit
+  `2633e68c344a2770fa79528336e182001fe1b8bf` 已推送；PR
+  [#11](https://github.com/undefined33/shuhai/pull/11) 的 CI `check` 成功，并以 merge commit
+  `8ab9f82dc57773b4a7b0b7a0ba1b564c0d47edb0` 集成到 `main`。Goal 048 正式完成；Goal 046E
+  可在新的 main 隔离 worktree 中语义重放，旧三文件 fix worktree 仍只读冻结。
