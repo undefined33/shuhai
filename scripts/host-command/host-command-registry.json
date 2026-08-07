@@ -1,0 +1,391 @@
+{
+  "schemaVersion": 1,
+  "mutexName": "Local\\CodexHostHeavyLane-v1",
+  "receipt": {
+    "path": ".tmp/host-command/current.json",
+    "maxBytes": 32768
+  },
+  "profiles": {
+    "quick": {
+      "classification": "quick",
+      "wallMilliseconds": 120000,
+      "idleMilliseconds": 30000,
+      "stdoutBytes": 65536,
+      "stderrBytes": 65536,
+      "aggregateBytes": 98304,
+      "processMemoryBytes": 536870912,
+      "jobMemoryBytes": 805306368,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 250,
+      "cleanupMilliseconds": 5000,
+      "chunkBytes": 4096,
+      "ringBytes": 1024
+    },
+    "standard": {
+      "classification": "heavy",
+      "wallMilliseconds": 600000,
+      "idleMilliseconds": 120000,
+      "stdoutBytes": 262144,
+      "stderrBytes": 262144,
+      "aggregateBytes": 393216,
+      "processMemoryBytes": 1073741824,
+      "jobMemoryBytes": 3221225472,
+      "processCount": 12,
+      "mutexWaitMilliseconds": 1000,
+      "cleanupMilliseconds": 10000,
+      "chunkBytes": 4096,
+      "ringBytes": 2048
+    },
+    "install": {
+      "classification": "heavy",
+      "wallMilliseconds": 900000,
+      "idleMilliseconds": 120000,
+      "stdoutBytes": 262144,
+      "stderrBytes": 262144,
+      "aggregateBytes": 393216,
+      "processMemoryBytes": 1073741824,
+      "jobMemoryBytes": 3221225472,
+      "processCount": 12,
+      "mutexWaitMilliseconds": 1000,
+      "cleanupMilliseconds": 10000,
+      "chunkBytes": 4096,
+      "ringBytes": 2048
+    },
+    "watch": {
+      "classification": "heavy",
+      "wallMilliseconds": 1800000,
+      "idleMilliseconds": 300000,
+      "stdoutBytes": 262144,
+      "stderrBytes": 262144,
+      "aggregateBytes": 393216,
+      "processMemoryBytes": 1073741824,
+      "jobMemoryBytes": 3221225472,
+      "processCount": 12,
+      "mutexWaitMilliseconds": 1000,
+      "cleanupMilliseconds": 10000,
+      "chunkBytes": 4096,
+      "ringBytes": 2048
+    },
+    "e2e": {
+      "classification": "heavy",
+      "wallMilliseconds": 600000,
+      "idleMilliseconds": 120000,
+      "stdoutBytes": 262144,
+      "stderrBytes": 262144,
+      "aggregateBytes": 393216,
+      "processMemoryBytes": 1073741824,
+      "jobMemoryBytes": 3221225472,
+      "processCount": 8,
+      "mutexWaitMilliseconds": 1000,
+      "cleanupMilliseconds": 10000,
+      "chunkBytes": 4096,
+      "ringBytes": 2048
+    },
+    "synthetic-green": {
+      "classification": "quick",
+      "wallMilliseconds": 3000,
+      "idleMilliseconds": 1000,
+      "stdoutBytes": 4096,
+      "stderrBytes": 4096,
+      "aggregateBytes": 6144,
+      "processMemoryBytes": 134217728,
+      "jobMemoryBytes": 268435456,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 100,
+      "cleanupMilliseconds": 2000,
+      "chunkBytes": 256,
+      "ringBytes": 256
+    },
+    "synthetic-stream": {
+      "classification": "quick",
+      "wallMilliseconds": 3000,
+      "idleMilliseconds": 1000,
+      "stdoutBytes": 4096,
+      "stderrBytes": 4096,
+      "aggregateBytes": 6144,
+      "processMemoryBytes": 134217728,
+      "jobMemoryBytes": 268435456,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 100,
+      "cleanupMilliseconds": 2000,
+      "chunkBytes": 256,
+      "ringBytes": 256
+    },
+    "synthetic-time": {
+      "classification": "quick",
+      "wallMilliseconds": 400,
+      "idleMilliseconds": 200,
+      "stdoutBytes": 4096,
+      "stderrBytes": 4096,
+      "aggregateBytes": 6144,
+      "processMemoryBytes": 134217728,
+      "jobMemoryBytes": 268435456,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 100,
+      "cleanupMilliseconds": 2000,
+      "chunkBytes": 256,
+      "ringBytes": 256
+    },
+    "synthetic-tree": {
+      "classification": "quick",
+      "wallMilliseconds": 1000,
+      "idleMilliseconds": 350,
+      "stdoutBytes": 4096,
+      "stderrBytes": 4096,
+      "aggregateBytes": 6144,
+      "processMemoryBytes": 134217728,
+      "jobMemoryBytes": 268435456,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 100,
+      "cleanupMilliseconds": 3000,
+      "chunkBytes": 256,
+      "ringBytes": 256
+    },
+    "synthetic-heavy": {
+      "classification": "heavy",
+      "wallMilliseconds": 3000,
+      "idleMilliseconds": 1500,
+      "stdoutBytes": 4096,
+      "stderrBytes": 4096,
+      "aggregateBytes": 6144,
+      "processMemoryBytes": 134217728,
+      "jobMemoryBytes": 268435456,
+      "processCount": 4,
+      "mutexWaitMilliseconds": 100,
+      "cleanupMilliseconds": 3000,
+      "chunkBytes": 256,
+      "ringBytes": 256
+    }
+  },
+  "operations": {
+    "root-install": {
+      "profile": "install",
+      "rawOperation": "root-install-raw",
+      "allowedRaw": ["root-install-raw", "root-preinstall-raw", "root-prepare-raw"]
+    },
+    "root-dev": {
+      "profile": "watch",
+      "rawOperation": "root-dev-raw",
+      "allowedRaw": ["root-dev-raw", "desktop-dev-raw", "extension-dev-raw", "shared-dev-raw"]
+    },
+    "root-build": {
+      "profile": "standard",
+      "rawOperation": "root-build-raw",
+      "allowedRaw": ["root-build-raw", "desktop-build-raw", "extension-build-raw", "shared-build-raw"]
+    },
+    "root-lint": {
+      "profile": "standard",
+      "rawOperation": "root-lint-raw",
+      "allowedRaw": ["root-lint-raw", "desktop-lint-raw", "extension-lint-raw", "shared-lint-raw"]
+    },
+    "root-typecheck": {
+      "profile": "standard",
+      "rawOperation": "root-typecheck-raw",
+      "allowedRaw": ["root-typecheck-raw", "desktop-typecheck-raw", "extension-typecheck-raw", "shared-typecheck-raw"]
+    },
+    "root-test": {
+      "profile": "standard",
+      "rawOperation": "root-test-raw",
+      "allowedRaw": ["root-test-raw", "desktop-test-raw", "extension-test-raw", "shared-test-raw"]
+    },
+    "root-test-coverage": {
+      "profile": "standard",
+      "rawOperation": "root-test-coverage-raw",
+      "allowedRaw": ["root-test-coverage-raw"]
+    },
+    "root-test-e2e": {
+      "profile": "e2e",
+      "rawOperation": "root-test-e2e-raw",
+      "allowedRaw": ["root-test-e2e-raw"]
+    },
+    "desktop-dev": { "profile": "watch", "rawOperation": "desktop-dev-raw", "allowedRaw": ["desktop-dev-raw"] },
+    "desktop-build": { "profile": "standard", "rawOperation": "desktop-build-raw", "allowedRaw": ["desktop-build-raw"] },
+    "desktop-lint": { "profile": "standard", "rawOperation": "desktop-lint-raw", "allowedRaw": ["desktop-lint-raw"] },
+    "desktop-typecheck": { "profile": "standard", "rawOperation": "desktop-typecheck-raw", "allowedRaw": ["desktop-typecheck-raw"] },
+    "desktop-test": { "profile": "standard", "rawOperation": "desktop-test-raw", "allowedRaw": ["desktop-test-raw"] },
+    "extension-dev": { "profile": "watch", "rawOperation": "extension-dev-raw", "allowedRaw": ["extension-dev-raw"] },
+    "extension-build": { "profile": "standard", "rawOperation": "extension-build-raw", "allowedRaw": ["extension-build-raw"] },
+    "extension-lint": { "profile": "standard", "rawOperation": "extension-lint-raw", "allowedRaw": ["extension-lint-raw"] },
+    "extension-typecheck": { "profile": "standard", "rawOperation": "extension-typecheck-raw", "allowedRaw": ["extension-typecheck-raw"] },
+    "extension-test": { "profile": "standard", "rawOperation": "extension-test-raw", "allowedRaw": ["extension-test-raw"] },
+    "shared-dev": { "profile": "watch", "rawOperation": "shared-dev-raw", "allowedRaw": ["shared-dev-raw"] },
+    "shared-build": { "profile": "standard", "rawOperation": "shared-build-raw", "allowedRaw": ["shared-build-raw"] },
+    "shared-lint": { "profile": "standard", "rawOperation": "shared-lint-raw", "allowedRaw": ["shared-lint-raw"] },
+    "shared-typecheck": { "profile": "standard", "rawOperation": "shared-typecheck-raw", "allowedRaw": ["shared-typecheck-raw"] },
+    "shared-test": { "profile": "standard", "rawOperation": "shared-test-raw", "allowedRaw": ["shared-test-raw"] },
+    "husky-lint-staged": {
+      "profile": "standard",
+      "rawOperation": "husky-lint-staged-raw",
+      "allowedRaw": ["husky-lint-staged-raw", "lint-staged-ts-raw", "lint-staged-docs-raw"]
+    },
+    "prettier-check": {
+      "profile": "quick",
+      "rawOperation": "prettier-check-raw",
+      "allowedRaw": ["prettier-check-raw"],
+      "dynamicArgPolicy": "prettier-paths"
+    },
+    "prettier-write": {
+      "profile": "quick",
+      "rawOperation": "prettier-write-raw",
+      "allowedRaw": ["prettier-write-raw"],
+      "dynamicArgPolicy": "prettier-paths"
+    },
+    "dogfood-install-offline": {
+      "profile": "install",
+      "rawOperation": "dogfood-install-offline-raw",
+      "allowedRaw": ["dogfood-install-offline-raw"]
+    },
+    "dogfood-create": {
+      "profile": "standard",
+      "rawOperation": "dogfood-create-raw",
+      "allowedRaw": ["dogfood-create-raw", "extension-build-raw"],
+      "dynamicArgPolicy": "git-oid"
+    },
+    "dogfood-verify": {
+      "profile": "quick",
+      "rawOperation": "dogfood-verify-raw",
+      "allowedRaw": ["dogfood-verify-raw"],
+      "dynamicArgPolicy": "release-id"
+    },
+    "dogfood-verify-accepted": {
+      "profile": "quick",
+      "rawOperation": "dogfood-verify-accepted-raw",
+      "allowedRaw": ["dogfood-verify-accepted-raw"],
+      "dynamicArgPolicy": "release-id"
+    },
+    "dogfood-accept": {
+      "profile": "e2e",
+      "rawOperation": "dogfood-accept-raw",
+      "allowedRaw": ["dogfood-accept-raw"],
+      "dynamicArgPolicy": "release-id"
+    },
+    "blocked-clean": { "blockedReason": "clean_policy_blocked" },
+    "synthetic-green": { "profile": "synthetic-green", "rawOperation": "synthetic-green-raw", "allowedRaw": ["synthetic-green-raw"] },
+    "synthetic-stdout-overflow": { "profile": "synthetic-stream", "rawOperation": "synthetic-stdout-overflow-raw", "allowedRaw": ["synthetic-stdout-overflow-raw"] },
+    "synthetic-stderr-overflow": { "profile": "synthetic-stream", "rawOperation": "synthetic-stderr-overflow-raw", "allowedRaw": ["synthetic-stderr-overflow-raw"] },
+    "synthetic-mixed-invalid": { "profile": "synthetic-stream", "rawOperation": "synthetic-mixed-invalid-raw", "allowedRaw": ["synthetic-mixed-invalid-raw"] },
+    "synthetic-idle": { "profile": "synthetic-time", "rawOperation": "synthetic-idle-raw", "allowedRaw": ["synthetic-idle-raw"] },
+    "synthetic-wall": { "profile": "synthetic-time", "rawOperation": "synthetic-wall-raw", "allowedRaw": ["synthetic-wall-raw"] },
+    "synthetic-tree-timeout": { "profile": "synthetic-tree", "rawOperation": "synthetic-tree-timeout-raw", "allowedRaw": ["synthetic-tree-timeout-raw"] },
+    "synthetic-tree-overflow": { "profile": "synthetic-tree", "rawOperation": "synthetic-tree-overflow-raw", "allowedRaw": ["synthetic-tree-overflow-raw"] },
+    "synthetic-cancel": {
+      "profile": "synthetic-tree",
+      "rawOperation": "synthetic-cancel-raw",
+      "allowedRaw": ["synthetic-cancel-raw"],
+      "cancelAfterMilliseconds": 250
+    },
+    "synthetic-parent-exception": {
+      "profile": "synthetic-tree",
+      "rawOperation": "synthetic-parent-exception-raw",
+      "allowedRaw": ["synthetic-parent-exception-raw"],
+      "parentExceptionAfterMilliseconds": 250
+    },
+    "synthetic-lane-hold": { "profile": "synthetic-heavy", "rawOperation": "synthetic-lane-hold-raw", "allowedRaw": ["synthetic-lane-hold-raw"] },
+    "synthetic-nested": {
+      "profile": "synthetic-heavy",
+      "rawOperation": "synthetic-nested-raw",
+      "allowedRaw": ["synthetic-nested-raw", "synthetic-nested-target-raw"]
+    }
+  },
+  "rawOperations": {
+    "root-preinstall-raw": { "kind": "noop", "ciLifecycle": true },
+    "root-prepare-raw": { "kind": "pnpm", "args": ["exec", "husky"], "ciLifecycle": true },
+    "root-install-raw": { "kind": "pnpm", "args": ["install"] },
+    "root-dev-raw": { "kind": "pnpm", "args": ["-r", "--parallel", "run", "_shuhai:dev"] },
+    "root-build-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:build"] },
+    "root-lint-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:lint"] },
+    "root-typecheck-raw": {
+      "kind": "sequence",
+      "steps": [
+        { "kind": "pnpm", "args": ["--filter", "@shuhai/shared", "exec", "tsc", "-b", "--force"] },
+        { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:typecheck"] }
+      ]
+    },
+    "root-test-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:test"] },
+    "root-test-coverage-raw": { "kind": "pnpm", "args": ["exec", "vitest", "run", "--coverage"] },
+    "root-test-e2e-raw": { "kind": "pnpm", "args": ["exec", "playwright", "test"] },
+    "desktop-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsx", "--watch", "src/main/index.ts"] },
+    "desktop-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsc"] },
+    "desktop-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "vitest", "run"] },
+    "desktop-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "eslint", "src/"] },
+    "desktop-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsc", "--noEmit"] },
+    "extension-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vite", "build", "--watch"] },
+    "extension-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vite", "build"] },
+    "extension-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vitest", "run"] },
+    "extension-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "eslint", "src/", "tests/", "scripts/", "vite.config.ts"] },
+    "extension-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "tsc", "--noEmit"] },
+    "shared-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc", "--watch"] },
+    "shared-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc"] },
+    "shared-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "vitest", "run"] },
+    "shared-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "eslint", "src/"] },
+    "shared-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc", "--noEmit"] },
+    "husky-lint-staged-raw": { "kind": "pnpm", "args": ["exec", "lint-staged", "--relative"] },
+    "lint-staged-ts-raw": {
+      "kind": "sequence",
+      "dynamicArgPolicy": "typescript-paths",
+      "steps": [
+        { "kind": "pnpm", "args": ["exec", "eslint", "--fix"], "appendDynamicArgs": true },
+        { "kind": "pnpm", "args": ["exec", "prettier", "--write"], "appendDynamicArgs": true }
+      ]
+    },
+    "lint-staged-docs-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "prettier", "--write"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "document-paths"
+    },
+    "prettier-check-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "prettier", "--check"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "prettier-paths"
+    },
+    "prettier-write-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "prettier", "--write"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "prettier-paths"
+    },
+    "dogfood-install-offline-raw": {
+      "kind": "pnpm",
+      "args": ["install", "--offline", "--frozen-lockfile", "--ignore-scripts"]
+    },
+    "dogfood-create-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "tsx", "packages/extension/scripts/dogfood-release.ts", "create"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "git-oid"
+    },
+    "dogfood-verify-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "tsx", "packages/extension/scripts/dogfood-release.ts", "verify"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "release-id"
+    },
+    "dogfood-verify-accepted-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "tsx", "packages/extension/scripts/dogfood-release.ts", "verify-accepted"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "release-id"
+    },
+    "dogfood-accept-raw": {
+      "kind": "pnpm",
+      "args": ["exec", "tsx", "packages/extension/scripts/dogfood-acceptance.ts"],
+      "appendDynamicArgs": true,
+      "dynamicArgPolicy": "release-id"
+    },
+    "synthetic-green-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["green"] },
+    "synthetic-stdout-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["stdout-overflow"] },
+    "synthetic-stderr-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["stderr-overflow"] },
+    "synthetic-mixed-invalid-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["mixed-invalid"] },
+    "synthetic-idle-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["idle"] },
+    "synthetic-wall-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["wall"] },
+    "synthetic-tree-timeout-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-timeout.json", "silent"] },
+    "synthetic-tree-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-overflow.json", "overflow"] },
+    "synthetic-cancel-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/cancel.json", "silent"] },
+    "synthetic-parent-exception-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/parent-exception.json", "silent"] },
+    "synthetic-lane-hold-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["lane-hold", ".tmp/host-stability-narrow-v1/test/lane-starts.log"] },
+    "synthetic-nested-raw": { "kind": "nested", "rawOperation": "synthetic-nested-target-raw" },
+    "synthetic-nested-target-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["mark-green", ".tmp/host-stability-narrow-v1/test/nested-starts.log"] }
+  }
+}

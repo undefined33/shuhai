@@ -115,7 +115,7 @@ C:\Projects\ShuHai\.worktrees\dogfood-release-<merge-oid-first-12>
 worktree，旧版本继续保留。只允许在该版本化 worktree 运行：
 
 ```text
-pnpm install --offline --frozen-lockfile --ignore-scripts
+node scripts/host-command/shuhai-command.cjs dogfood-install-offline
 ```
 
 以及完整门禁、release 创建、校验和隔离验收。不得运行根 `prepare`、Husky、Playwright
@@ -216,8 +216,12 @@ Chrome 唯一加载路径是 `extension/`，不是 release 根目录，也不是
 工具以当前锁文件解析的本地命令连续运行两次：
 
 ```text
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
+
+该行是当前对外 canonical command 与 `release.json` provenance。`dogfood-create` 已持有唯一
+Heavy Lane，其两次内部 build 通过当前 sealed session 的 `extension-build-raw` 执行，不再次进入
+public wrapper 或获取第二个 lease。
 
 每次都递归读取 `dist` 的普通文件，按 `/` 分隔的相对路径排序并计算 SHA-256。两次的相对
 路径、字节数和 hash 必须完全一致。遇到 symlink、junction、reparse point、空 manifest、
@@ -280,7 +284,7 @@ URL、Vault 路径或浏览器 profile 绝对路径。
 终验使用独立命令：
 
 ```text
-pnpm dogfood:verify-accepted -- <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-verify-accepted <release-id>
 ```
 
 它先执行全部基础校验，再要求 `acceptance.json` 存在、schema 有效、`overall: "PASS"`，
@@ -337,11 +341,11 @@ acceptance 命令只接受 release ID，不接受浏览器路径、profile 路�
 实施阶段必须运行：
 
 ```text
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
-pnpm exec prettier --check <本 Goal 全部 tracked 文件>
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
+node scripts/host-command/shuhai-command.cjs prettier-check <本 Goal 全部 tracked 文件>
 git diff --check
 ```
 
@@ -352,15 +356,15 @@ git diff --check
 git fetch --no-tags origin main
 gh pr view <implementation-pr> --json state,mergeCommit,statusCheckRollup
 git worktree add --detach C:\Projects\ShuHai\.worktrees\dogfood-release-<merge-oid-first-12> <merge-oid>
-pnpm install --offline --frozen-lockfile --ignore-scripts
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
-pnpm dogfood:create -- <merge-oid>
-pnpm dogfood:verify -- <release-id>
-pnpm dogfood:accept -- <release-id>
-pnpm dogfood:verify-accepted -- <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-install-offline
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
+node scripts/host-command/shuhai-command.cjs dogfood-create <merge-oid>
+node scripts/host-command/shuhai-command.cjs dogfood-verify <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-accept <release-id>
+node scripts/host-command/shuhai-command.cjs dogfood-verify-accepted <release-id>
 ```
 
 fetch 和 `gh pr view` 是进入离线 release 阶段前唯一允许的远端读取。必须记录 merge OID
@@ -414,14 +418,15 @@ DRAFT
   不再扩张为通用发布框架。
 - release/verify/acceptance 定向测试：`19/19 PASS`，覆盖实际 repo-local
   filesystem/build/publish/acceptance 路径。
-- `pnpm lint`：PASS。
-- `pnpm typecheck`：PASS。
-- `pnpm test`：最终原样复跑 PASS；shared `1`、desktop `25`、extension `870`，共
+- Goal 048 前历史命令 `pnpm lint`：PASS。
+- Goal 048 前历史命令 `pnpm typecheck`：PASS。
+- Goal 048 前历史命令 `pnpm test`：最终原样复跑 PASS；shared `1`、desktop `25`、extension `870`，共
   `896` 项。首轮曾出现既有并行 build 对同一 `dist` 的 Windows `EPERM` 和一个 5 秒性能
   用例超时；失败用例单独复跑通过，随后两次原样全仓复跑均通过。
-- `pnpm --filter @shuhai/extension run build`：PASS，Vite `6.4.3`。
+- Goal 048 前历史命令 `pnpm --filter @shuhai/extension run build`：PASS，Vite `6.4.3`。
 - Goal allowlist 格式检查与 `git diff --check`：PASS；仅有 Git 的 LF/CRLF 提示。
-- attached implementation checkout 中的 production `dogfood:create` 按合同以
+- attached implementation checkout 中的 Goal 048 前历史命令
+  `pnpm dogfood:create -- <merge-oid>` 按合同以
   `source_checkout_not_detached` 拒绝，未生成 release。
 
 这里仍未声称最终 dogfood release 已创建。PR、远端 CI、实现合并、detached release
@@ -436,9 +441,10 @@ worktree、合并后完整门禁、隔离 Chromium acceptance、最终 evidence 
   `origin/main` 与该 OID 完全相同。
 - 首轮版本化 detached worktree 为
   `C:\Projects\ShuHai\.worktrees\dogfood-release-90aa55e9f711`。它使用
-  `pnpm install --offline --frozen-lockfile --ignore-scripts` 完成离线依赖复用，并通过
+  Goal 048 前历史命令 `pnpm install --offline --frozen-lockfile --ignore-scripts`
+  完成离线依赖复用，并通过
   lint、typecheck、896 项全量测试和 production build。
-- 随后的 production `dogfood:create` 在第一次内部 build 之前以
+- 随后的 Goal 048 前历史命令 `pnpm dogfood:create -- <merge-oid>` 在第一次内部 build 之前以
   `spawnSync pnpm.cmd EINVAL` 失败。失败 worktree 仍为 detached、洁净状态，
   `dogfood/releases` 从未创建，也没有 release 或 acceptance 产物；该 worktree
   保留为失败证据，不得复用为最终 release。
@@ -448,11 +454,12 @@ worktree、合并后完整门禁、隔离 Chromium acceptance、最终 evidence 
 - 隔离热修分支 `codex/goal-046e-windows-spawn-fix` 只调整
   `packages/extension/scripts/dogfood-release.ts` 的两个固定 pnpm 调用，并新增一条
   production runner 回归测试。Git/OID 校验仍使用 `execFileSync` 参数数组；shell
-  只接收固定字面量 `pnpm --version` 和既有固定 `BUILD_COMMAND`，没有 OID、release
+  在 Goal 048 前历史实现中只接收固定字面量 `pnpm --version` 和当时固定的
+  `BUILD_COMMAND`，没有 OID、release
   ID、路径、环境变量或其它不可信输入进入命令字符串。
 - 当前候选已通过 lint、typecheck、production build 和全量测试；shared `1`、
   desktop `25`、extension `871`，共 `897` 项。定向 release transaction/security
   测试为 `20/20 PASS`，且直接 production `runBuild()` smoke 已在 Windows 上完成
-  Vite `6.4.3` build。
+  production build 使用 Vite `6.4.3`。
 - 在独立 hotfix review、精确提交、远端 CI、合并和新 merge OID 上的全新 detached
   release 全链路完成前，本节仍只是热修候选证据，不表示最终 dogfood release 已生成。

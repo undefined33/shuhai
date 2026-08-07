@@ -4,12 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch",
-    "test": "vitest run",
-    "lint": "eslint src/ tests/ scripts/ vite.config.ts",
-    "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "build": "node ../../scripts/host-command/shuhai-command.cjs extension-build",
+    "dev": "node ../../scripts/host-command/shuhai-command.cjs extension-dev",
+    "test": "node ../../scripts/host-command/shuhai-command.cjs extension-test",
+    "lint": "node ../../scripts/host-command/shuhai-command.cjs extension-lint",
+    "typecheck": "node ../../scripts/host-command/shuhai-command.cjs extension-typecheck",
+    "clean": "node ../../scripts/host-command/shuhai-command.cjs blocked-clean",
+    "_shuhai:dev": "node ../../scripts/host-command/assert-session.cjs extension-dev-raw",
+    "_shuhai:build": "node ../../scripts/host-command/assert-session.cjs extension-build-raw",
+    "_shuhai:test": "node ../../scripts/host-command/assert-session.cjs extension-test-raw",
+    "_shuhai:lint": "node ../../scripts/host-command/assert-session.cjs extension-lint-raw",
+    "_shuhai:typecheck": "node ../../scripts/host-command/assert-session.cjs extension-typecheck-raw"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "1.3.3",

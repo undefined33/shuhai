@@ -190,16 +190,20 @@ ShuHai 当前 Goal 不需要数据库、云资源、远程主机或集群操作�
 
 以下不属于危险命令，可在当前 Goal allowlist 内执行：
 
+仓库声明的本地工具入口必须使用 `scripts/host-command/shuhai-command.cjs` 的 named operation。
+Direct `pnpm` 或 direct tool 命令不属于正常命令白名单；`clean` 仍保持显式 blocked。
+
 ```text
 Get-Content / Get-ChildItem / rg
 git status / diff / log / show / branch
 git switch -c <new-feature-branch>
 精确 apply_patch
-pnpm exec prettier --check/--write <exact files>
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs prettier-check AGENTS.md docs/goals/README.md
+node scripts/host-command/shuhai-command.cjs prettier-write AGENTS.md docs/goals/README.md
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
 git add <exact task files>
 git commit（验收后）
 git push 当前 feature/fix 分支（用户已授权的工作流内）

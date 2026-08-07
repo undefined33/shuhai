@@ -35,6 +35,10 @@ pnpm-debug.log*
 # Testing
 coverage/
 
+# Single bounded host-command receipt
+/.tmp/host-command/current.json
+/.tmp/host-command/current.json.pending
+
 # Electron
 out/
 release/

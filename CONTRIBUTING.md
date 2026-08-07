@@ -18,15 +18,15 @@
 要求：Node.js `>=20.17.0`、pnpm `>=9.0.0`。
 
 ```bash
-pnpm install
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-install
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
 
 在 `chrome://extensions` 加载 `packages/extension/dist`。这个 mutable 目录只用于开发，
 不能作为长期 dogfood release。开发时运行：
 
 ```bash
-pnpm --filter @shuhai/extension run dev
+node scripts/host-command/shuhai-command.cjs extension-dev
 ```
 
 长期加载使用版本化、不可覆盖的 release 目录，并按
@@ -100,11 +100,24 @@ OpenCLI 当前只作为架构参考，不得添加为运行时依赖。
 基础门禁：
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
+
+本地 install、dev、build、lint、typecheck、test、coverage、E2E、Husky、Prettier 和 dogfood
+release 必须使用 `scripts/host-command/host-command-registry.json` 中的 named operation。
+不要直接运行 pnpm/tool raw command 或 `_shuhai:*` internal script；heavy lane busy 时等待后重试，
+不并发绕过。文档格式化使用例如：
+
+```bash
+node scripts/host-command/shuhai-command.cjs prettier-check CONTRIBUTING.md docs/goals/README.md
+node scripts/host-command/shuhai-command.cjs prettier-write CONTRIBUTING.md docs/goals/README.md
+```
+
+传给 Prettier 的参数必须是存在的精确 repo-relative 文件，runner 会拒绝目录、路径逃逸、错误扩展、
+metacharacter 和 reparse path。任意外部 shell 仍依赖执行者遵守这些项目规则。
 
 按风险增加：
 

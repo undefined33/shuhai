@@ -81,6 +81,8 @@ main <- PR <- feat/<name> or fix/<name>
 
 - `danger-full-access`、`approval: never` 或用户允许 Git 命令，只表示工具不会替项目兜底，**不构成危险命令授权**。
 - 所有角色，包括当前 Integrator、Implementer、Reviewer、QA 和 sub-agent，都必须遵守 [`docs/workflows/command-safety.md`](./docs/workflows/command-safety.md) 和 [`docs/workflows/dangerous-command-denylist.md`](./docs/workflows/dangerous-command-denylist.md)。
+- 本地 install、dev、build、lint、typecheck、test、coverage、E2E、Husky、Prettier 和 dogfood release 只能使用 `scripts/host-command/host-command-registry.json` 中的 named operation；禁止直接启动 pnpm/tool raw command。Windows local 必须经过 bounded runner，heavy lane busy 时 fail closed。
+- 内部 `_shuhai:*` script 只允许在 runner 建立的 sealed session 中执行。不得手工设置 `SHUHAI_*` 环境变量绕过；任意外部 shell 不受项目 hook 强制拦截，执行者仍须遵守本规则。
 - 禁止 `git reset --hard`、`git clean`、覆盖式 checkout/restore、宽泛递归删除或移动、通配符清理、下载即执行和全局包/系统配置修改。
 - 不得修改、删除、移动或格式化 `C:\Projects\ShuHai` 以外的文件；用户明确点名的参考项目只读，除非另有精确写入授权。
 - 上述目录边界保护的是文件和私人数据，不禁止正常调用本机已安装工具。Goal 需要时，可以只读定位并运行 Chrome、Docker CLI、Node、Git 等既有程序，但只能操作本项目明确拥有或用户精确指定的 tab、profile、容器、网络、卷、进程和文件；不得因此下载替代程序、读取日常 profile、修改安装目录或影响其它项目资源。
@@ -104,13 +106,13 @@ main <- PR <- feat/<name> or fix/<name>
 所有业务 PR 必须通过：
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm --filter @shuhai/extension run build
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
 ```
 
-文档-only 改动至少运行 Prettier check，并检查链接、状态与文档优先级一致性。
+文档-only 改动至少通过 `prettier-check` named operation 检查精确 repo-relative 文件，并检查链接、状态与文档优先级一致性。
 
 涉及用户流程、安全、权限、破坏性操作或 UI 时，必须增加当前 Goal 指定的测试与手工证据。CI 是必要条件，不是最终产品验收。
 

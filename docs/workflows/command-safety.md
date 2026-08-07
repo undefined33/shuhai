@@ -15,6 +15,23 @@
 
 工具显示 `danger-full-access` 或不再弹审批，不改变以上边界。
 
+### 1.1 本地命令唯一入口
+
+- install、dev、build、lint、typecheck、test、coverage、E2E、Husky、Prettier 和 dogfood
+  release 只允许使用 `scripts/host-command/host-command-registry.json` 的 named operation。
+- Windows local 必须经
+  `shuhai-command.cjs -> Invoke-ShuHaiBoundedCommand.ps1 -> BoundedHostCommandRunner.cs`；禁止
+  direct pnpm/tool、arbitrary shell string、`cmd /c`、`shell=true` 或先全量 capture 再截断。
+- heavy operation 使用唯一 mutex `Local\CodexHostHeavyLane-v1`，并发为 1；quick 由同一
+  registry 明确分类。busy/abandoned lane 在 `ChildPID=0` 时 fail closed。
+- Root recursive operation 调内部 sealed raw script；leaf public script 走同一 wrapper。
+  `_shuhai:*` 和 lifecycle raw operation 在未 sealed session 中必须失败。
+- 非 Windows interactive fail closed；`CI=true` 只允许 registry raw argv 兼容执行。项目未声明
+  `.codex` hook，任意外部 shell 仍依赖使用者遵守规则，不得手工伪造 `SHUHAI_*` 环境。
+- 目标 stdout/stderr 不转发给 host。runner 只发布覆写式
+  `.tmp/host-command/current.json`，硬上限 32 KiB，内容限于 reason、digest、limits、
+  `JobEmpty` 和 owned PID/TCP/UDP count。
+
 这里的“项目边界”约束的是副作用和私人数据，不是禁止使用操作系统已经安装的正常工具。只读定位并运行 Chrome、Docker CLI、Node、Git 等程序来完成 ShuHai 的明确任务是允许的；后续对象仍必须是本项目拥有、任务创建或用户精确指定的资源。
 
 ## 2. 风险分级
@@ -35,7 +52,7 @@
 Goal allowlist 内可直接执行：
 
 - 精确 `apply_patch`。
-- Prettier、ESLint、TypeScript、Vitest、extension build。
+- 通过 named operation 执行的 Prettier、ESLint、TypeScript、Vitest、extension build。
 - 创建新 feature/fix 分支。
 - 精确文件 `git add <paths>`、普通 commit。
 
@@ -92,7 +109,8 @@ Goal allowlist 内可直接执行：
 
 ## 4. 进程与端口协议
 
-- 启动进程前记录命令、cwd、PID、端口和用途。
+- 启动进程前记录 operation ID、cwd、PID、端口和用途；本地项目命令由 bounded receipt
+  记录 task-owned tree。
 - 只允许停止当前任务亲自启动且 PID/命令/cwd 均匹配的进程。
 - 不使用按名称批量杀进程，不结束用户 Chrome、Obsidian、Node、Electron 或其它项目服务。
 - 发现端口占用时只读识别；默认换端口。未知 owner 时不得释放端口。
@@ -106,6 +124,18 @@ Goal allowlist 内可直接执行：
 - 不 force push，不删除远程分支，不改默认分支保护。
 - 切分支前检查完整 status；工作区有并行改动时必须保留并与之协作。
 - commit、push、PR 的报告必须反映真实结果，未执行不能写成完成。
+
+当前命令示例：
+
+```bash
+node scripts/host-command/shuhai-command.cjs root-lint
+node scripts/host-command/shuhai-command.cjs root-typecheck
+node scripts/host-command/shuhai-command.cjs root-test
+node scripts/host-command/shuhai-command.cjs extension-build
+node scripts/host-command/shuhai-command.cjs prettier-check AGENTS.md docs/goals/README.md
+```
+
+`clean` 仍为显式 blocked operation，不得运行或恢复 raw 删除实现。
 
 ## 6. STOP 检查
 

@@ -5,12 +5,17 @@
   "type": "module",
   "main": "./dist/main/index.js",
   "scripts": {
-    "dev": "tsx --watch src/main/index.ts",
-    "build": "tsc",
-    "test": "vitest run",
-    "lint": "eslint src/",
-    "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "dev": "node ../../scripts/host-command/shuhai-command.cjs desktop-dev",
+    "build": "node ../../scripts/host-command/shuhai-command.cjs desktop-build",
+    "test": "node ../../scripts/host-command/shuhai-command.cjs desktop-test",
+    "lint": "node ../../scripts/host-command/shuhai-command.cjs desktop-lint",
+    "typecheck": "node ../../scripts/host-command/shuhai-command.cjs desktop-typecheck",
+    "clean": "node ../../scripts/host-command/shuhai-command.cjs blocked-clean",
+    "_shuhai:dev": "node ../../scripts/host-command/assert-session.cjs desktop-dev-raw",
+    "_shuhai:build": "node ../../scripts/host-command/assert-session.cjs desktop-build-raw",
+    "_shuhai:test": "node ../../scripts/host-command/assert-session.cjs desktop-test-raw",
+    "_shuhai:lint": "node ../../scripts/host-command/assert-session.cjs desktop-lint-raw",
+    "_shuhai:typecheck": "node ../../scripts/host-command/assert-session.cjs desktop-typecheck-raw"
   },
   "dependencies": {
     "@shuhai/shared": "workspace:*"

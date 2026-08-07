@@ -12,12 +12,17 @@
     }
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "test": "vitest run",
-    "lint": "eslint src/",
-    "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "build": "node ../../scripts/host-command/shuhai-command.cjs shared-build",
+    "dev": "node ../../scripts/host-command/shuhai-command.cjs shared-dev",
+    "test": "node ../../scripts/host-command/shuhai-command.cjs shared-test",
+    "lint": "node ../../scripts/host-command/shuhai-command.cjs shared-lint",
+    "typecheck": "node ../../scripts/host-command/shuhai-command.cjs shared-typecheck",
+    "clean": "node ../../scripts/host-command/shuhai-command.cjs blocked-clean",
+    "_shuhai:dev": "node ../../scripts/host-command/assert-session.cjs shared-dev-raw",
+    "_shuhai:build": "node ../../scripts/host-command/assert-session.cjs shared-build-raw",
+    "_shuhai:test": "node ../../scripts/host-command/assert-session.cjs shared-test-raw",
+    "_shuhai:lint": "node ../../scripts/host-command/assert-session.cjs shared-lint-raw",
+    "_shuhai:typecheck": "node ../../scripts/host-command/assert-session.cjs shared-typecheck-raw"
   },
   "devDependencies": {
     "typescript": "5.8.3"

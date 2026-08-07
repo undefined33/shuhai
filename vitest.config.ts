@@ -8,6 +8,11 @@ const isRootRun = path.resolve(process.cwd()) === path.resolve(rootDir);
 export default defineConfig({
   test: {
     globals: false,
+    fileParallelism: false,
+    maxWorkers: 1,
+    minWorkers: 1,
+    testTimeout: 10000,
+    hookTimeout: 10000,
     setupFiles: isRootRun ? ['./packages/extension/tests/setup.ts'] : [],
     exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**', '**/.pnpm-store/**'],
     coverage: {

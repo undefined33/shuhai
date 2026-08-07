@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, createPublicKey, randomUUID } from 'node:crypto';
 import {
   constants as fsConstants,
@@ -23,7 +23,7 @@ export const EXTENSION_ROOT = path.join(WORKTREE_ROOT, 'packages', 'extension');
 export const DIST_ROOT = path.join(EXTENSION_ROOT, 'dist');
 export const RELEASES_ROOT = path.join(WORKTREE_ROOT, 'dogfood', 'releases');
 export const EXPECTED_EXTENSION_ID = 'jdjmpeogiojjhdabdjmpeclcbjcekbje';
-export const BUILD_COMMAND = 'pnpm --filter @shuhai/extension run build';
+export const BUILD_COMMAND = 'node scripts/host-command/shuhai-command.cjs extension-build';
 
 const LOCKFILE_PATH = path.join(WORKTREE_ROOT, 'pnpm-lock.yaml');
 const SOURCE_MANIFEST_PATH = path.join(EXTENSION_ROOT, 'manifest.json');
@@ -31,18 +31,26 @@ const EXTENSION_PACKAGE_PATH = path.join(EXTENSION_ROOT, 'package.json');
 const SOURCE_REF = 'refs/heads/main at implementation PR merge';
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const OID_PATTERN = /^[0-9a-f]{40}$/u;
-const RELEASE_ID_PATTERN = /^shuhai-v\d+(?:\.\d+){0,3}-[0-9a-f]{12}$/u;
+const RELEASE_ID_PATTERN =
+  /^shuhai-v[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}-[0-9a-f]{12}$/u;
+const PNPM_VERSION_PATTERN =
+  /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
 
-const ChromeVersionSchema = z
+const ManifestVersionSchema = z
   .string()
-  .regex(/^\d+(?:\.\d+){0,3}$/u)
+  .regex(/^[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}$/u)
+  .refine((value) => value.split('.').every((part) => Number(part) <= 65_535));
+
+const MinimumChromeVersionSchema = z
+  .string()
+  .regex(/^[0-9]{1,5}(?:\.[0-9]{1,5}){0,3}$/u)
   .refine((value) => value.split('.').every((part) => Number(part) <= 65_535));
 
 const ExtensionManifestSchema = z
   .object({
     manifest_version: z.literal(3),
-    version: ChromeVersionSchema,
-    minimum_chrome_version: ChromeVersionSchema,
+    version: ManifestVersionSchema,
+    minimum_chrome_version: MinimumChromeVersionSchema,
     key: z.string().min(1),
     background: z.object({
       service_worker: z.string().min(1),
@@ -72,11 +80,11 @@ export const ReleaseMetadataSchema = z
     sourceRef: z.literal(SOURCE_REF),
     lockfileSha256: z.string().regex(SHA256_PATTERN),
     extensionId: z.literal(EXPECTED_EXTENSION_ID),
-    manifestVersion: ChromeVersionSchema,
+    manifestVersion: ManifestVersionSchema,
     manifestVersionNumber: z.literal(3),
-    minimumChromeVersion: ChromeVersionSchema,
+    minimumChromeVersion: MinimumChromeVersionSchema,
     nodeVersion: z.string().min(1),
-    pnpmVersion: z.string().min(1),
+    pnpmVersion: z.string().regex(PNPM_VERSION_PATTERN),
     viteVersion: z.string().min(1),
     platform: z.string().min(1),
     arch: z.string().min(1),
@@ -420,11 +428,23 @@ function sourceIdentity(expectedOid: string): SourceIdentity {
 }
 
 function pnpmVersion(): string {
-  return execSync('pnpm --version', {
-    cwd: WORKTREE_ROOT,
-    encoding: 'utf8',
-    windowsHide: true,
-  }).trim();
+  const userAgent = process.env.npm_config_user_agent;
+  if (
+    typeof userAgent !== 'string' ||
+    Buffer.byteLength(userAgent, 'utf8') > 512 ||
+    /[^\x20-\x7e]/u.test(userAgent)
+  ) {
+    throw new Error('invalid_pnpm_user_agent');
+  }
+  const pnpmTokens = userAgent.split(' ').filter((token) => token.startsWith('pnpm/'));
+  if (pnpmTokens.length !== 1) {
+    throw new Error('invalid_pnpm_user_agent');
+  }
+  const version = pnpmTokens[0]?.slice('pnpm/'.length) ?? '';
+  if (!PNPM_VERSION_PATTERN.test(version)) {
+    throw new Error('invalid_pnpm_version');
+  }
+  return version;
 }
 
 function viteVersion(runtime: ReleaseRuntime): string {
@@ -438,11 +458,22 @@ function viteVersion(runtime: ReleaseRuntime): string {
 }
 
 function runBuild(): void {
-  execSync(BUILD_COMMAND, {
+  const sessionGuard = path.join(
+    WORKTREE_ROOT,
+    'scripts',
+    'host-command',
+    'assert-session.cjs',
+  );
+  assertNormalFile(sessionGuard, 'host_command_session_guard');
+  const result = spawnSync(process.execPath, [sessionGuard, 'extension-build-raw'], {
     cwd: WORKTREE_ROOT,
     stdio: 'inherit',
     windowsHide: true,
+    shell: false,
   });
+  if (result.error || result.signal !== null || result.status !== 0) {
+    throw new Error('extension_build_failed');
+  }
 }
 
 export const PRODUCTION_RELEASE_RUNTIME: ReleaseRuntime = {
