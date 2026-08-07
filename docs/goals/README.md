@@ -3,7 +3,7 @@
 > 最后更新：2026-08-07
 > 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/046E/048 均已 `DONE/PASS`；当前没有 `READY/IN_PROGRESS` Goal，下一门禁是 owner 两周 dogfood
 > 执行规则：Goal 046E v5 已经 PR #14 CI/merge、新 OID release、quick/8 verify、e2e/20 acceptance、quick/8 verify-accepted 与两路最终 evidence review `PASS`。唯一可加载目录为 `C:\Projects\ShuHai\.worktrees\dogfood-release-fcb3485096f2\dogfood\releases\shuhai-v0.1.0-fcb3485096f2\extension`。旧 b8 release、replay、三文件 fix worktree继续 byte-for-byte 冻结；Goal 048 的 PowerShell suite 10/10 只作历史基线，本轮未重跑。
-> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B；当前门禁是最终产物的隔离 E2E，真实 toolbar/zoom、Reading View 与两周使用仍属于 owner dogfood。
+> UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B；最终产物的隔离 E2E 已完成，当前唯一门禁是 owner 两周真实 dogfood，真实 toolbar/zoom、Windows scaling 与 Obsidian Reading View 均在该门禁中验证。
 
 ## 当前编排状态
 
