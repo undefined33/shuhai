@@ -1,8 +1,8 @@
 # ShuHai Goal 状态索引
 
 > 最后更新：2026-08-07
-> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E v4 是唯一 `READY_FOR_REVIEW`，新 main replay 与完整门禁已通过，等待独立复审
-> 执行规则：Goal 048 implementation/closure 已合并，当前 main 为 `e415e03`。Goal 046E 只可在 `codex/goal-046e-replay` 的新隔离 worktree 修改精确 5 文件；旧三文件 fix worktree继续 byte-for-byte 冻结。
+> 当前状态：Goal 041/042/043/045A/045B/045C/046A/046B/046D/046C/048 均已 `DONE/PASS`；Goal 046E v5 是唯一 `READY_FOR_REVIEW`，runner profile recovery 完整门禁已通过
+> 执行规则：Goal 046E v4 已以 `b8a4e7e5f97f` 合入 main，但该 OID 的全新 release 在首次 canonical verify 因 process cap fail closed，且未验收。v5 exact7 已完成 quick=`8`、e2e=`20`、named `root-test` 回归与两路独立实现复审；PR/CI/merge 前不生成新 release。旧 release、replay、三文件 fix worktree继续 byte-for-byte 冻结；Goal 048 的 PowerShell suite 10/10 只作历史基线，本轮未重跑。
 > UI 入口：[主界面与视觉系统重构提案](../proposals/2026-07-17-ui-shell-redesign.md) 已实现到 Goal 046B；当前门禁是最终产物的隔离 E2E，真实 toolbar/zoom、Reading View 与两周使用仍属于 owner dogfood。
 
 ## 当前编排状态
@@ -22,9 +22,9 @@
 | Goal 046D | `DONE`                    | 可读笔记、发布卫生、验收与 dogfood 模板  | 独立实现 review `PASS`          |
 | Goal 046C | `DONE`                    | 最终隔离 E2E、可用性与视觉验收           | Round 9 独立复审 PASS           |
 | Goal 047  | `RESEARCH_GATE`           | 是否支持知乎、小红书或其它平台           | 两周 dogfood 证明真实需求       |
-| Goal 046E | `READY_FOR_REVIEW`        | 版本化 Dogfood Release                   | 独立 replay 实现/安全复审       |
+| Goal 046E | `READY_FOR_REVIEW`        | runner profile recovery 与新 OID release | PR/CI/merge                     |
 | Goal 048  | `DONE`                    | receipt ownership/proof 与 schema 收口   | PR #11 CI 与 merge PASS         |
-| workflow  | `AUTO_ORCHESTRATION`      | Goal 048 已收口，恢复 046E               | 新 main 语义重放与独立验收      |
+| workflow  | `AUTO_ORCHESTRATION`      | Goal 046E v5 集成                        | 提交 PR/CI/merge                |
 
 ## v4 当前队列
 
@@ -42,7 +42,7 @@
 | [046B](./goal-046b-two-journeys-and-options.md)        | `DONE`                    | 两条用户旅程与独立 Options               | 独立实现 review PASS           |
 | [046D](./goal-046d-dogfood-readiness.md)               | `DONE`                    | safe-readable、发布卫生与 dogfood 前置   | 独立实现 review PASS           |
 | [046C](./goal-046c-isolated-usability-e2e.md)          | `DONE`                    | 最终产物隔离 E2E、可用性与视觉验收       | Round 9 独立复审 PASS          |
-| [046E](./goal-046e-versioned-dogfood-release.md)       | `READY_FOR_REVIEW`        | 版本化、固定 ID、可校验 dogfood release  | 独立 replay 实现/安全复审      |
+| [046E](./goal-046e-versioned-dogfood-release.md)       | `READY_FOR_REVIEW`        | runner profile recovery 与新 OID release | PR/CI/merge                    |
 | [048](./goal-048-host-command-incident-containment.md) | `DONE`                    | bounded runner 与全部当前命令路由        | PR #11 CI 与 merge PASS        |
 | 047                                                    | `RESEARCH_GATE`           | 下一社交平台 adapter                     | 两周真实使用数据               |
 

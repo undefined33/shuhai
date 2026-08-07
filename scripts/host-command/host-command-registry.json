@@ -15,7 +15,7 @@
       "aggregateBytes": 98304,
       "processMemoryBytes": 536870912,
       "jobMemoryBytes": 805306368,
-      "processCount": 4,
+      "processCount": 8,
       "mutexWaitMilliseconds": 250,
       "cleanupMilliseconds": 5000,
       "chunkBytes": 4096,
@@ -75,7 +75,7 @@
       "aggregateBytes": 393216,
       "processMemoryBytes": 1073741824,
       "jobMemoryBytes": 3221225472,
-      "processCount": 8,
+      "processCount": 20,
       "mutexWaitMilliseconds": 1000,
       "cleanupMilliseconds": 10000,
       "chunkBytes": 4096,
@@ -171,7 +171,12 @@
     "root-build": {
       "profile": "standard",
       "rawOperation": "root-build-raw",
-      "allowedRaw": ["root-build-raw", "desktop-build-raw", "extension-build-raw", "shared-build-raw"]
+      "allowedRaw": [
+        "root-build-raw",
+        "desktop-build-raw",
+        "extension-build-raw",
+        "shared-build-raw"
+      ]
     },
     "root-lint": {
       "profile": "standard",
@@ -181,7 +186,12 @@
     "root-typecheck": {
       "profile": "standard",
       "rawOperation": "root-typecheck-raw",
-      "allowedRaw": ["root-typecheck-raw", "desktop-typecheck-raw", "extension-typecheck-raw", "shared-typecheck-raw"]
+      "allowedRaw": [
+        "root-typecheck-raw",
+        "desktop-typecheck-raw",
+        "extension-typecheck-raw",
+        "shared-typecheck-raw"
+      ]
     },
     "root-test": {
       "profile": "standard",
@@ -198,21 +208,81 @@
       "rawOperation": "root-test-e2e-raw",
       "allowedRaw": ["root-test-e2e-raw"]
     },
-    "desktop-dev": { "profile": "watch", "rawOperation": "desktop-dev-raw", "allowedRaw": ["desktop-dev-raw"] },
-    "desktop-build": { "profile": "standard", "rawOperation": "desktop-build-raw", "allowedRaw": ["desktop-build-raw"] },
-    "desktop-lint": { "profile": "standard", "rawOperation": "desktop-lint-raw", "allowedRaw": ["desktop-lint-raw"] },
-    "desktop-typecheck": { "profile": "standard", "rawOperation": "desktop-typecheck-raw", "allowedRaw": ["desktop-typecheck-raw"] },
-    "desktop-test": { "profile": "standard", "rawOperation": "desktop-test-raw", "allowedRaw": ["desktop-test-raw"] },
-    "extension-dev": { "profile": "watch", "rawOperation": "extension-dev-raw", "allowedRaw": ["extension-dev-raw"] },
-    "extension-build": { "profile": "standard", "rawOperation": "extension-build-raw", "allowedRaw": ["extension-build-raw"] },
-    "extension-lint": { "profile": "standard", "rawOperation": "extension-lint-raw", "allowedRaw": ["extension-lint-raw"] },
-    "extension-typecheck": { "profile": "standard", "rawOperation": "extension-typecheck-raw", "allowedRaw": ["extension-typecheck-raw"] },
-    "extension-test": { "profile": "standard", "rawOperation": "extension-test-raw", "allowedRaw": ["extension-test-raw"] },
-    "shared-dev": { "profile": "watch", "rawOperation": "shared-dev-raw", "allowedRaw": ["shared-dev-raw"] },
-    "shared-build": { "profile": "standard", "rawOperation": "shared-build-raw", "allowedRaw": ["shared-build-raw"] },
-    "shared-lint": { "profile": "standard", "rawOperation": "shared-lint-raw", "allowedRaw": ["shared-lint-raw"] },
-    "shared-typecheck": { "profile": "standard", "rawOperation": "shared-typecheck-raw", "allowedRaw": ["shared-typecheck-raw"] },
-    "shared-test": { "profile": "standard", "rawOperation": "shared-test-raw", "allowedRaw": ["shared-test-raw"] },
+    "desktop-dev": {
+      "profile": "watch",
+      "rawOperation": "desktop-dev-raw",
+      "allowedRaw": ["desktop-dev-raw"]
+    },
+    "desktop-build": {
+      "profile": "standard",
+      "rawOperation": "desktop-build-raw",
+      "allowedRaw": ["desktop-build-raw"]
+    },
+    "desktop-lint": {
+      "profile": "standard",
+      "rawOperation": "desktop-lint-raw",
+      "allowedRaw": ["desktop-lint-raw"]
+    },
+    "desktop-typecheck": {
+      "profile": "standard",
+      "rawOperation": "desktop-typecheck-raw",
+      "allowedRaw": ["desktop-typecheck-raw"]
+    },
+    "desktop-test": {
+      "profile": "standard",
+      "rawOperation": "desktop-test-raw",
+      "allowedRaw": ["desktop-test-raw"]
+    },
+    "extension-dev": {
+      "profile": "watch",
+      "rawOperation": "extension-dev-raw",
+      "allowedRaw": ["extension-dev-raw"]
+    },
+    "extension-build": {
+      "profile": "standard",
+      "rawOperation": "extension-build-raw",
+      "allowedRaw": ["extension-build-raw"]
+    },
+    "extension-lint": {
+      "profile": "standard",
+      "rawOperation": "extension-lint-raw",
+      "allowedRaw": ["extension-lint-raw"]
+    },
+    "extension-typecheck": {
+      "profile": "standard",
+      "rawOperation": "extension-typecheck-raw",
+      "allowedRaw": ["extension-typecheck-raw"]
+    },
+    "extension-test": {
+      "profile": "standard",
+      "rawOperation": "extension-test-raw",
+      "allowedRaw": ["extension-test-raw"]
+    },
+    "shared-dev": {
+      "profile": "watch",
+      "rawOperation": "shared-dev-raw",
+      "allowedRaw": ["shared-dev-raw"]
+    },
+    "shared-build": {
+      "profile": "standard",
+      "rawOperation": "shared-build-raw",
+      "allowedRaw": ["shared-build-raw"]
+    },
+    "shared-lint": {
+      "profile": "standard",
+      "rawOperation": "shared-lint-raw",
+      "allowedRaw": ["shared-lint-raw"]
+    },
+    "shared-typecheck": {
+      "profile": "standard",
+      "rawOperation": "shared-typecheck-raw",
+      "allowedRaw": ["shared-typecheck-raw"]
+    },
+    "shared-test": {
+      "profile": "standard",
+      "rawOperation": "shared-test-raw",
+      "allowedRaw": ["shared-test-raw"]
+    },
     "husky-lint-staged": {
       "profile": "standard",
       "rawOperation": "husky-lint-staged-raw",
@@ -260,14 +330,46 @@
       "dynamicArgPolicy": "release-id"
     },
     "blocked-clean": { "blockedReason": "clean_policy_blocked" },
-    "synthetic-green": { "profile": "synthetic-green", "rawOperation": "synthetic-green-raw", "allowedRaw": ["synthetic-green-raw"] },
-    "synthetic-stdout-overflow": { "profile": "synthetic-stream", "rawOperation": "synthetic-stdout-overflow-raw", "allowedRaw": ["synthetic-stdout-overflow-raw"] },
-    "synthetic-stderr-overflow": { "profile": "synthetic-stream", "rawOperation": "synthetic-stderr-overflow-raw", "allowedRaw": ["synthetic-stderr-overflow-raw"] },
-    "synthetic-mixed-invalid": { "profile": "synthetic-stream", "rawOperation": "synthetic-mixed-invalid-raw", "allowedRaw": ["synthetic-mixed-invalid-raw"] },
-    "synthetic-idle": { "profile": "synthetic-time", "rawOperation": "synthetic-idle-raw", "allowedRaw": ["synthetic-idle-raw"] },
-    "synthetic-wall": { "profile": "synthetic-time", "rawOperation": "synthetic-wall-raw", "allowedRaw": ["synthetic-wall-raw"] },
-    "synthetic-tree-timeout": { "profile": "synthetic-tree", "rawOperation": "synthetic-tree-timeout-raw", "allowedRaw": ["synthetic-tree-timeout-raw"] },
-    "synthetic-tree-overflow": { "profile": "synthetic-tree", "rawOperation": "synthetic-tree-overflow-raw", "allowedRaw": ["synthetic-tree-overflow-raw"] },
+    "synthetic-green": {
+      "profile": "synthetic-green",
+      "rawOperation": "synthetic-green-raw",
+      "allowedRaw": ["synthetic-green-raw"]
+    },
+    "synthetic-stdout-overflow": {
+      "profile": "synthetic-stream",
+      "rawOperation": "synthetic-stdout-overflow-raw",
+      "allowedRaw": ["synthetic-stdout-overflow-raw"]
+    },
+    "synthetic-stderr-overflow": {
+      "profile": "synthetic-stream",
+      "rawOperation": "synthetic-stderr-overflow-raw",
+      "allowedRaw": ["synthetic-stderr-overflow-raw"]
+    },
+    "synthetic-mixed-invalid": {
+      "profile": "synthetic-stream",
+      "rawOperation": "synthetic-mixed-invalid-raw",
+      "allowedRaw": ["synthetic-mixed-invalid-raw"]
+    },
+    "synthetic-idle": {
+      "profile": "synthetic-time",
+      "rawOperation": "synthetic-idle-raw",
+      "allowedRaw": ["synthetic-idle-raw"]
+    },
+    "synthetic-wall": {
+      "profile": "synthetic-time",
+      "rawOperation": "synthetic-wall-raw",
+      "allowedRaw": ["synthetic-wall-raw"]
+    },
+    "synthetic-tree-timeout": {
+      "profile": "synthetic-tree",
+      "rawOperation": "synthetic-tree-timeout-raw",
+      "allowedRaw": ["synthetic-tree-timeout-raw"]
+    },
+    "synthetic-tree-overflow": {
+      "profile": "synthetic-tree",
+      "rawOperation": "synthetic-tree-overflow-raw",
+      "allowedRaw": ["synthetic-tree-overflow-raw"]
+    },
     "synthetic-cancel": {
       "profile": "synthetic-tree",
       "rawOperation": "synthetic-cancel-raw",
@@ -280,7 +382,11 @@
       "allowedRaw": ["synthetic-parent-exception-raw"],
       "parentExceptionAfterMilliseconds": 250
     },
-    "synthetic-lane-hold": { "profile": "synthetic-heavy", "rawOperation": "synthetic-lane-hold-raw", "allowedRaw": ["synthetic-lane-hold-raw"] },
+    "synthetic-lane-hold": {
+      "profile": "synthetic-heavy",
+      "rawOperation": "synthetic-lane-hold-raw",
+      "allowedRaw": ["synthetic-lane-hold-raw"]
+    },
     "synthetic-nested": {
       "profile": "synthetic-heavy",
       "rawOperation": "synthetic-nested-raw",
@@ -292,8 +398,14 @@
     "root-prepare-raw": { "kind": "pnpm", "args": ["exec", "husky"], "ciLifecycle": true },
     "root-install-raw": { "kind": "pnpm", "args": ["install"] },
     "root-dev-raw": { "kind": "pnpm", "args": ["-r", "--parallel", "run", "_shuhai:dev"] },
-    "root-build-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:build"] },
-    "root-lint-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:lint"] },
+    "root-build-raw": {
+      "kind": "pnpm",
+      "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:build"]
+    },
+    "root-lint-raw": {
+      "kind": "pnpm",
+      "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:lint"]
+    },
     "root-typecheck-raw": {
       "kind": "sequence",
       "steps": [
@@ -301,24 +413,75 @@
         { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:typecheck"] }
       ]
     },
-    "root-test-raw": { "kind": "pnpm", "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:test"] },
+    "root-test-raw": {
+      "kind": "pnpm",
+      "args": ["-r", "--workspace-concurrency=1", "run", "_shuhai:test"]
+    },
     "root-test-coverage-raw": { "kind": "pnpm", "args": ["exec", "vitest", "run", "--coverage"] },
     "root-test-e2e-raw": { "kind": "pnpm", "args": ["exec", "playwright", "test"] },
-    "desktop-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsx", "--watch", "src/main/index.ts"] },
+    "desktop-dev-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/desktop", "exec", "tsx", "--watch", "src/main/index.ts"]
+    },
     "desktop-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsc"] },
-    "desktop-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "vitest", "run"] },
-    "desktop-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "eslint", "src/"] },
-    "desktop-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/desktop", "exec", "tsc", "--noEmit"] },
-    "extension-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vite", "build", "--watch"] },
-    "extension-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vite", "build"] },
-    "extension-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "vitest", "run"] },
-    "extension-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "eslint", "src/", "tests/", "scripts/", "vite.config.ts"] },
-    "extension-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/extension", "exec", "tsc", "--noEmit"] },
-    "shared-dev-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc", "--watch"] },
+    "desktop-test-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/desktop", "exec", "vitest", "run"]
+    },
+    "desktop-lint-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/desktop", "exec", "eslint", "src/"]
+    },
+    "desktop-typecheck-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/desktop", "exec", "tsc", "--noEmit"]
+    },
+    "extension-dev-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/extension", "exec", "vite", "build", "--watch"]
+    },
+    "extension-build-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/extension", "exec", "vite", "build"]
+    },
+    "extension-test-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/extension", "exec", "vitest", "run"]
+    },
+    "extension-lint-raw": {
+      "kind": "pnpm",
+      "args": [
+        "--dir",
+        "packages/extension",
+        "exec",
+        "eslint",
+        "src/",
+        "tests/",
+        "scripts/",
+        "vite.config.ts"
+      ]
+    },
+    "extension-typecheck-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/extension", "exec", "tsc", "--noEmit"]
+    },
+    "shared-dev-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/shared", "exec", "tsc", "--watch"]
+    },
     "shared-build-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc"] },
-    "shared-test-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "vitest", "run"] },
-    "shared-lint-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "eslint", "src/"] },
-    "shared-typecheck-raw": { "kind": "pnpm", "args": ["--dir", "packages/shared", "exec", "tsc", "--noEmit"] },
+    "shared-test-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/shared", "exec", "vitest", "run"]
+    },
+    "shared-lint-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/shared", "exec", "eslint", "src/"]
+    },
+    "shared-typecheck-raw": {
+      "kind": "pnpm",
+      "args": ["--dir", "packages/shared", "exec", "tsc", "--noEmit"]
+    },
     "husky-lint-staged-raw": { "kind": "pnpm", "args": ["exec", "lint-staged", "--relative"] },
     "lint-staged-ts-raw": {
       "kind": "sequence",
@@ -374,18 +537,66 @@
       "appendDynamicArgs": true,
       "dynamicArgPolicy": "release-id"
     },
-    "synthetic-green-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["green"] },
-    "synthetic-stdout-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["stdout-overflow"] },
-    "synthetic-stderr-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["stderr-overflow"] },
-    "synthetic-mixed-invalid-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["mixed-invalid"] },
-    "synthetic-idle-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["idle"] },
-    "synthetic-wall-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["wall"] },
-    "synthetic-tree-timeout-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-timeout.json", "silent"] },
-    "synthetic-tree-overflow-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-overflow.json", "overflow"] },
-    "synthetic-cancel-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/cancel.json", "silent"] },
-    "synthetic-parent-exception-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/parent-exception.json", "silent"] },
-    "synthetic-lane-hold-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["lane-hold", ".tmp/host-stability-narrow-v1/test/lane-starts.log"] },
+    "synthetic-green-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["green"]
+    },
+    "synthetic-stdout-overflow-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["stdout-overflow"]
+    },
+    "synthetic-stderr-overflow-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["stderr-overflow"]
+    },
+    "synthetic-mixed-invalid-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["mixed-invalid"]
+    },
+    "synthetic-idle-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["idle"]
+    },
+    "synthetic-wall-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["wall"]
+    },
+    "synthetic-tree-timeout-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-timeout.json", "silent"]
+    },
+    "synthetic-tree-overflow-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/tree-overflow.json", "overflow"]
+    },
+    "synthetic-cancel-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/cancel.json", "silent"]
+    },
+    "synthetic-parent-exception-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["tree-parent", ".tmp/host-stability-narrow-v1/test/parent-exception.json", "silent"]
+    },
+    "synthetic-lane-hold-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["lane-hold", ".tmp/host-stability-narrow-v1/test/lane-starts.log"]
+    },
     "synthetic-nested-raw": { "kind": "nested", "rawOperation": "synthetic-nested-target-raw" },
-    "synthetic-nested-target-raw": { "kind": "node", "script": "scripts/host-command/hostile-child.cjs", "args": ["mark-green", ".tmp/host-stability-narrow-v1/test/nested-starts.log"] }
+    "synthetic-nested-target-raw": {
+      "kind": "node",
+      "script": "scripts/host-command/hostile-child.cjs",
+      "args": ["mark-green", ".tmp/host-stability-narrow-v1/test/nested-starts.log"]
+    }
   }
 }

@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Script } from 'node:vm';
 
@@ -62,6 +63,29 @@ const FIXED_TIME = '2026-07-28T00:00:00.000Z';
 const SOURCE_MANIFEST = JSON.parse(
   readFileSync(path.join(WORKTREE_ROOT, 'packages', 'extension', 'manifest.json'), 'utf8'),
 ) as Record<string, unknown>;
+const HOST_COMMAND_REGISTRY_PATH = path.join(
+  WORKTREE_ROOT,
+  'scripts',
+  'host-command',
+  'host-command-registry.json',
+);
+const HOST_COMMAND_REGISTRY = JSON.parse(readFileSync(HOST_COMMAND_REGISTRY_PATH, 'utf8')) as {
+  profiles: Record<string, { processCount: number }>;
+  operations: Record<
+    string,
+    {
+      profile?: string;
+      rawOperation?: string;
+      allowedRaw?: string[];
+      blockedReason?: string;
+      dynamicArgPolicy?: string;
+    }
+  >;
+  rawOperations: Record<string, unknown>;
+};
+const { validateRegistry } = createRequire(import.meta.url)(
+  path.join(WORKTREE_ROOT, 'scripts', 'host-command', 'shuhai-command.cjs'),
+) as { validateRegistry: (registry: unknown) => unknown };
 
 interface FixtureOptions {
   readonly branch?: string;
@@ -81,6 +105,10 @@ interface Fixture {
 
 function sha256(body: Buffer | string): string {
   return createHash('sha256').update(body).digest('hex');
+}
+
+function canonicalSha256(value: unknown): string {
+  return sha256(JSON.stringify(value));
 }
 
 function createFixture(options: FixtureOptions = {}): Fixture {
@@ -282,6 +310,74 @@ function rewriteReleaseInventory(release: VerifiedRelease): void {
 }
 
 describe('dogfood source identity and CLI boundaries', () => {
+  it('pins bounded runner profiles and routes for canonical dogfood operations', () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(HOST_COMMAND_REGISTRY.profiles).map(([id, profile]) => [
+          id,
+          profile.processCount,
+        ]),
+      ),
+    ).toEqual({
+      quick: 8,
+      standard: 12,
+      install: 12,
+      watch: 12,
+      e2e: 20,
+      'synthetic-green': 4,
+      'synthetic-stream': 4,
+      'synthetic-time': 4,
+      'synthetic-tree': 4,
+      'synthetic-heavy': 4,
+    });
+    expect(HOST_COMMAND_REGISTRY.operations['dogfood-create']).toMatchObject({
+      profile: 'standard',
+      rawOperation: 'dogfood-create-raw',
+      allowedRaw: ['dogfood-create-raw', 'extension-build-raw'],
+      dynamicArgPolicy: 'git-oid',
+    });
+    expect(HOST_COMMAND_REGISTRY.operations['dogfood-verify']).toEqual({
+      profile: 'quick',
+      rawOperation: 'dogfood-verify-raw',
+      allowedRaw: ['dogfood-verify-raw'],
+      dynamicArgPolicy: 'release-id',
+    });
+    expect(HOST_COMMAND_REGISTRY.operations['dogfood-verify-accepted']).toEqual({
+      profile: 'quick',
+      rawOperation: 'dogfood-verify-accepted-raw',
+      allowedRaw: ['dogfood-verify-accepted-raw'],
+      dynamicArgPolicy: 'release-id',
+    });
+    expect(HOST_COMMAND_REGISTRY.operations['dogfood-accept']).toEqual({
+      profile: 'e2e',
+      rawOperation: 'dogfood-accept-raw',
+      allowedRaw: ['dogfood-accept-raw'],
+      dynamicArgPolicy: 'release-id',
+    });
+    expect(HOST_COMMAND_REGISTRY.operations['root-test-e2e']).toEqual({
+      profile: 'e2e',
+      rawOperation: 'root-test-e2e-raw',
+      allowedRaw: ['root-test-e2e-raw'],
+    });
+
+    expect(canonicalSha256(HOST_COMMAND_REGISTRY.profiles)).toBe(
+      'f39f5e58b1a0e23151dd4103fe4a238c7d09bbab96f20be86c43462c0b586d08',
+    );
+    expect(canonicalSha256(HOST_COMMAND_REGISTRY.operations)).toBe(
+      '4f363790c49534a6116c8ba82f7c810377fd76ed3dafc06981d1f2fd977dd333',
+    );
+    expect(canonicalSha256(HOST_COMMAND_REGISTRY.rawOperations)).toBe(
+      '77fa2b969043fc145d26120b2b53b5c2b6463877d4b996fc8256738b701af385',
+    );
+  });
+
+  it('rejects a registry process budget above the bounded runner ceiling', () => {
+    expect(() => validateRegistry(structuredClone(HOST_COMMAND_REGISTRY))).not.toThrow();
+    const invalidRegistry = structuredClone(HOST_COMMAND_REGISTRY);
+    invalidRegistry.profiles.quick.processCount = 33;
+    expect(() => validateRegistry(invalidRegistry)).toThrow('profile_quick_processCount_invalid');
+  });
+
   it('keeps acceptance worker expressions parseable and free of transpiler helpers', () => {
     for (const expression of Object.values(ACCEPTANCE_WORKER_EXPRESSIONS)) {
       expect(expression).not.toContain('__name');
